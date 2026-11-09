@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; font-src 'self'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reuschler-IT - LLM Box</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link id="hl-theme" rel="stylesheet" href="vendor/hl-dark.css" />
+</head>
+<body>
+  <div id="titlebar"><span class="tb-logo" id="tb-logo"></span><span class="tb-title" id="tb-title">Reuschler-IT - LLM Box</span></div>
+
+  <div id="layout">
+    <aside id="sidebar">
+      <button id="btn-new" class="btn-new"></button>
+      <div class="search"><span id="ico-search"></span><input id="chat-search" type="search" placeholder="Chats durchsuchen" /></div>
+      <nav id="chat-list" aria-label="Chats"></nav>
+      <div class="sidebar-foot">
+        <div id="conn-status" class="conn-status" title="Verbindungsstatus"><span class="dot"></span><span class="txt">–</span></div>
+        <button id="btn-import" class="icon-btn" title="Chats importieren (z. B. aus der Strata-Weboberfläche)"></button>
+        <button id="btn-settings" class="icon-btn" title="Einstellungen (Strg+,)"></button>
+      </div>
+      <div class="brand-foot"><b>Reuschler-IT</b><br>© 2026 Reuschler-IT. Alle Rechte vorbehalten.</div>
+    </aside>
+
+    <main id="main">
+      <header id="topbar">
+        <div class="selectors">
+          <select id="sel-conn" title="Verbindung"></select>
+          <select id="sel-model" title="Modell"></select>
+          <button id="btn-refresh" class="icon-btn" title="Modelle neu laden"></button>
+          <button id="btn-agents" class="chip-btn agents-btn" title="Unteragenten: wer arbeitet woran"></button>
+          <button id="btn-server" class="chip-btn server-btn" title="Server & Monitor: Modell starten, laden, überwachen"></button>
+        </div>
+        <div class="topbar-right">
+          <div id="ctx-meter" class="ctx-meter" title="Kontextfenster"><div class="bar"><i></i></div><span></span></div>
+          <button id="btn-handoff" class="icon-btn" title="Neue Session mit Übergabe starten"></button>
+          <button id="btn-export" class="icon-btn" title="Chat exportieren"></button>
+          <button id="btn-panel" class="icon-btn" title="Workspace-Panel"></button>
+        </div>
+      </header>
+
+      <section id="messages" aria-live="polite"><div id="messages-inner"></div></section>
+      <button id="scroll-down" class="scroll-down hidden" title="Nach unten"></button>
+
+      <div id="composer-wrap">
+        <div id="composer">
+          <div id="attach-strip" class="attach-strip"></div>
+          <textarea id="input" rows="1" placeholder="Nachricht schreiben …  (Dateien per Drag & Drop oder Strg+V)"></textarea>
+          <div class="composer-bar">
+            <div class="left">
+              <button id="btn-attach" class="icon-btn" title="Dateien anhängen"></button>
+              <button id="btn-attach-folder" class="icon-btn" title="Ordner anhängen"></button>
+              <button id="btn-think" class="chip-btn" title="Denkaufwand des Modells"></button>
+              <button id="btn-tools" class="chip-btn" title="KI darf Dateien im Workspace lesen und schreiben"></button>
+              <button id="btn-perm" class="chip-btn" title="Freigaben für diesen Chat"></button>
+            </div>
+            <div class="right">
+              <span id="token-estimate" class="token-estimate"></span>
+              <button id="btn-send" class="btn-send" title="Senden"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer id="statusbar">
+        <span id="st-left"></span>
+        <span id="st-right"></span>
+      </footer>
+    </main>
+
+    <aside id="filepanel"></aside>
+  </div>
+
+  <div id="drop-overlay" class="hidden"><div>Dateien oder Ordner hier ablegen</div></div>
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+
+  <script src="vendor/marked.js"></script>
+  <script src="vendor/purify.js"></script>
+  <script src="vendor/highlight.js"></script>
+  <script src="js/llm.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/livetools.js"></script>
+  <script src="js/subagents.js"></script>
+  <script src="js/server.js"></script>
+  <script src="js/handoff.js"></script>
+  <script src="js/thinktr.js"></script>
+  <script src="js/strataimport.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

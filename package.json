@@ -1,0 +1,36 @@
+{
+  "name": "llm-box",
+  "productName": "LLM Box",
+  "version": "1.0.19",
+  "description": "Lokale Chat-Oberfläche für Ollama, LM Studio, llama.cpp und OpenAI-kompatible APIs",
+  "main": "main.js",
+  "author": "Reuschler-IT",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable",
+    "pack": "electron-builder --win dir"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "de.reuschler-it.llmbox",
+    "copyright": "Copyright © 2026 Reuschler-IT",
+    "productName": "LLM Box",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "renderer/**/*", "build/icon.png", "package.json"],
+    "extraMetadata": { "author": "Reuschler-IT" },
+    "win": {
+      "legalTrademarks": "Reuschler-IT",
+      "icon": "build/icon.ico",
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  }
+}
