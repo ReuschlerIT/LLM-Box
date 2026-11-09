@@ -2,7 +2,7 @@
 
 **Schlanke Desktop-App für Windows, mit der du lokale und entfernte KI-Modelle bequem nutzt: Chat, Dateien als Kontext, Werkzeuge für die KI und ein Monitor für deinen Modell-Server.**
 
-Von [Reuschler-IT](https://github.com/) · Electron · Deutsch · MIT-Lizenz
+Von [Reuschler-IT](https://github.com/ReuschlerIT) · Electron · Deutsch · MIT-Lizenz
 
 <p align="center">
   <img src="docs/screenshots/01-chat.png" alt="LLM Box: Chat mit Gedankengang, Werkzeug-Karten, Code und Statistik unter jeder Antwort" width="100%">
@@ -88,7 +88,7 @@ Befehle, die Rechner oder Dateien verändern, bestätigst du vorher. Pro Program
 **Voraussetzungen:** Windows 10/11 und [Node.js](https://nodejs.org) (LTS).
 
 ```bash
-git clone https://github.com/DEIN-NAME/llm-box.git
+git clone https://github.com/ReuschlerIT/llm-box.git
 cd llm-box
 ```
 
