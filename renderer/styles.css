@@ -593,3 +593,15 @@ details.tool.tl-live.idle { border-color: var(--warn); }
 .tl-empty { color: var(--text-faint); font-style: italic; }
 .scroll-down.attn { border-color: var(--warn); color: var(--warn); animation: livepulse 1s ease-in-out infinite; }
 .ag-detail pre.ag-feed { max-height: 300px; }
+
+/* Obere Leiste: bei schmalem Fenster schrumpfen die Auswahlfelder, nichts überlappt mehr */
+.selectors { flex: 1 1 auto; overflow: hidden; }
+.selectors select { min-width: 0; flex: 0 1 auto; }
+.selectors .icon-btn, .selectors .chip-btn { flex-shrink: 0; }
+.topbar-right { flex-shrink: 0; }
+.ctx-meter { white-space: nowrap; flex-shrink: 0; }
+.ctx-meter .bar { width: clamp(28px, 5vw, 84px); flex-shrink: 1; }
+#sel-conn { min-width: 130px; }
+#sel-model { min-width: 150px; }
+.tl-right { max-width: 72%; }
+.tl-name { flex: 0 1 auto; }

@@ -1,0 +1,5 @@
+Kurzbeschreibung (Feld "About" im Repository, max. 350 Zeichen):
+Desktop-App für Windows zum Chatten mit lokalen und entfernten KI-Modellen (Ollama, LM Studio, llama.cpp, OpenAI-kompatibel). Dateien als Kontext, KI mit Werkzeugen und Unteragenten, Live-Ansicht aller Aktionen, Server-Monitor.
+
+Themen (Topics):
+llm, ollama, lm-studio, llama-cpp, electron, chat, ai-agent, local-ai, windows, openai-compatible

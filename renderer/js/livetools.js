@@ -83,8 +83,9 @@ function tlStart(tc) {
   c.node = el('details', { class: 'tool running tl-live tl-' + kind },
     el('summary', {}, el('span', { class: 'chev', html: icon('chevron', 14) }), el('span', { class: 'ag-spin tl-spin' }), el('span', { class: 'tl-name', text: (TOOL_LABEL[tc.name] || tc.name) + arg }), el('span', { class: 'tl-right' }, c.status, c.stop || null)),
     c.inner);
-  c.node.open = kind !== 'plain'; // Programme und Unteragenten sofort offen, damit man zusehen kann
+  c.node.open = false; // geöffnet wird erst, wenn das Werkzeug wirklich läuft (siehe tlState)
   c.node.addEventListener('toggle', () => followApply(c.inner));
+  c.node.firstChild.addEventListener('click', () => { c.touched = true; }); // Nutzer hat selbst auf-/zugeklappt: nicht mehr automatisch öffnen
   TL.cards.set(tc.id, c);
   $('#messages-inner').append(c.node);
   if (S.stick) scrollBottom();
@@ -109,13 +110,15 @@ function tlPaint(c) {
     if (c.kind === 'exec') {
       const quiet = c.tOut ? (now - c.tOut) / 1000 : run;
       idle = quiet >= TL_IDLE;
-      txt = `läuft seit ${tlDur(run)}`;
-      txt += !c.tOut ? (idle ? ' · wartet auf erste Ausgabe' : ' · noch keine Ausgabe') : idle ? ` · wartet auf Ausgabe (seit ${tlDur(quiet)} nichts Neues)` : ' · Ausgabe läuft';
-      if (c.timeout) txt += ` · Zeitlimit in ${tlDur(Math.max(0, c.timeout - run))}`;
+      txt = `läuft ${tlDur(run)}`;
+      txt += !c.tOut ? (idle ? ' · wartet auf erste Ausgabe' : ' · noch keine Ausgabe') : idle ? ` · wartet auf Ausgabe (${tlDur(quiet)} nichts Neues)` : ' · Ausgabe läuft';
+      if (c.timeout) txt += ` · Limit in ${tlDur(Math.max(0, c.timeout - run))}`;
     } else if (c.kind === 'agent') txt = `arbeitet seit ${tlDur(run)}` + (c.act ? ' · ' + c.act : '');
     else txt = `läuft seit ${tlDur(run)}`;
   }
   if (c.status.textContent !== txt) c.status.textContent = txt;
+  c.status.title = txt;
+  if (c.stop) c.stop.style.display = c.state === 'running' && c.execId ? '' : 'none'; // nur sinnvoll, wenn ein Programm läuft
   c.node.classList.toggle('idle', idle);
   c.node.classList.toggle('waiting', c.state === 'approval' || c.state === 'queued');
   const hint = c.state === 'running' && !c.buf && c.kind === 'exec' ? 'Noch keine Ausgabe vom Programm.' : '';
@@ -129,6 +132,8 @@ function tlState(id, state) {
   const prev = c.state;
   c.state = state;
   if (state === 'running' && (!c.t0 || prev === 'approval')) c.t0 = Date.now(); // Wartezeit auf die Freigabe zählt nicht zur Laufzeit
+  // Programme und Unteragenten klappen auf, sobald sie laufen, damit man zusehen kann
+  if (state === 'running' && c.kind !== 'plain' && !c.touched) c.node.open = true;
   tlPaint(c);
 }
 
