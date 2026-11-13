@@ -46,7 +46,7 @@ function subFeedText(steps) {
 
 /* Wird von runTool() aufgerufen */
 async function runSubagent(tc, base) {
-  const chat = S.chat;
+  const chat = S.runChat || S.chat;
   const a = tc.args || {};
   const task = String(a.task || '').trim();
   if (!task) return { ...base, ok: false, content: 'Fehler: Für den Unteragenten fehlt „task“.' };
@@ -154,7 +154,7 @@ async function runSubagent(tc, base) {
     rec.activity = '';
     SUB.runs.delete(rec.id);
     subRefresh();
-    saveChatSoon();
+    saveChatSoon(S.runChat || S.chat);
   }
   const secs = (rec.endedAt - rec.startedAt) / 1000;
   const head = `Unteragent „${rec.label}“ ${SUB_STATUS[rec.status]} (${rec.steps} Schritte, ${fmt.dur(secs)})`;

@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('api', {
   ws: {
     list: (o) => inv('ws:list', o),
     tool: (o) => inv('ws:tool', o),
+    abortAll: () => inv('ws:abort'),
   },
   strata: {
     run: (req, cb) => {
@@ -80,6 +81,11 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (u) => inv('shell:openExternal', u),
   openPath: (p) => inv('shell:openPath', p),
   appInfo: () => inv('app:info'),
+  sync: { get: () => inv('sync:get'), setDir: (d) => inv('sync:setDir', d), migrate: () => inv('sync:migrate') },
+  onChatsChanged: (cb) => ipcRenderer.on('chats:changed', (_e, m) => cb(m)),
+  spellSet: (o) => inv('app:spellSet', o),
+  gpuGet: () => inv('app:gpuGet'),
+  gpuSet: (on) => inv('app:gpuSet', on),
   setWindowTheme: (o) => inv('win:theme', o),
   setWindowMaterial: (m) => inv('win:material', m),
 });

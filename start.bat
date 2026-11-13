@@ -7,8 +7,8 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist node_modules (
-  echo Erster Start: Abhaengigkeiten werden installiert ...
+if not exist node_modules\pdfjs-dist (
+  echo Abhaengigkeiten werden installiert bzw. aktualisiert ...
   call npm install
   if errorlevel 1 ( echo Installation fehlgeschlagen. & pause & exit /b 1 )
 )

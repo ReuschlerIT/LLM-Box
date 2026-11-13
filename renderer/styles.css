@@ -174,7 +174,7 @@ select option { background: var(--bg-raised); color: var(--text); }
 .ctx-meter.warn .bar i { background: var(--warn); }
 .ctx-meter.full .bar i { background: var(--err); }
 
-#messages { flex: 1; overflow-y: auto; scroll-behavior: auto; }
+#messages { flex: 1; overflow-y: auto; scroll-behavior: auto; overflow-anchor: none; }
 #messages-inner { max-width: var(--msg-width); margin: 0 auto; padding: 24px 24px 12px; display: flex; flex-direction: column; gap: 22px; min-height: 100%; }
 .scroll-down {
   position: absolute; right: 28px; bottom: 170px; width: 34px; height: 34px; border-radius: 50%;
@@ -277,6 +277,15 @@ details.tool.fail > summary { color: var(--err); }
 #input::placeholder { color: var(--text-faint); }
 .attach-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
 .attach-strip:empty { display: none; }
+
+.queued-strip { display: flex; align-items: center; gap: 7px; padding: 6px 10px; margin: 4px 0; border-radius: 9px;
+  background: var(--bg-raised); border: 1px dashed var(--line); color: var(--text-faint); opacity: 0.68; }
+.queued-strip.hidden { display: none; }
+.queued-strip .queued-icon { display: flex; flex-shrink: 0; opacity: 0.8; }
+.queued-strip .queued-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; color: var(--text-dim); }
+.queued-strip .queued-hint { flex: 1; font-size: 12px; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queued-strip .queued-cancel { flex-shrink: 0; border: 0; background: transparent; color: var(--text-faint); display: flex; padding: 2px; border-radius: 6px; }
+.queued-strip .queued-cancel:hover { color: var(--err); background: var(--bg-hover); opacity: 1; }
 .composer-bar { display: flex; align-items: center; justify-content: space-between; }
 .composer-bar .left, .composer-bar .right { display: flex; align-items: center; gap: 4px; }
 .chip-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; background: transparent; color: var(--text-dim); border-radius: 8px; padding: 5px 9px; font-size: 13px; }
@@ -388,10 +397,14 @@ body.nostats .stats { display: none; }
 :root[data-theme="light"] .logo-dark { display: none; }
 :root[data-theme="light"] .logo-light { display: inline-block; }
 #main { isolation: isolate; overflow: hidden; }
-#main::before {
+/* Die Hintergrundebene gibt es nur, wenn wirklich ein Bild gesetzt ist. Eine leere, halbtransparente Ebene mit Filter
+   erzeugte im hellen Design auf manchen Grafikkarten weiße Kacheln/Rechtecke im Fenster. */
+#main::before { display: none; }
+body.has-bg #main::before {
+  display: block;
   content: ""; position: absolute; inset: calc(var(--bg-blur) * -2); z-index: -1; pointer-events: none;
   background: var(--bg-img, none) center / cover no-repeat;
-  opacity: var(--bg-opacity); filter: blur(var(--bg-blur));
+  opacity: var(--bg-opacity); filter: var(--bg-filter, none);
 }
 body.has-bg #topbar { background: color-mix(in srgb, var(--bg-side) 60%, transparent); backdrop-filter: blur(8px); }
 body.has-bg #composer { background: color-mix(in srgb, var(--bg-input) 88%, transparent); }
@@ -524,7 +537,8 @@ details.think.active:not([open]) .think-dots { display: inline-block; }
 .sv-monitor { padding-top: 12px; }
 .sv-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .sv-spacer { flex: 1; }
-.sv-badge { padding: 3px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 650; border: 1px solid var(--line); color: var(--text-dim); background: var(--bg-raised); }
+.sv-badge { padding: 3px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 650; border: 1px solid var(--line); color: var(--text-dim); background: var(--bg-raised);
+  width: 158px; box-sizing: border-box; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sv-badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .sv-badge.run { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 .sv-badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }
@@ -605,3 +619,86 @@ details.tool.tl-live.idle { border-color: var(--warn); }
 #sel-model { min-width: 150px; }
 .tl-right { max-width: 72%; }
 .tl-name { flex: 0 1 auto; }
+
+/* ───── Vom Modell erzeugte Bilder ───── */
+.gen-imgs { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
+.gen-imgs.hidden { display: none; }
+.gen-img { margin: 0; max-width: 100%; }
+.gen-img img { display: block; max-width: min(100%, 520px); max-height: 520px; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; background: var(--bg-hover); }
+.gen-img figcaption { display: flex; gap: 6px; margin-top: 6px; }
+
+/* ───── Rückfragen mit Antwortvorschlägen ───── */
+.approval.ask { gap: 14px; }
+.ask .q-block { display: flex; flex-direction: column; gap: 8px; }
+.ask .q-text { font-weight: 600; line-height: 1.45; }
+.ask .q-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.ask .opt { border: 1px solid var(--line); background: var(--bg-raised); color: var(--text); border-radius: 999px; padding: 6px 14px; font-size: 13.5px; cursor: pointer; text-align: left; line-height: 1.4; }
+.ask .opt:hover { border-color: var(--accent-line); background: var(--bg-hover); }
+.ask .opt.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ask .q-own { width: 100%; box-sizing: border-box; border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13.5px; }
+.ask .q-own:focus { outline: none; border-color: var(--accent); }
+.ask .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.speed-result { margin: 10px 0 0; padding: 10px 12px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font: 12.5px/1.55 var(--font-code); white-space: pre-wrap; overflow-x: auto; }
+.speed-result.hidden { display: none; }
+
+/* Sparmodus beim Antworten: keine Animationen und keine Unschärfe, damit die Oberfläche die Grafikkarte nicht mit dem Modell teilt */
+body.gen *, body.gen *::before, body.gen *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+
+
+/* Monitor-Dock unter dem Workspace-Panel */
+.fp-tree { min-height: 120px; }
+.fp-dock { flex: none; max-height: 56%; overflow-y: auto; border-top: 1px solid var(--line); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg-side); }
+.fp-dock .dk-head { display: flex; align-items: center; gap: 8px; }
+.fp-dock .dk-head .ttl { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13.5px; }
+.fp-dock .dk-head .sv-badge { padding: 2px 9px; font-size: 11.5px; }
+.fp-dock .sv-spacer { flex: 1; }
+.fp-dock .dk-model { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-dock .dk-ctx .bar { flex: 1; width: auto; }
+.fp-dock .dk-ctx { font-size: 11.5px; }
+.fp-dock .dk-note { font-size: 12px; color: var(--text-dim); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.fp-dock .dk-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.fp-dock .sv-tile { padding: 6px 8px 4px; }
+.fp-dock .sv-tile .l { font-size: 11px; }
+.fp-dock .sv-tile .v { font-size: 17px; }
+.fp-dock .sv-tile .v small { font-size: 11px; }
+.fp-dock .sv-tile .s { font-size: 10.5px; min-height: 13px; }
+.fp-dock .sv-tile .sp { height: 18px; }
+
+/* ───── Obere Leiste (V37): „Monitor“-Button wird nicht mehr abgeschnitten ───── */
+#topbar { container-type: inline-size; container-name: topbar; }
+#sel-conn { min-width: 90px; }
+#sel-model { min-width: 110px; }
+.selectors .chip-btn { white-space: nowrap; }
+/* Wird die Leiste eng, zeigen Unteragenten, Server und Monitor nur Symbol (und Zähler) statt Beschriftung */
+@container topbar (max-width: 1400px) {
+  .selectors .chip-btn > span:not(.ag-count):not(.ag-chev) { display: none; }
+  .selectors .chip-btn { padding: 5px 8px; }
+}
+
+/* Hintergrund-Lauf: Punkt vor dem Chat in der Seitenleiste (läuft / wartet auf dich / neue Antwort) */
+.chat-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-right: 8px; background: var(--accent); }
+.chat-dot.run { animation: livepulse 1.4s ease-in-out infinite; }
+.chat-dot.attn { background: var(--warn); }
+.chat-dot.unread { background: var(--ok); }
+
+/* Hinweis: Chat wird gerade auf einem anderen Rechner bearbeitet */
+.busy-strip { border-color: var(--warn); color: var(--warn); }
+.busy-strip .queued-hint { font-style: normal; color: var(--text-dim); max-width: none; }
+.busy-strip { opacity: 1; }
+
+/* V48: Pause / Fortsetzen */
+.btn-pause { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-hover); color: var(--text); display: flex; align-items: center; justify-content: center; margin-right: 4px; }
+.btn-pause:hover { filter: brightness(1.08); }
+.btn-pause.hidden { display: none; }
+.btn-pause.paused { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pause-strip { border-color: var(--accent); color: var(--accent); opacity: 1; }
+.pause-strip .queued-hint { font-style: normal; color: var(--text-dim); max-width: none; white-space: normal; }
+.pause-strip .btn { flex-shrink: 0; }
+
+/* V48: Kontext geleert (gleicher Chat) */
+.ctx-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0 12px; color: var(--accent); font-size: 12.5px; }
+.ctx-divider::before, .ctx-divider::after { content: ''; flex: 1; border-top: 1px dashed var(--accent-line); }
+.ctx-divider span { display: flex; align-items: center; gap: 6px; text-align: center; }
+.msg.ctx-old { opacity: 0.55; }
+.msg.ctx-old:hover { opacity: 0.9; }

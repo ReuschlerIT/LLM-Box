@@ -2,28 +2,65 @@
 
 const DEFAULTS = {
   connections: [
-    { id: 'ollama', name: 'Ollama (lokal)', type: 'ollama', baseUrl: 'http://localhost:11434', apiKey: '', extraParams: false },
-    { id: 'lmstudio', name: 'LM Studio', type: 'openai', baseUrl: 'http://localhost:1234/v1', apiKey: '', extraParams: true },
+    { id: 'strata_api', name: 'Strata_API', type: 'openai', baseUrl: 'http://localhost:8080/v1', apiKey: '', extraParams: true, thinkMode: 'template' },
   ],
-  activeConnection: 'ollama',
+  activeConnection: 'strata_api',
+  spell: { enabled: true, lang: 'de-en' },
   model: '',
   thinking: 'auto',
-  systemPrompt: 'Du bist ein hilfreicher, präziser Assistent. Antworte in der Sprache des Nutzers.',
+  systemPrompt: `Du bist ein autonomer Analyse- und Entwicklungs-Agent.
+
+SPRACHE
+Antworte und denke ausschließlich auf Deutsch (außer bei Code-Syntax).
+
+WERKZEUGE
+Nutze alle verfügbaren Werkzeuge frei. Prüfe zuerst, ob im Workspace bereits ein passendes
+vorbereitetes Skript (.ps1, .py, .jar, .cmd) existiert, bevor du etwas neu baust oder nachinstallierst.
+Fehlt ein Werkzeug ganz, installiere oder baue es selbständig.
+
+AUTONOMIE
+Installiere, führe aus, ändere und lösche ohne Rückfrage, solange es dem Projektziel im
+Workspace dient. Nur bei systemweiten, fremden oder produktiven Eingriffen außerhalb des
+Projekts erst nachfragen. Bei Mehrdeutigkeit: sinnvolle Annahme treffen, kurz nennen, weitermachen.
+
+UNTERAGENTEN
+Teile größere Aufgaben in Teilaufgaben auf und bearbeite sie mit mehreren parallelen
+Unteragenten (z. B. nach Modul, Analyse-Kategorie oder Pipeline-Schritt), statt alles seriell
+abzuarbeiten. Jeder Unteragent bekommt ein klares Teilziel und einen eigenen Ausgabebereich.
+Führe die Ergebnisse am Ende zu einer zusammenhängenden Antwort zusammen.
+
+ÄNDERUNGEN.MD (Pflicht bei jedem Teilschritt)
+Führe im Projekt-Wurzelverzeichnis eine Datei Änderungen.md, in der nach jedem Teilschritt
+(auch von Unteragenten) ein kurzer, chronologischer Eintrag ergänzt wird:
+- Was wurde gemacht (Aktion, betroffene Datei/Skript)
+- Warum (Ziel/Annahme, falls eine getroffen wurde)
+- Ergebnis/Fundstelle (z. B. Ausgabedatei, Auffälligkeit)
+- Offene Punkte / nächster sinnvoller Schritt
+Schreibe immer nur an (nichts Bestehendes löschen oder umschreiben), kurz und stichpunktartig,
+keine Rohdaten-Dumps. Die Datei muss so verständlich sein, dass eine KI in einem neuen Chat
+allein anhand von Änderungen.md nahtlos weiterarbeiten kann, ohne den bisherigen Chatverlauf zu kennen.
+Lies zu Beginn jeder Sitzung zuerst Änderungen.md, falls vorhanden, bevor du weitermachst.
+
+ARBEITSWEISE
+Lege Zwischenergebnisse strukturiert ab (Namensschema 01-…, 02-… üblich).
+Fasse Ergebnisse am Ende klar zusammen, nicht nur als Rohdaten-Dump.
+Gefundene sensible Werte (Keys, Tokens, Auth-Header) sind Analyseergebnis zur Dokumentation,
+kein Mittel für Zugriff auf fremde, nicht dir gehörende Konten/Server.`,
   params: { temperature: 0.7, topP: 0.9, topK: 40, repeatPenalty: 1.1, maxTokens: null, numCtx: 8192, autoCtx: true, minP: null, presencePenalty: null, seed: null, stop: '', keepAlive: '5m' },
   appearance: {
-    theme: 'dark', accent: '#0b5cff', fontSize: 15, showStats: true, enterToSend: true, thinkOpen: false, thinkLang: 'auto', thinkInGerman: false, winMaterial: 'none', accentAlpha: null, alpha: { dark: {}, light: {} },
+    theme: 'light', accent: '#0b5cff', fontSize: 15, showStats: true, enterToSend: true, thinkOpen: false, calmDuringGen: true, thinkLang: 'auto', thinkInGerman: false, winMaterial: 'none', accentAlpha: null, alpha: { dark: {}, light: {} },
     fontFamily: 'default', fontFamilyCustom: '', codeFont: 'default', codeFontCustom: '',
     lineHeight: 1.65, messageWidth: 820, radius: 10, sidebarWidth: 268,
     bgMode: 'brand', bgImage: '', bgOpacity: 75, bgBlur: 0,
     custom: { dark: {}, light: {} },
   },
   server: {
-    connId: '', pollSec: 2,
+    connId: '', pollSec: 2, dock: false,
     target: { mode: 'local', bin: 'strata', host: '', user: '', port: 22, key: '', remoteOs: 'linux' },
     launch: { preset: '', family: '', model: '', modelPath: '', dataDir: '', context: '', kv: '', vision: '', parallel: '', mtp: '', tune: '', gpu: '', access: '', port: '', apiKey: '', noApiKey: false, extra: '', savePreset: '', restart: false },
   },
   pricing: { enabled: true, eur: true, preset: 'avg', priceIn: 1.8, priceOut: 9.6, usdToEur: 0.9 },
-  workspace: { path: '', toolsEnabled: false, subagents: true, subagentSteps: 12, handoff: true, handoffPct: 70, handoffAutoSend: true, approval: 'write', execEnabled: true, execTimeout: 120, maxSteps: 25, readKB: 40, autoCompact: true, ctxBudgetPct: 80, keepToolResults: 3, maxFileKB: 512, maxFiles: 60, maxTotalKB: 1024, ignore: 'node_modules,.git,.venv,__pycache__,dist,build,.next,.idea,.vscode' },
+  workspace: { path: '', toolsEnabled: false, askUser: true, askUserAlways: false, subagents: true, subagentSteps: 12, handoff: true, handoffMode: 'clear', handoffPct: 70, handoffAutoSend: true, approval: 'write', execEnabled: true, execTimeout: 120, maxSteps: 25, readKB: 40, autoCompact: true, ctxBudgetPct: 80, keepToolResults: 3, maxFileKB: 512, maxFiles: 60, maxTotalKB: 1024, ignore: 'node_modules,.git,.venv,__pycache__,dist,build,.next,.idea,.vscode' },
 };
 
 const PRESETS = [
@@ -164,6 +201,7 @@ function tabConnections() {
           const p = PRESETS[+s.value];
           const c = { id: uid(), name: p.name, type: p.type, baseUrl: p.baseUrl, apiKey: '', extraParams: !!p.extraParams, thinkMode: p.thinkMode || 'effort' };
           conns.push(c);
+          if (!S.settings.activeConnection) S.settings.activeConnection = c.id; // erste Verbindung wird automatisch die aktive
           sel = c.id;
           changed();
           render();
@@ -191,11 +229,34 @@ function tabConnections() {
       thinkSel.value = LLM.thinkModeOf(conn);
       thinkSel.addEventListener('change', () => { conn.thinkMode = thinkSel.value; changed(); });
 
+      const imgSel = el('select', {}, [['auto', 'Automatisch (nach Modellname, z. B. „…-image“)'], ['on', 'Immer anfordern'], ['off', 'Nie anfordern']].map(([v, l]) => el('option', { value: v, text: l })));
+      imgSel.value = conn.imageOutput || 'auto';
+      imgSel.addEventListener('change', () => { conn.imageOutput = imgSel.value; changed(); });
+
+      const sampSel = el('select', {}, [['app', 'Von der App senden (Temperatur, Top-P, Top-K, Penalty … aus „Modell & Parameter“)'], ['server', 'Dem Server überlassen (nichts davon senden)']].map(([v, l]) => el('option', { value: v, text: l })));
+      sampSel.value = conn.samplingMode || 'app';
+      sampSel.addEventListener('change', () => { conn.samplingMode = sampSel.value; changed(); });
+
       const pIn = el('input', { type: 'number', min: 0, step: 0.01, value: conn.priceIn ?? '', placeholder: 'global' });
       const pOut = el('input', { type: 'number', min: 0, step: 0.01, value: conn.priceOut ?? '', placeholder: 'global' });
       pIn.addEventListener('input', () => { conn.priceIn = pIn.value === '' ? null : +pIn.value; changed(); });
       pOut.addEventListener('input', () => { conn.priceOut = pOut.value === '' ? null : +pOut.value; changed(); });
 
+      const speedOut = el('pre', { class: 'speed-result hidden' });
+      const speedBtn = el('button', { class: 'btn', text: 'Geschwindigkeit testen', title: 'Sendet mehrere kurze Testanfragen und vergleicht die Geschwindigkeit je nach Anfrage-Art', onclick: async () => {
+        speedBtn.disabled = true;
+        speedOut.classList.remove('hidden');
+        try { await runSpeedTest(conn, (t) => { speedOut.textContent = t; }); } catch (e) { speedOut.textContent = 'Test fehlgeschlagen: ' + e.message; }
+        speedBtn.disabled = false;
+      } });
+      const diagOut = el('pre', { class: 'speed-result hidden' });
+      const diagBtn = el('button', { class: 'btn', text: 'Verbindung genau prüfen', title: 'Fragt die wichtigen Adressen einzeln ab und zeigt Statuscode, Fehler und mögliche Ursache', onclick: async () => {
+        diagBtn.disabled = true;
+        diagOut.classList.remove('hidden');
+        diagOut.textContent = 'Prüfe …';
+        try { await diagnoseConnection(conn, (t) => { diagOut.textContent = t; }); } catch (e) { diagOut.textContent = 'Prüfung fehlgeschlagen: ' + e.message; }
+        diagBtn.disabled = false;
+      } });
       const result = el('div', { class: 'test-result' });
       const testBtn = el('button', { class: 'btn', text: 'Verbindung testen', onclick: async () => {
         result.className = 'test-result';
@@ -213,14 +274,13 @@ function tabConnections() {
           }
         } catch (e) {
           result.className = 'test-result err';
-          result.textContent = e.message + (conn.type === 'ollama' ? '\nLäuft Ollama? Starte es mit „ollama serve“.' : '');
+          result.textContent = e.message + (conn.type === 'ollama' ? '\nLäuft Ollama? Starte es mit „ollama serve“.' : '') + '\n\nTipp: „Verbindung genau prüfen“ zeigt, woran es liegt.';
         }
       } });
       const delBtn = el('button', { class: 'btn danger', text: 'Entfernen', onclick: async () => {
-        if (conns.length <= 1) return toast('Mindestens eine Verbindung muss bleiben.');
         if (!(await confirmModal('Verbindung entfernen', `„${conn.name}“ wirklich entfernen?`, { okLabel: 'Entfernen', danger: true }))) return;
         S.settings.connections = conns.filter((c) => c.id !== conn.id);
-        if (S.settings.activeConnection === conn.id) S.settings.activeConnection = S.settings.connections[0].id;
+        if (S.settings.activeConnection === conn.id) S.settings.activeConnection = S.settings.connections[0] ? S.settings.connections[0].id : '';
         changed();
         render();
         refreshModels();
@@ -233,6 +293,8 @@ function tabConnections() {
         frow('API-Schlüssel', 'Wird lokal im Datenordner gespeichert.', keyIn),
         conn.type === 'openai' ? frow('Erweiterte Parameter senden', 'top_k und repeat_penalty mitschicken. Für llama.cpp, LM Studio, vLLM. Bei OpenAI ausschalten.', el('label', { class: 'switch' }, extra, el('span'))) : null,
         frow('Eigener Preis (€ je 1 Mio. Token)', 'Optional. Leer = globale Preise aus dem Tab „Kosten“. Links Eingabe, rechts Ausgabe.', [pIn, pOut]),
+        frow('Sampling-Parameter', 'Die App sendet standardmäßig Temperatur, Top-P, Top-K und Wiederholungs-Strafe mit. Die Weboberfläche eines Servers (z. B. Strata) schickt meist weniger oder andere Werte. Abweichende Werte können Qualität und Geschwindigkeit verändern, besonders bei spekulativem Decodieren (MTP). Mit „Dem Server überlassen“ gelten seine Standardwerte. Unter jeder Antwort zeigt „Anfrage“ genau, was gesendet wurde.', sampSel),
+        conn.type === 'openai' ? frow('Bildausgabe', 'Damit ein Modell Bilder erzeugen darf, muss die Anfrage das ausdrücklich verlangen (modalities: image, text). Ohne das antwortet auch ein bildfähiges Modell nur mit Text und sagt, es könne keine Bilder erzeugen. „Immer anfordern“ nur für Modelle, die Bilder ausgeben können, sonst lehnt der Server die Anfrage ab.', imgSel) : null,
         conn.type === 'openai' ? frow('Denkaufwand senden als', 'Bestimmt, wie die Auswahl „Denken“ im Eingabefeld an den Server geht. Bei llama.cpp mit Qwen3 und ähnlichen Modellen: Chat-Template.', thinkSel) : null,
         conn.type === 'openai' ? frow('Strata-Konfigdatei (optional)', 'Falls der Server die Kontextgröße nicht meldet (Strata tut das bei der „native“-Instanz nicht): Datei „strata-….json“ wählen. Die App liest daraus „--max-context“. Beispiel: die Datei, die du mir gezeigt hast.', (() => {
           const inp = el('input', { type: 'text', value: conn.configPath || '', placeholder: 'C:\\…\\strata-iq3_s.json' });
@@ -240,8 +302,10 @@ function tabConnections() {
           const pick = el('button', { class: 'btn sm', text: 'Datei wählen …', onclick: async () => { const p = await api.cfg.pick(); if (p) { inp.value = p; conn.configPath = p; changed(); } } });
           return el('div', { class: 'row-gap' }, inp, pick);
         })()) : null,
-        el('div', { class: 'row-gap', style: { marginTop: '14px' } }, testBtn, delBtn),
-        result
+        el('div', { class: 'row-gap', style: { marginTop: '14px' } }, testBtn, diagBtn, speedBtn, delBtn),
+        result,
+        diagOut,
+        speedOut
       );
 
       if (conn.type === 'ollama') {
@@ -281,6 +345,7 @@ function tabConnections() {
         editor.append(el('h3', { text: 'Modell von Ollama herunterladen' }), el('div', { class: 'fctrl' }, nameP, pullBtn), bar, status);
       }
     }
+    if (!conn) editor.append(el('div', { class: 'fhint', style: { padding: '8px 4px', lineHeight: 1.6 }, text: 'Noch keine Verbindung angelegt. Wähle links unter „+ Verbindung hinzufügen …“ eine Vorlage (z. B. Ollama, LM Studio, Strata, llama.cpp, OpenAI) und passe Name und Adresse an.' }));
     wrap.append(el('div', { class: 'conn-layout' }, list, editor));
   }
   render();
@@ -434,6 +499,20 @@ function tabAppearance() {
       el('button', { class: 'btn sm', text: 'Farben dieses Modus zurücksetzen', onclick: () => { a.custom[th] = {}; a.alpha[th] = {}; commit(); render(); } })
     ));
     wrap.append(frow('Fenstermaterial (Windows 11)', 'Damit Transparenz den Desktop durchscheinen lässt: „Acrylic“ (unscharf) oder „Mica“. Senke dann die Deckkraft von „Chat-Hintergrund“ und „Seitenleisten“. Ohne Material scheint nur das Hintergrundbild bzw. die Fensterfarbe durch. Benötigt Windows 11 22H2 oder neuer.', bindSelect('appearance.winMaterial', [{ value: 'none', label: 'Aus' }, { value: 'acrylic', label: 'Acrylic (unscharf)' }, { value: 'mica', label: 'Mica' }, { value: 'tabbed', label: 'Mica (getönt)' }])));
+
+    wrap.append(frow('Rechtschreibprüfung', 'Falsch geschriebene Wörter im Eingabefeld werden rot wellig unterstrichen. Rechtsklick auf das Wort zeigt Vorschläge und „Zum Wörterbuch hinzufügen“. Beim ersten Mal lädt die App die Wörterbücher selbst herunter (Internet nötig).', bindSwitch('spell.enabled')));
+    wrap.append(frow('Sprachen der Rechtschreibprüfung', '„Deutsch und Englisch“ markiert ein Wort nur, wenn es in keiner der beiden Sprachen vorkommt. Das vermeidet falsche Markierungen bei englischen Fachwörtern.', bindSelect('spell.lang', [{ value: 'de-en', label: 'Deutsch und Englisch' }, { value: 'de', label: 'Deutsch' }, { value: 'en', label: 'Englisch' }])));
+    wrap.append(frow('Sparmodus beim Antworten', 'Während die KI antwortet, schaltet die Oberfläche Animationen und Unschärfe-Effekte ab. Das schont die Grafikkarte, die gerade das Modell rechnet (besonders wenn Modell und LLM Box auf demselben Rechner laufen).', bindSwitch('appearance.calmDuringGen')));
+    {
+      const gi = el('input', { type: 'checkbox' });
+      gi.checked = true;
+      api.gpuGet().then((v) => { gi.checked = !!v; }).catch(() => {});
+      gi.addEventListener('change', async () => {
+        const ok = await api.gpuSet(gi.checked);
+        toast(ok ? 'Wird nach einem Neustart der LLM Box wirksam.' : 'Konnte die Einstellung nicht speichern.', 5000);
+      });
+      wrap.append(frow('Grafikkarte für die Oberfläche nutzen', 'Aus = die Oberfläche wird ohne Grafikkarte gezeichnet (CPU). Das nimmt der Grafikkarte jede Last durch die LLM Box, kann aber Scrollen und Effekte etwas träger machen. Wirkt nach einem Neustart. Probiere es aus, wenn die Tokens pro Sekunde in der LLM Box niedriger sind als in der Server-Weboberfläche.', el('label', { class: 'switch' }, gi, el('span'))));
+    }
 
     /* Schrift */
     const fontSel = (key, customKey, table) => {
@@ -614,13 +693,16 @@ function tabWorkspace() {
       frow('Kontext-Budget (%)', 'Ab diesem Anteil des Fensters (abzüglich Platz für die Antwort) wird verschlankt.', bindNumber('workspace.ctxBudgetPct', { min: 30, max: 95, placeholder: '80' })),
       frow('Letzte Werkzeug-Ergebnisse behalten', 'So viele der neuesten Ergebnisse bleiben immer vollständig erhalten.', bindNumber('workspace.keepToolResults', { min: 0, max: 20, placeholder: '3' })),
       frow('Max. Größe pro Datei-Lesen (KB)', 'Größere Dateien liefert die KI nur abschnittsweise (start_line/end_line). 40 KB ≈ 10.000 Tokens.', bindNumber('workspace.readKB', { min: 4, placeholder: '40' })),
+      frow('Rückfragen mit Antwortvorschlägen', 'Die KI kann dir Rückfragen mit Antworten zum Anklicken stellen (Werkzeug „ask_user“), wenn Angaben fehlen oder es mehrere Wege gibt. Du kannst auch eine eigene Antwort tippen oder überspringen.', bindSwitch('workspace.askUser')),
+      frow('Rückfragen auch ohne Dateizugriff', 'Bietet der KI dieses eine Werkzeug auch an, wenn „KI-Dateizugriff“ aus ist. Das Modell muss Werkzeuge (Tool Calling) unterstützen, sonst meldet der Server einen Fehler.', bindSwitch('workspace.askUserAlways')),
       frow('Unteragenten erlauben', 'Die KI kann Teilaufgaben an Unteragenten mit eigenem Kontext übergeben (nur lesen und suchen). Das hält den Hauptchat klein. Sichtbar unter „Unteragenten“ oben.', bindSwitch('workspace.subagents')),
       frow('Max. Schritte pro Unteragent', 'Danach muss der Unteragent zusammenfassen.', bindNumber('workspace.subagentSteps', { min: 2, max: 40, placeholder: '12' })),
-      frow('Neue Session mit Übergabe anbieten', 'Die KI kann eine neue Session vorschlagen, und die App zeigt einen Hinweis, wenn der Kontext knapp wird. Ein Klick öffnet einen neuen Chat und übergibt Ziel, Stand, geänderte Dateien und den nächsten Schritt.', bindSwitch('workspace.handoff')),
+      frow('Kontext leeren / neue Session mit Übergabe anbieten', 'Die KI kann das Leeren des Kontexts bzw. eine neue Session vorschlagen, und die App zeigt einen Hinweis, wenn der Kontext knapp wird. Die Übergabe enthält Ziel, Stand, geänderte Dateien und den nächsten Schritt.', bindSwitch('workspace.handoff')),
+      frow('Bei vollem Kontext bevorzugen', '„Kontext leeren“: Der Chat bleibt derselbe, der alte Verlauf bleibt sichtbar, die KI bekommt nur die Übergabe (Ziel, Stand, geänderte Dateien, nächster Schritt). „Neue Session“: öffnet einen neuen Chat. Ist Leeren nicht möglich, wird automatisch eine neue Session geöffnet. Die andere Möglichkeit bleibt als Schaltfläche erhalten.', bindSelect('workspace.handoffMode', [{ value: 'clear', label: 'Kontext leeren (im selben Chat)' }, { value: 'new', label: 'Neue Session (neuer Chat)' }])),
       frow('Hinweis ab Kontext-Füllstand (%)', 'Ab diesem Anteil weist die App darauf hin und bittet die KI, eine Übergabe vorzuschlagen.', bindNumber('workspace.handoffPct', { min: 30, max: 95, placeholder: '70' })),
-      frow('Übergabe sofort senden', 'Aus: Die Übergabe wird nur in das Eingabefeld eingefügt, damit du sie vorher prüfen kannst.', bindSwitch('workspace.handoffAutoSend')),
+      frow('Übergabe sofort senden', 'Aus: Die Übergabe wird nur in das Eingabefeld eingefügt, damit du sie vorher prüfen kannst (gilt für Leeren und neue Session).', bindSwitch('workspace.handoffAutoSend')),
       el('h3', { text: 'Grenzen beim Anhängen' }),
-      frow('Max. Dateigröße (KB)', 'Größere Textdateien werden übersprungen.', bindNumber('workspace.maxFileKB', { min: 1, placeholder: '512' })),
+      frow('Max. Dateigröße (KB)', 'Größere Textdateien werden übersprungen. Bei PDF, Word, Excel usw. gilt das Limit für den ausgelesenen Text, der dann gekürzt wird.', bindNumber('workspace.maxFileKB', { min: 1, placeholder: '512' })),
       frow('Max. Dateien pro Ordner', null, bindNumber('workspace.maxFiles', { min: 1, placeholder: '60' })),
       frow('Max. Gesamtgröße (KB)', 'Pro Anhängen-Vorgang. Grob: 4 KB ≈ 1000 Tokens.', bindNumber('workspace.maxTotalKB', { min: 1, placeholder: '1024' })),
       frow('Ignorieren', 'Ordner- und Dateinamen, durch Komma getrennt.', bindText('workspace.ignore'))
@@ -630,11 +712,57 @@ function tabWorkspace() {
   return wrap;
 }
 
+/* Chats auf mehreren Rechnern: gemeinsamer Ordner (NAS, Netzlaufwerk, OneDrive …) */
+function syncRowHolder() {
+  const holder = el('div');
+  const build = async () => {
+    const sy = await api.sync.get();
+    S.sync = { dir: sy.dir, deviceId: sy.deviceId, deviceName: sy.deviceName };
+    const reload = async () => {
+      S.sync = await api.sync.get();
+      S.chat = null;
+      await loadChatList();
+      if (S.chatList.length) await openChat(S.chatList[0].id);
+      else newChat();
+      build();
+    };
+    const btns = el('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } });
+    btns.append(el('button', { class: 'btn sm', text: 'Ordner wählen …', onclick: async () => {
+      if (S.generating) return toast('Bitte erst warten, bis die Antwort fertig ist.');
+      const dir = await api.files.pickFolder('Gemeinsamen Ordner für Chats wählen');
+      if (!dir) return;
+      if (!(await confirmModal('Chats gemeinsam speichern', `Chats werden ab jetzt in „${dir}“ (Unterordner LLM-Box-Chats) gespeichert. Chats, die dort schon liegen, erscheinen sofort. Deine bisherigen lokalen Chats bleiben auf diesem Rechner erhalten.`, { okLabel: 'Übernehmen' }))) return;
+      const r = await api.sync.setDir(dir);
+      if (!r.ok) return toast(r.error, 7000);
+      if (await confirmModal('Lokale Chats kopieren?', 'Sollen die Chats, die bisher nur auf diesem Rechner liegen, in den gemeinsamen Ordner kopiert werden? Vorhandene Chats werden nicht überschrieben.', { okLabel: 'Kopieren' })) {
+        const m = await api.sync.migrate();
+        toast(m.ok ? `${m.copied} Chat(s) kopiert${m.skipped ? `, ${m.skipped} waren schon vorhanden` : ''}.` : m.error, 5000);
+      }
+      await reload();
+    } }));
+    if (sy.dir) {
+      btns.append(el('button', { class: 'btn sm', text: 'Lokale Chats kopieren', onclick: async () => { const m = await api.sync.migrate(); toast(m.ok ? `${m.copied} Chat(s) kopiert${m.skipped ? `, ${m.skipped} waren schon vorhanden` : ''}.` : m.error, 5000); await reload(); } }));
+      btns.append(el('button', { class: 'btn sm danger', text: 'Wieder nur lokal', onclick: async () => {
+        if (S.generating) return toast('Bitte erst warten, bis die Antwort fertig ist.');
+        await api.sync.setDir('');
+        toast('Chats werden wieder nur auf diesem Rechner gespeichert. Der gemeinsame Ordner bleibt unverändert.', 5000);
+        await reload();
+      } }));
+    }
+    const row = frow('Chats auf mehreren Rechnern', (sy.dir ? `Aktiv: ${sy.folder}` : 'Aus: Chats liegen nur auf diesem Rechner.') + ` Wähle einen Ordner, den alle Rechner erreichen (NAS, Netzlaufwerk, OneDrive …). Einstellungen und Verbindungen bleiben je Rechner getrennt. Änderungen von anderen Rechnern erscheinen nach wenigen Sekunden. Dieser Rechner: ${sy.deviceName}.`, btns);
+    holder.innerHTML = '';
+    holder.append(row);
+  };
+  build();
+  return holder;
+}
+
 function tabData() {
   const wrap = el('div');
   api.appInfo().then((info) => {
     wrap.append(
       frow('Datenordner', info.dataDir, el('button', { class: 'btn sm', text: 'Öffnen', onclick: () => api.openPath(info.dataDir) })),
+      syncRowHolder(),
       frow('Alle Chats exportieren', 'Als eine JSON-Datei.', el('button', { class: 'btn sm', text: 'Exportieren …', onclick: async () => {
         const list = await api.chats.list();
         const all = [];
@@ -690,4 +818,211 @@ function openSettings(tab = 'conn') {
   }
   show(tab);
   openModal({ title: 'Einstellungen', wide: true, bare: true, body: el('div', { class: 'settings' }, nav, pane), onClose: () => { refreshModels(); } });
+}
+
+
+/* ═════════════ Geschwindigkeitstest ═════════════
+   Sendet dieselbe kurze Aufgabe in mehreren Anfrage-Arten und vergleicht Tokens/s. Einzelne Läufe schwanken auch auf demselben Server
+   um 10 % und mehr (GPU-Takt, Wärme, Cache). Deshalb: ein Aufwärmlauf, dann mehrere Durchgänge in wechselnder Reihenfolge und der Median. */
+async function runSpeedTest(conn, show) {
+  const PROMPT = 'Schreibe einen zusammenhängenden Text von etwa 200 Wörtern über das Wetter im Herbst. Nur der Text, keine Überschrift.';
+  const MAXTOK = 256;
+  const ROUNDS = 3;
+  let model = conn.id === S.settings.activeConnection ? currentModel() : '';
+  if (!model) {
+    const ms = await LLM.listModels(conn);
+    model = ms[0] && ms[0].id;
+  }
+  if (!model) throw new Error('Kein Modell gefunden.');
+  const base = { ...S.settings.params, maxTokens: MAXTOK, seed: null };
+  const sys = S.settings.systemPrompt || '';
+  const minConn = { ...conn, samplingMode: 'server', thinkMode: 'none' };
+  const variants = [
+    { key: 'min', name: 'Minimal (nur Nachricht, Sampling dem Server überlassen)', conn: minConn, params: { maxTokens: MAXTOK }, system: '', tools: null },
+    { key: 'app', name: 'Wie die App sendet (Sampling aus „Modell & Parameter“)', conn, params: base, system: sys, tools: null },
+    { key: 'poll', name: 'Minimal + Füllstand-Abfrage alle 2 s (/slots)', conn: minConn, params: { maxTokens: MAXTOK }, system: '', tools: null, poll: true },
+    { key: 'tools', name: 'Wie die App sendet + Werkzeug-Definitionen (Dateizugriff)', conn, params: base, system: sys, tools: LLM.WORKSPACE_TOOLS },
+  ];
+  variants.forEach((v) => { v.vals = []; v.srvSeen = false; v.tokens = null; });
+  const timeline = []; // alle gewerteten Läufe in zeitlicher Reihenfolge
+  const median = (a) => { const b = [...a].sort((x, y) => x - y); const m = b.length >> 1; return b.length ? (b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2) : null; };
+  const f = (v) => (v === null || v === undefined ? '–' : fmt.tps(v));
+  const render = (note, hints) => {
+    const w = Math.max(...variants.map((v) => v.name.length));
+    const lines = [`Modell: ${model} · je ${MAXTOK} Tokens max. · ${ROUNDS} Durchgänge (Median)`, '', 'Variante'.padEnd(w) + '   Median t/s   Streuung t/s   Läufe'];
+    for (const v of variants) lines.push(v.name.padEnd(w) + '   ' + String(f(median(v.vals))).padStart(10) + '   ' + String(v.vals.length ? `${f(Math.min(...v.vals))}–${f(Math.max(...v.vals))}` : '–').padStart(12) + '   ' + String(v.vals.length).padStart(5));
+    if (note) lines.push('', note);
+    if (hints) lines.push('', ...hints);
+    show(lines.join('\n'));
+  };
+  const one = async (v, maxTok) => {
+    let poll = null;
+    if (v.poll) poll = setInterval(() => { LLM.slotInfo(conn).catch(() => {}); }, 2000);
+    try {
+      const run = LLM.streamChat({ conn: v.conn, model, system: v.system, messages: [{ role: 'user', content: PROMPT }], params: { ...v.params, maxTokens: maxTok }, tools: v.tools, thinkLevel: 'auto', handlers: {} });
+      const res = await run.promise;
+      const ct = res.stats.completionTokens;
+      const sv = ct > 20 ? (await LLM.serverDecodeStats(conn, ct)) || {} : {};
+      const srv = sv.tps ?? null;
+      if (srv !== null) v.srvSeen = true;
+      return { tps: srv ?? res.stats.tps, tokens: ct, viaServer: srv !== null, temp: sv.temp ?? null, power: sv.power ?? null };
+    } finally {
+      if (poll) clearInterval(poll);
+    }
+  };
+  document.body.classList.add('gen'); // Oberfläche ruhig stellen wie beim Antworten
+  try {
+  render('Aufwärmlauf (wird nicht gewertet) …');
+  await one(variants[0], 64);
+  await new Promise((r) => setTimeout(r, 500));
+  const total = ROUNDS * variants.length;
+  let n = 0;
+  for (let r = 0; r < ROUNDS; r++) {
+    // Reihenfolge je Durchgang verschieben, damit keine Variante immer zuerst (kalt) oder zuletzt läuft
+    for (let k = 0; k < variants.length; k++) {
+      const v = variants[(k + r) % variants.length];
+      render(`Läuft: ${v.name} … (${++n} von ${total})`);
+      const res = await one(v, MAXTOK);
+      if (res.tps) { v.vals.push(res.tps); timeline.push({ key: v.key, tps: res.tps, temp: res.temp, power: res.power }); }
+      v.tokens = res.tokens;
+      await new Promise((x) => setTimeout(x, 500));
+    }
+  }
+  } finally {
+    document.body.classList.remove('gen');
+  }
+  // Auswertung
+  const [min, app, poll, tools] = variants;
+  const mm = (v) => median(v.vals);
+  const spread = (v) => (v.vals.length > 1 ? (Math.max(...v.vals) - Math.min(...v.vals)) / mm(v) : 0);
+  const noise = Math.max(...variants.map(spread));
+  // Ein Unterschied zählt nur, wenn er größer als 8 % und größer als die Streuung der beiden Varianten ist
+  const slower = (x, y) => mm(x) && mm(y) && mm(y) < mm(x) * 0.92 && (mm(x) - mm(y)) / mm(x) > Math.max(spread(x), spread(y)) * 0.6;
+  const hints = [];
+  if (slower(min, app)) hints.push(`• Die Sampling-Werte der App bremsen: ${f(mm(app))} statt ${f(mm(min))} t/s. Stelle „Sampling-Parameter“ dieser Verbindung auf „Dem Server überlassen“ oder gleiche Temperatur, Top-P, Top-K und Wiederholungs-Strafe mit der Server-Weboberfläche ab.`);
+  if (slower(min, poll)) hints.push(`• Die Füllstand-Abfrage (/slots) bremst den Server: ${f(mm(poll))} statt ${f(mm(min))} t/s.`);
+  if (slower(app, tools)) hints.push(`• Die Werkzeug-Definitionen kosten Geschwindigkeit (${f(mm(tools))} statt ${f(mm(app))} t/s). Mit ausgeschaltetem Dateizugriff ist der Prompt kleiner.`);
+  // Verlauf: sinkt die Geschwindigkeit über die Zeit (unabhängig von der Variante), liegt es am Server bzw. an der Grafikkarte
+  const label = { min: 'Minimal', app: 'App', poll: '+/slots', tools: '+Werkzeuge' };
+  const tlLines = timeline.map((r, i) => `  ${String(i + 1).padStart(2)}. ${label[r.key].padEnd(11)} ${String(f(r.tps)).padStart(6)} t/s` + (r.temp !== null ? `   GPU ${Math.round(r.temp)} °C` : '') + (r.power !== null ? `, ${Math.round(r.power)} W` : ''));
+  if (timeline.length >= 6) {
+    const k = Math.floor(timeline.length / 3);
+    const avgOf = (a) => a.reduce((x, r) => x + r.tps, 0) / a.length;
+    const early = avgOf(timeline.slice(0, k));
+    const late = avgOf(timeline.slice(-k));
+    const t1 = timeline.slice(0, k).map((r) => r.temp).filter((x) => x !== null);
+    const t2 = timeline.slice(-k).map((r) => r.temp).filter((x) => x !== null);
+    if (late < early * 0.88) {
+      const hot = t1.length && t2.length ? t2.reduce((a, b) => a + b, 0) / t2.length - t1.reduce((a, b) => a + b, 0) / t1.length : null;
+      hints.push(`• Die Geschwindigkeit sinkt im Verlauf des Tests von ${f(early)} auf ${f(late)} t/s, unabhängig von der Variante.` + (hot !== null && hot >= 3 ? ` Die GPU wird dabei ${Math.round(hot)} °C wärmer: wahrscheinlich Wärme-Drosselung (Kühlung, Lüfterkurve, Power-Limit prüfen).` : ' Das spricht für Wärme-Drosselung oder andere Programme, die die Grafikkarte nutzen.'));
+    }
+  }
+  if (!hints.length) hints.push('• Kein belastbarer Unterschied zwischen den Anfrage-Arten: Was die LLM Box sendet, bremst nicht.');
+  if (noise > 0.1) hints.push(`• Die Läufe schwanken selbst um bis zu ${Math.round(noise * 100)} %. Das liegt am Server (GPU-Takt, Wärme, Cache, Textart), nicht an der Anfrage. Ein Vergleich mit der Server-Weboberfläche ist nur mit mehreren Läufen und gleichem Text aussagekräftig.`);
+  if (!variants.some((v) => v.srvSeen)) hints.push('• Dieser Server liefert keine eigene Geschwindigkeit (/metrics). Die Zahlen sind in der App gemessen.');
+  else hints.push('• Die Zahlen stammen vom Server selbst. Die Messung der App ist damit nicht die Ursache.');
+  hints.push('Verlauf der Läufe:', ...tlLines);
+  hints.push('• Vergleich mit der Server-Weboberfläche: Sende denselben Prompt dort und in der LLM Box und sieh im Fenster „Server“ → Monitor unter „Letzte Anfragen“ nach: Dort stehen beide Anfragen mit Prompt-Größe, wiederverwendetem Cache und tok/s, vom Server selbst gemessen.');
+  render(null, hints);
+}
+
+
+/* ═════════════ Verbindung genau prüfen ═════════════
+   Fragt die wichtigen Adressen einzeln ab und erklärt Statuscode und Fehler. Hilft, wenn „Verbindung testen“ scheitert oder die App
+   ein geladenes Modell nicht sieht (falsche Adresse, fehlender oder veralteter API-Schlüssel, Firewall, anderer Port). */
+async function diagnoseConnection(conn, show) {
+  const lines = [];
+  const out = (t = '') => { lines.push(t); show(lines.join('\n')); };
+  const base = String(conn.baseUrl || '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(base)) return out('Die Basis-Adresse muss mit http:// oder https:// beginnen, z. B. http://localhost:8080/v1');
+  const hasKey = !!conn.apiKey;
+  const mk = (withKey) => ({ 'Content-Type': 'application/json', Accept: 'application/json', ...(withKey && hasKey ? { Authorization: 'Bearer ' + conn.apiKey } : {}) });
+  const get = async (url, withKey = true) => {
+    const t0 = performance.now();
+    let r;
+    try { r = await api.fetch({ url, method: 'GET', headers: mk(withKey), timeout: 8000 }); } catch (e) { r = { ok: false, status: 0, error: e.message }; }
+    let json = null;
+    try { json = JSON.parse(r.text); } catch {}
+    return { ...r, json, ms: Math.round(performance.now() - t0) };
+  };
+  const rootOf = (b) => b.replace(/\/v1$/, '');
+  const root = rootOf(base);
+  const isOllama = conn.type === 'ollama';
+  out(`Adresse: ${base}`);
+  out(`Typ: ${isOllama ? 'Ollama' : 'OpenAI-kompatibel'} · API-Schlüssel: ${hasKey ? 'eingetragen und wird gesendet' : 'keiner eingetragen'}`);
+  out();
+  const modelsUrl = isOllama ? base + '/api/tags' : base + '/models';
+  const m = await get(modelsUrl);
+  const names = m.json ? (m.json.models || m.json.data || []).map((x) => x.id || x.name).filter(Boolean) : [];
+  out(`1) Modellliste  GET ${modelsUrl.replace(base, '…')}  →  ${m.status || 'keine Antwort'} (${m.ms} ms)${m.error ? '  Fehler: ' + m.error : ''}`);
+  if (m.ok) out(`   ${names.length} Modell${names.length === 1 ? '' : 'e'}: ${names.slice(0, 5).join(', ') || '–'}`);
+  let verdict = '';
+  if (!m.ok) {
+    if (m.status === 401 || m.status === 403) {
+      const nk = hasKey ? await get(modelsUrl, false) : null;
+      verdict = hasKey
+        ? 'Der Server lehnt den API-Schlüssel ab. Bei Strata erzeugt „strata launch“ ohne festen Schlüssel einen neuen: Trage den aktuellen unter Einstellungen → Verbindungen ein (in Strata: „Schlüssel anzeigen“) oder starte mit einem festen Schlüssel.' + (nk && nk.ok ? ' (Ohne Schlüssel würde es gehen.)' : '')
+        : 'Der Server verlangt einen API-Schlüssel, in der Verbindung ist keiner eingetragen.';
+    } else if (m.status === 404) {
+      const alt = base.endsWith('/v1') ? await get(root + '/models') : await get(base + '/v1/models');
+      verdict = alt.ok
+        ? `Die Adresse stimmt nicht ganz: Unter ${base.endsWith('/v1') ? root : base + '/v1'} antwortet der Server. Trage ${base.endsWith('/v1') ? root : base + '/v1'} ein.`
+        : 'Der Server antwortet, kennt diese Adresse aber nicht. Stimmt der Port? Ist es wirklich ein Server mit OpenAI-Schnittstelle?';
+    } else if (m.status === 0) {
+      const code = String(m.error || '');
+      let host = '';
+      try { host = new URL(base).hostname; } catch {}
+      let alt = '';
+      if (/^localhost$/i.test(host) && /ECONNREFUSED|ETIMEDOUT|ECONNRESET|fetch failed/i.test(code)) {
+        for (const h of ['127.0.0.1', '[::1]']) {
+          const u = base.replace(/\/\/localhost/i, '//' + h);
+          const t = await get(isOllama ? u + '/api/tags' : u + '/models');
+          out(`   Gegenprobe mit ${h}: ${t.ok ? 'ANTWORTET' : t.status || 'keine Antwort'}`);
+          if (t.ok && !alt) alt = h;
+        }
+      }
+      if (alt) verdict = `„localhost“ führt zu einer Adresse, an der der Server nicht lauscht. Trage stattdessen ${alt} ein (Basis-Adresse: ${base.replace(/\/\/localhost/i, '//' + alt)}).`;
+      else if (/ECONNREFUSED/i.test(code)) verdict = 'Nichts nimmt Verbindungen auf dieser Adresse und diesem Port an: Der Server läuft nicht oder lauscht auf einem anderen Port bzw. nur auf einer anderen Adresse (z. B. „--access“ in Strata: lokal, LAN …). Prüfe mit „strata launch --status“.';
+      else if (/ETIMEDOUT|Zeit/i.test(code)) verdict = 'Keine Antwort innerhalb von 8 Sekunden: falsche IP-Adresse, Firewall oder der Rechner ist nicht erreichbar.';
+      else if (/ENOTFOUND|EAI_AGAIN/i.test(code)) verdict = 'Der Rechnername ist unbekannt. Prüfe die Schreibweise oder nimm die IP-Adresse.';
+      else verdict = 'Keine Verbindung. Läuft der Server, und stimmen Adresse und Port?';
+    } else verdict = `Der Server antwortet mit Status ${m.status}: ${String(m.text || '').slice(0, 160)}`;
+  } else if (/^\s*(<!doctype html|<html)/i.test(String(m.text || ''))) {
+    const nk = hasKey ? await get(modelsUrl, false) : null;
+    verdict = 'Der Server liefert eine Webseite (HTML) statt der API. Die Adresse zeigt vermutlich auf die Oberfläche der Strata-App statt auf den Modell-Server (ein falscher API-Schlüssel würde bei Strata mit 401 beantwortet, nicht mit einer Seite). Trage den Port des Modell-Servers ein (meist 8080; siehe „strata launch --status“).' + (nk ? (/^\s*(<!doctype html|<html)/i.test(String(nk.text || '')) ? ' Ohne Schlüssel kommt dieselbe Webseite.' : ` Ohne Schlüssel antwortet der Server anders (Status ${nk.status}).`) : '');
+  } else if (!names.length && !isOllama) {
+    verdict = 'Der Server antwortet, meldet aber kein Modell. Ist in Strata ein Modell geladen? („Modell laden“ im Fenster „Server“.)';
+  }
+  if (!isOllama) {
+    const st = await get(base + '/status');
+    const st2 = st.status === 404 ? await get(root + '/v1/status') : st;
+    out(`2) Zustand      GET /v1/status  →  ${st2.status || 'keine Antwort'} (${st2.ms} ms)${st2.error ? '  Fehler: ' + st2.error : ''}`);
+    if (st2.ok && !st2.json) out(`   ACHTUNG: Antwort ist kein JSON. Anfang: „${String(st2.text || '').replace(/\s+/g, ' ').trim().slice(0, 120)}“`);
+    if (st2.ok && st2.json) out(`   Modell geladen: ${st2.json.loaded === false ? 'NEIN' : st2.json.loaded === true ? 'ja' : '(unbekannt)'}${st2.json.model ? ' · ' + st2.json.model : ''}`);
+    const mt = await get(root + '/metrics');
+    out(`3) Monitor      GET /metrics  →  ${mt.status || 'keine Antwort'} (${mt.ms} ms)${mt.error ? '  Fehler: ' + mt.error : ''}`);
+    if (mt.ok && mt.json) out(`   Zustand: ${(mt.json.live && mt.json.live.state) || '–'} · Engine-Modell: ${(mt.json.engine && mt.json.engine.model) || '–'}`);
+    if (mt.ok && !(mt.json && ['engine', 'live', 'hardware', 'totals'].some((k) => k in mt.json))) {
+      const head = String(mt.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      out(`   ACHTUNG: Antwort 200, aber kein Strata-Monitor-Format. Anfang der Antwort: „${head || '(leer)'}“`);
+      out('   → Der Monitor läuft dann im eingeschränkten Modus, sofern /v1/status meldet, dass das Modell geladen ist.');
+    }
+    else if (mt.status === 404) out('   (kein Strata-Server: /metrics fehlt)');
+    if (m.ok && names.length && !(S.models || []).length) verdict = verdict || 'Der Server liefert Modelle, die App zeigt aber keine: Starte die App neu oder klicke oben auf „Aktualisieren“ (Pfeile neben der Modellauswahl).';
+  }
+  if (!isOllama) {
+    out();
+    out('4) Strata-Desktop-App (App-Host)');
+    for (const path of ['/api/native', '/api/monitor', '/api/health']) {
+      const x = await get(root + path);
+      const keys = x.json && typeof x.json === 'object' ? Object.keys(x.json).slice(0, 12).join(', ') : '';
+      out(`   GET ${path}  →  ${x.status || 'keine Antwort'} (${x.ms} ms)${x.json ? '  Felder: ' + (keys || '–') : x.ok ? '  (kein JSON: ' + String(x.text || '').replace(/\s+/g, ' ').slice(0, 60) + ')' : ''}`);
+      if (path === '/api/native' && x.json) {
+        const inst = (Array.isArray(x.json.instances) ? x.json.instances : [])[0];
+        if (inst) out(`      Instanz: ${Object.keys(inst).slice(0, 12).join(', ')}  |  status=${inst.status} phase=${inst.phase || '–'} port=${inst.port || '–'}  |  metrics-Felder: ${inst.metrics && typeof inst.metrics === 'object' ? Object.keys(inst.metrics).slice(0, 12).join(', ') : 'keine'}`);
+      }
+    }
+  }
+  out();
+  out(verdict ? '→ ' + verdict : '→ Alles in Ordnung: Der Server antwortet und liefert Modelle.');
 }

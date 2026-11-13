@@ -1,10 +1,13 @@
 {
   "name": "llm-box",
   "productName": "LLM Box",
-  "version": "1.0.21",
+  "version": "1.0.50",
   "description": "Lokale Chat-Oberfläche für Ollama, LM Studio, llama.cpp und OpenAI-kompatible APIs",
   "main": "main.js",
-  "author": "Reuschler-IT",
+  "author": {
+    "name": "Reuschler-IT",
+    "url": "https://github.com/ReuschlerIT"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -19,18 +22,50 @@
     "appId": "de.reuschler-it.llmbox",
     "copyright": "Copyright © 2026 Reuschler-IT",
     "productName": "LLM Box",
-    "directories": { "output": "dist" },
-    "files": ["main.js", "preload.js", "renderer/**/*", "build/icon.png", "package.json"],
-    "extraMetadata": { "author": "Reuschler-IT" },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "docs.js",
+      "renderer/**/*",
+      "build/icon.png",
+      "package.json",
+      "!node_modules/pdfjs-dist/{web,build,image_decoders,types}/**",
+      "!node_modules/pdfjs-dist/legacy/{web,image_decoders,types}/**",
+      "!node_modules/pdfjs-dist/legacy/build/*.map",
+      "!node_modules/pdfjs-dist/legacy/build/pdf.min.js",
+      "!node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js"
+    ],
+    "extraMetadata": {
+      "author": {
+        "name": "Reuschler-IT",
+        "url": "https://github.com/ReuschlerIT"
+      }
+    },
     "win": {
       "legalTrademarks": "Reuschler-IT",
       "icon": "build/icon.ico",
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false
     }
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.7",
+    "jszip": "^3.10.2",
+    "pdfjs-dist": "^3.11.174"
+  },
+  "homepage": "https://github.com/ReuschlerIT/llm-box",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ReuschlerIT/llm-box.git"
   }
 }

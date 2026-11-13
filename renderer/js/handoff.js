@@ -1,5 +1,8 @@
 'use strict';
-/* ═════════════ Neue Session mit Übergabe ═════════════
+/* ═════════════ Kontext leeren / Neue Session mit Übergabe ═════════════
+   - Bevorzugt (Einstellung „Bei vollem Kontext bevorzugen“, Standard): „Kontext leeren“. Der Chat bleibt derselbe, der alte Verlauf
+     bleibt sichtbar (gedämpft), wird der KI aber nicht mehr gesendet (chat.ctxStart). Die Übergabe steht als erste Nachricht danach.
+   - Fallback: neue Session (neuer Chat), wenn Leeren nicht möglich ist oder so eingestellt wurde.
    - Die KI kann „propose_new_session“ aufrufen: Im Chat erscheint eine Karte mit Schaltfläche.
    - Die App zeigt außerdem einen Hinweis, wenn der Kontext knapp wird oder die KI im Text eine neue Session empfiehlt.
    - Ein Klick öffnet einen neuen Chat und übergibt automatisch: Ziel, Stand, geänderte Dateien,
@@ -10,11 +13,14 @@ const HO_DISMISS = new Set();
 let hoBusy = false;
 
 const hoOn = () => S.settings.workspace.handoff !== false;
+const hoMode = () => (S.settings.workspace.handoffMode === 'new' ? 'new' : 'clear');
+// Leeren geht nicht, wenn auf einem anderen Rechner gearbeitet wird oder es nach der letzten Grenze nichts zu leeren gibt
+const hoCanClear = (chat) => !!chat && !remoteBusy(chat) && chat.messages.length - ctxStart(chat) >= 2;
 const hoPct = () => Math.min(95, Math.max(30, +S.settings.workspace.handoffPct || 70));
 
 function hoRatio(chat) {
   const max = +S.settings.params.numCtx || 0;
-  const last = [...chat.messages].reverse().find((m) => m.role === 'assistant' && m.stats);
+  const last = chat.messages.slice(ctxStart(chat)).reverse().find((m) => m.role === 'assistant' && m.stats);
   if (!max || !last) return 0;
   return ((last.stats.promptTokens || 0) + (last.stats.completionTokens || 0)) / max;
 }
@@ -39,7 +45,7 @@ function hoModelHint(chat) {
   const n = chat.messages.length;
   if (chat.hoHintAt && n - chat.hoHintAt < 10) return '';
   chat.hoHintAt = n;
-  return `\n\n[Hinweis der App: Der Kontext ist zu ${Math.round(r * 100)} % gefüllt. Schließe den aktuellen Teilschritt ab und rufe dann propose_new_session auf, mit einer vollständigen Übergabe in summary und dem nächsten Schritt in next_steps. Arbeite nicht endlos weiter.]`;
+  return `\n\n[Hinweis der App: Der Kontext ist zu ${Math.round(r * 100)} % gefüllt. Schließe den aktuellen Teilschritt ab und rufe dann propose_new_session auf, mit einer vollständigen Übergabe in summary und dem nächsten Schritt in next_steps (die App leert damit den Kontext oder öffnet eine neue Session). Arbeite nicht endlos weiter.]`;
 }
 
 function hoFiles(chat) {
@@ -53,7 +59,7 @@ function hoFiles(chat) {
   return [...map].map(([p, e]) => `- ${p} (${[e.edit && `${e.edit}× geändert`, e.write && `${e.write}× geschrieben`].filter(Boolean).join(', ')})`);
 }
 
-function hoCompose(chat, { summary, next }) {
+function hoCompose(chat, { summary, next, same }) {
   const cut = (t, n) => (t.length > n ? t.slice(0, n) + ' […]' : t);
   const firstUser = chat.messages.find((m) => m.role === 'user' && m.content);
   const lastUser = [...chat.messages].reverse().find((m) => m.role === 'user' && m.content && !m.handoff);
@@ -61,7 +67,9 @@ function hoCompose(chat, { summary, next }) {
   const files = hoFiles(chat);
   const parts = [
     `# Übergabe aus der vorherigen Sitzung`,
-    `Du setzt eine Arbeit fort, die in der Sitzung „${chat.title}“ begonnen wurde. Dort war der Kontext voll. Alles Wichtige steht hier. Lies Dateien nur gezielt nach (search_text, dann read_file mit start_line/end_line) und ändere sie mit edit_file.`,
+    same
+      ? `Der bisherige Verlauf dieses Chats wurde aus deinem Kontext entfernt, weil das Kontextfenster voll war. Du siehst ihn nicht mehr. Alles Wichtige steht hier. Lies Dateien nur gezielt nach (search_text, dann read_file mit start_line/end_line) und ändere sie mit edit_file.`
+      : `Du setzt eine Arbeit fort, die in der Sitzung „${chat.title}“ begonnen wurde. Dort war der Kontext voll. Alles Wichtige steht hier. Lies Dateien nur gezielt nach (search_text, dann read_file mit start_line/end_line) und ändere sie mit edit_file.`,
     firstUser ? `## Ursprüngliches Ziel\n${cut(firstUser.content, 1500)}` : '',
     summary ? `## Stand laut vorheriger Sitzung\n${cut(summary, 7000)}` : '',
     files.length ? `## Geänderte Dateien (automatisch erfasst)\n${files.join('\n')}\nDiese Änderungen sind bereits umgesetzt, mache sie nicht doppelt.` : '',
@@ -77,7 +85,7 @@ function hoCompose(chat, { summary, next }) {
 async function hoGenerate(chat) {
   const conn = activeConn();
   const model = currentModel();
-  const msgs = chat.messages.filter((m) => !m.error);
+  const msgs = chat.messages.slice(ctxStart(chat)).filter((m) => !m.error);
   while (msgs.length && msgs[msgs.length - 1].role === 'assistant' && (msgs[msgs.length - 1].toolCalls || []).length) msgs.pop(); // unvollständiger Werkzeugaufruf am Ende
   msgs.push({ role: 'user', content: 'Schreibe jetzt eine Übergabe für eine neue Sitzung, die ohne diesen Verlauf weiterarbeiten muss. Gliederung: Ziel · Erledigt (mit Dateipfaden und Funktionsnamen) · Wichtige Entscheidungen und Fakten · Offene Punkte · Nächster Schritt. Nur Dinge aus dem Verlauf, nichts erfinden, höchstens 500 Wörter. Keine Werkzeuge verwenden.' });
   const sys = buildSystem();
@@ -89,13 +97,19 @@ async function hoGenerate(chat) {
   return text;
 }
 
-/* Neuen Chat öffnen und die Übergabe senden. src: Werkzeug-Nachricht der Karte (optional) */
-async function hoStart({ summary, next, srcMsg } = {}) {
+/* Kontext leeren (gleicher Chat) oder neue Session (neuer Chat) mit Übergabe.
+   mode: 'clear' | 'new' (ohne Angabe: Einstellung). srcMsg: Werkzeug-Nachricht der Karte (optional) */
+async function hoStart({ summary, next, srcMsg, mode } = {}) {
   if (hoBusy) return;
   if (S.generating) return toast('Bitte erst die Antwort stoppen.');
   const old = S.chat;
   if (!old || !old.messages.length) return;
   if (!currentModel()) return toast('Bitte zuerst ein Modell wählen.');
+  let how = mode || hoMode();
+  if (how === 'clear' && !hoCanClear(old)) {
+    if (mode === 'clear') toast('Kontext leeren ist hier nicht möglich (es gibt nichts zu leeren oder ein anderer Rechner arbeitet). Es wird eine neue Session geöffnet.', 5000);
+    how = 'new';
+  }
   hoBusy = true;
   hoRefresh();
   try {
@@ -107,26 +121,41 @@ async function hoStart({ summary, next, srcMsg } = {}) {
         summary = await hoGenerate(old);
       }
     }
-    const text = hoCompose(old, { summary, next });
-    const chat = { id: uid(), title: 'Fortsetzung: ' + old.title.replace(/^Fortsetzung:\s*/, '').slice(0, 40), created: Date.now(), updated: Date.now(), connectionId: activeConn().id, model: S.settings.model, messages: [], handoffFrom: old.id, perm: old.perm ? JSON.parse(JSON.stringify(old.perm)) : undefined };
-    old.handoffTo = chat.id;
-    if (srcMsg) srcMsg.handoffTo = chat.id;
-    await saveChatNow(); // speichert den alten Chat (S.chat ist noch der alte)
-    S.chat = chat;
+    const text = hoCompose(old, { summary, next, same: how === 'clear' });
+    let chat;
+    if (how === 'clear') {
+      // Gleicher Chat: Grenze setzen. Alles davor bleibt sichtbar, geht aber nicht mehr an die KI.
+      chat = old;
+      chat.ctxStart = chat.messages.length;
+      chat.hoHintAt = 0;
+      chat.pendingContinue = false;
+      if (srcMsg) srcMsg.cleared = true;
+      S.warnedOver = null;
+      await saveChatNow();
+    } else {
+      chat = { id: uid(), title: 'Fortsetzung: ' + old.title.replace(/^Fortsetzung:\s*/, '').slice(0, 40), created: Date.now(), updated: Date.now(), connectionId: activeConn().id, model: S.settings.model, messages: [], handoffFrom: old.id, perm: old.perm ? JSON.parse(JSON.stringify(old.perm)) : undefined };
+      old.handoffTo = chat.id;
+      if (srcMsg) srcMsg.handoffTo = chat.id;
+      await saveChatNow(); // speichert den alten Chat (S.chat ist noch der alte)
+      S.chat = chat;
+    }
     S.attachments = [];
     renderAll();
     const ta = $('#input');
     ta.value = text;
     autosize();
     if (S.settings.workspace.handoffAutoSend !== false) {
-      chat.messages.push({ id: uid(), role: 'user', content: text, handoff: true, ts: Date.now() });
+      chat.messages.push({ id: uid(), role: 'user', content: text, handoff: true, cleared: how === 'clear' || undefined, ts: Date.now() });
       ta.value = '';
       autosize();
       S.stick = true;
       renderMessages();
+      updateCtxMeter();
       saveChatNow();
       await generate();
     } else {
+      renderMessages();
+      updateCtxMeter();
       toast('Übergabe eingefügt. Prüfe sie und sende mit Enter.', 5000);
       ta.focus();
     }
@@ -140,41 +169,63 @@ async function hoStart({ summary, next, srcMsg } = {}) {
 
 function hoRefresh() {
   const b = $('#btn-handoff');
-  if (b) { b.disabled = hoBusy; b.classList.toggle('hidden', !hoOn()); }
+  if (b) {
+    const clear = hoMode() === 'clear';
+    b.disabled = hoBusy;
+    b.classList.toggle('hidden', !hoOn());
+    b.innerHTML = icon(clear ? 'eraser' : 'handoff', 17);
+    b.title = clear ? 'Kontext leeren: Übergabe wird erstellt, der Chat bleibt (Umschalt+Klick: neue Session)' : 'Neue Session mit Übergabe starten (Umschalt+Klick: Kontext leeren)';
+  }
   $$('.handoff-go').forEach((x) => { x.disabled = hoBusy || S.generating; x.textContent = hoBusy ? 'Übergabe wird erstellt …' : x.dataset.label; });
+}
+
+/* Die zwei Wege als Schaltflächen: der bevorzugte zuerst (hervorgehoben) */
+function hoButtons(chat, startOpts) {
+  const clearOk = hoCanClear(chat);
+  const order = hoMode() === 'clear' && clearOk ? ['clear', 'new'] : clearOk ? ['new', 'clear'] : ['new'];
+  const label = { clear: 'Kontext leeren und weiterarbeiten', new: 'Neue Session mit Übergabe starten' };
+  const alt = { clear: 'Stattdessen Kontext leeren', new: 'Stattdessen neue Session' };
+  return order.map((m, i) => {
+    const b = el('button', { class: 'btn sm handoff-go' + (i === 0 ? ' primary' : ''), text: i === 0 ? label[m] : alt[m], onclick: () => hoStart({ ...startOpts, mode: m }) });
+    b.dataset.label = i === 0 ? label[m] : alt[m];
+    b.title = m === 'clear' ? 'Gleicher Chat: Der alte Verlauf bleibt sichtbar, die KI sieht nur noch die Übergabe.' : 'Öffnet einen neuen Chat und übergibt Ziel, Stand und nächsten Schritt.';
+    return b;
+  });
 }
 
 /* Hinweis über dem Eingabefeld (am Ende der Nachrichtenliste) */
 function hoNotice() {
   const r = hoReason(S.chat);
   if (!r) return null;
+  const clearFirst = hoMode() === 'clear' && hoCanClear(S.chat);
   const txt = r.kind === 'ai'
-    ? 'Die KI empfiehlt, in einer neuen Session weiterzuarbeiten. Die Übergabe wird automatisch mitgegeben.'
-    : `Der Kontext ist zu ${Math.round(r.ratio * 100)} % voll. Eine neue Session mit Übergabe ist schneller und zuverlässiger.`;
-  const go = el('button', { class: 'btn primary sm handoff-go', text: 'Neue Session mit Übergabe starten', onclick: () => hoStart() });
-  go.dataset.label = 'Neue Session mit Übergabe starten';
+    ? (clearFirst ? 'Die KI empfiehlt, mit leerem Kontext weiterzuarbeiten. Die Übergabe wird automatisch mitgegeben, der Chat bleibt derselbe.' : 'Die KI empfiehlt, in einer neuen Session weiterzuarbeiten. Die Übergabe wird automatisch mitgegeben.')
+    : (clearFirst ? `Der Kontext ist zu ${Math.round(r.ratio * 100)} % voll. Leere ihn: Ziel, Stand und nächster Schritt bleiben als Übergabe erhalten, der Chat und sein Verlauf bleiben stehen.` : `Der Kontext ist zu ${Math.round(r.ratio * 100)} % voll. Eine neue Session mit Übergabe ist schneller und zuverlässiger.`);
   return el('div', { class: 'notice handoff-notice' }, el('span', { text: txt }),
-    go, el('button', { class: 'btn sm', text: 'Später', onclick: (e) => { HO_DISMISS.add(S.chat.id + ':' + r.msg.id); e.target.closest('.notice').remove(); } }));
+    ...hoButtons(S.chat, {}),
+    el('button', { class: 'btn sm', text: 'Später', onclick: (e) => { HO_DISMISS.add(S.chat.id + ':' + r.msg.id); e.target.closest('.notice').remove(); } }));
 }
 
 /* Karte für das Werkzeug propose_new_session */
 function hoCard(m) {
   const a = m.args || {};
-  const go = el('button', { class: 'btn primary sm handoff-go', text: 'Neue Session mit Übergabe starten', onclick: () => hoStart({ summary: a.summary, next: a.next_steps, srcMsg: m }) });
-  go.dataset.label = 'Neue Session mit Übergabe starten';
   const opened = m.handoffTo;
+  const done = opened || m.cleared;
+  const clearFirst = hoMode() === 'clear' && hoCanClear(S.chat);
   return el('div', { class: 'handoff-card' },
-    el('div', { class: 'hc-head' }, el('span', { html: icon('handoff', 16) }), el('b', { text: 'Neue Session empfohlen' })),
+    el('div', { class: 'hc-head' }, el('span', { html: icon(clearFirst ? 'eraser' : 'handoff', 16) }), el('b', { text: clearFirst ? 'Kontext leeren empfohlen' : 'Neue Session empfohlen' })),
     a.reason ? el('div', { class: 'hc-reason', text: a.reason }) : null,
     el('details', {}, el('summary', { text: 'Übergabe ansehen' }), el('pre', { text: [a.summary, a.next_steps && 'Nächster Schritt:\n' + a.next_steps].filter(Boolean).join('\n\n') })),
-    el('div', { class: 'hc-actions' }, go, opened ? el('button', { class: 'btn sm', text: 'Zur neuen Session', onclick: () => openChat(opened) }) : null,
-      opened ? el('span', { class: 'hc-done', text: 'Bereits geöffnet' }) : null));
+    el('div', { class: 'hc-actions' },
+      ...(done ? [] : hoButtons(S.chat, { summary: a.summary, next: a.next_steps, srcMsg: m })),
+      opened ? el('button', { class: 'btn sm', text: 'Zur neuen Session', onclick: () => openChat(opened) }) : null,
+      opened ? el('span', { class: 'hc-done', text: 'Bereits geöffnet' }) : null,
+      m.cleared ? el('span', { class: 'hc-done', text: 'Kontext wurde geleert' }) : null));
 }
 
 function initHandoff() {
   const b = $('#btn-handoff');
   if (!b) return;
-  b.innerHTML = icon('handoff', 17);
-  b.addEventListener('click', () => hoStart());
+  b.addEventListener('click', (e) => hoStart({ mode: e.shiftKey ? (hoMode() === 'clear' ? 'new' : 'clear') : undefined }));
   hoRefresh();
 }

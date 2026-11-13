@@ -7,7 +7,7 @@ Von [Reuschler-IT](https://github.com/ReuschlerIT) · Electron · Deutsch · MIT
 <p align="center">
   <img src="docs/screenshots/01-chat.png" alt="LLM Box: Chat mit Gedankengang, Werkzeug-Karten, Code und Statistik unter jeder Antwort" width="100%">
 </p>
-<p align="center"><sub>Chat mit Gedankengang, Werkzeugen der KI, Code und Statistik. Alle Screenshots zeigen Demo-Daten.</sub></p>
+<p align="center"><sub>Chat mit Gedankengang, Werkzeugen der KI, Code und Statistik im hellen Standard-Design. Alle Screenshots zeigen Demo-Daten.</sub></p>
 
 ---
 
@@ -30,10 +30,13 @@ Sie ist gedacht für Menschen, die Modelle wie Llama, Qwen, Mistral oder gpt-oss
 
 ### Chat und Modelle
 - Verbindungen zu **Ollama** und **OpenAI-kompatiblen Servern** (LM Studio, llama.cpp, vLLM, OpenAI, OpenRouter, Groq u. a.), beliebig viele parallel
-- Alle wichtigen Parameter: Temperatur, Top-P, Top-K, Min-P, Penalties, Kontextlänge, Max. Antwortlänge
+- Alle wichtigen Parameter: Temperatur, Top-P, Top-K, Min-P, Penalties, Kontextlänge, Max. Antwortlänge. Pro Verbindung lässt sich das Sampling auch **dem Server überlassen**, und unter jeder Antwort zeigt **„Anfrage“**, was genau gesendet wurde. Bei Strata steht neben der App-Messung die vom Server gemessene Geschwindigkeit. Ein eingebauter **Geschwindigkeitstest** (Einstellungen → Verbindungen) vergleicht, ob Sampling, Werkzeuge oder die Füllstand-Abfrage bremsen, und ein **Sparmodus** schont die Grafikkarte, während das Modell antwortet.
 - **Denkaufwand** wählbar (Auto, Aus, Schnell, Normal, Hoch)
 - **Gedankengang auf Deutsch:** Denkt das Modell englisch, übersetzt die App den Gedankengang automatisch
+- **Dokumente und Konfigurationsdateien:** PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx) und OpenDocument (.odt/.ods/.odp) werden lokal als Text ausgelesen, als Anhang und von der KI im Workspace. Konfigurationsdateien (.ini, .json, .yaml, .env, .reg …) funktionieren auch in UTF-16 oder mit Windows-Umlauten, beim Ändern bleibt die Kodierung erhalten.
 - Bilder für Vision-Modelle (Strg+V), Markdown mit Syntax-Highlighting, Code per Klick als Datei speichern
+- **Rechtschreibprüfung** im Eingabefeld: Falsch geschriebene Wörter sind rot wellig unterstrichen, Rechtsklick zeigt Vorschläge (Deutsch und Englisch, in den Einstellungen anpassbar)
+- **Bildausgabe:** Modelle, die Bilder erzeugen (z. B. über OpenRouter), liefern sie direkt im Chat. Bilder lassen sich vergrößern, speichern und als Anhang weiterbearbeiten.
 - Chats durchsuchen, exportieren und aus der Strata-Weboberfläche importieren
 
 ### KI mit Werkzeugen (Agent)
@@ -45,8 +48,15 @@ Sie ist gedacht für Menschen, die Modelle wie Llama, Qwen, Mistral oder gpt-oss
   <img src="docs/screenshots/04-unteragenten.png" alt="Zwei Unteragenten arbeiten gleichzeitig, der Live-Verlauf zeigt Gedanken und Werkzeug-Schritte" width="100%">
 </p>
 
+- **Rückfragen mit Antwortvorschlägen:** Fehlen der KI Angaben, stellt sie dir Fragen mit Antworten zum Anklicken (Einzel- oder Mehrfachauswahl, eigene Antwort oder Überspringen möglich):
+
+<p align="center">
+  <img src="docs/screenshots/07-rueckfrage.png" alt="Rückfrage der KI mit Antwortvorschlägen zum Anklicken" width="100%">
+</p>
+
 - **Freigaben pro Chat**, live umstellbar: alles bestätigen, nur Schreiben und Befehle bestätigen, nichts bestätigen
-- Automatisches **Verschlanken des Kontexts** und **Neue Session mit Übergabe**, wenn das Kontextfenster voll wird
+- Automatisches **Verschlanken des Kontexts**; ist das Fenster voll, bevorzugt die App **Kontext leeren** (derselbe Chat, die KI bekommt eine Übergabe) und bietet alternativ eine **neue Session mit Übergabe** an
+- **Pausieren und Fortsetzen** eines laufenden Auftrags: Die KI hält an und macht danach an derselben Stelle weiter
 
 ### Transparenz: du siehst, was die KI tut
 
@@ -76,11 +86,11 @@ Befehle, die Rechner oder Dateien verändern, bestätigst du vorher. Pro Program
 </p>
 
 ### Aussehen
-- Dunkel und hell, 8 Farbschemata, jede Farbe und Deckkraft einstellbar
+- Standard ist das helle Design, dazu ein dunkles Design (unten), 8 Farbschemata, jede Farbe und Deckkraft einstellbar
 - Schriften, Chatbreite, Hintergrundbild, Acrylic/Mica unter Windows 11
 
 <p align="center">
-  <img src="docs/screenshots/06-hell.png" alt="LLM Box im hellen Design" width="100%">
+  <img src="docs/screenshots/06-dunkel.png" alt="LLM Box im dunklen Design" width="100%">
 </p>
 
 ## Installation
@@ -99,7 +109,7 @@ npm install
 npm start
 ```
 
-**Eigene EXE bauen:** `build-exe.bat` ausführen oder `npm run dist`. Installer und portable Version liegen danach im Ordner `dist`.
+**Eigene EXE bauen:** `build-exe.bat` ausführen. Das Skript zeigt die aktuelle Version aus `package.json` und fragt nach der Version für diesen Build (Enter behält sie). Direkt geht auch `build-exe.bat 1.0.25`. Installer und portable Version liegen danach im Ordner `dist`, die Versionsnummer steht im Dateinamen. Wer ohne das Skript baut (`npm run dist`), muss `version` in `package.json` selbst anpassen.
 
 ## Erste Schritte
 
@@ -125,8 +135,9 @@ Die ausführliche Anleitung zu allen Funktionen steht im [Handbuch](docs/HANDBUC
 
 ## Bekannte Grenzen
 
-- Nur Text- und Bilddateien als Anhang, PDF und Word werden nicht ausgelesen.
+- Dokumente werden nur gelesen, nicht geschrieben: Die KI kann keine .docx/.xlsx/.pdf erzeugen oder ändern (sie kann aber .csv, .md, .html schreiben oder per Skript arbeiten). Gescannte PDFs ohne Text (OCR) und alte Formate (.doc, .xls, .ppt) werden nicht gelesen.
 - Die Token-Schätzung vor dem Senden ist grob.
+- Bildausgabe funktioniert über OpenAI-kompatible Chat-Schnittstellen (z. B. OpenRouter). Reine Bild-Endpunkte (`/images/generations`) und Ollama-Bildmodelle werden noch nicht unterstützt.
 - Die Werkzeug-Funktionen brauchen ein Modell mit Tool Calling (z. B. llama3.1, qwen2.5, mistral-nemo).
 - Die Strata-Fernsteuerung wurde gegen den Servercode mit einer Test-Engine geprüft, nicht auf einem Rechner mit GPU und echtem Modell.
 

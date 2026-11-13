@@ -14,9 +14,20 @@ function followAttach(box) {
   box._fol = true;
   box._follow = true;
   box._top = 0;
+  // Nur eine echte Nutzer-Bewegung beendet das Mitlaufen. Wächst die Ausgabe zwischen zwei Bildern stark (viele Zeilen auf einmal),
+  // darf der dadurch größere Abstand zum Ende NICHT als „Nutzer hat hochgescrollt“ gelten.
+  let ua = 0;
+  let drag = false;
+  const mark = () => { ua = performance.now(); };
+  box.addEventListener('pointerdown', () => { drag = true; mark(); }, { passive: true });
+  window.addEventListener('pointerup', () => { drag = false; }, { passive: true });
+  box.addEventListener('touchmove', mark, { passive: true });
   box.addEventListener('scroll', () => {
     if (box.clientHeight <= 0) return; // zugeklappt oder ausgeblendet: Zustand nicht verändern
-    box._follow = box.scrollHeight - box.scrollTop - box.clientHeight <= FOLLOW_GAP;
+    const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
+    if (gap <= FOLLOW_GAP) box._follow = true;
+    else if (box._follow && (drag || performance.now() - ua < 800)) box._follow = false;
+    if (box._follow) { if (gap > 1) box.scrollTop = box.scrollHeight; } // Inhalt wuchs gerade: sofort wieder ans Ende
     box._top = box.scrollTop;
   }, { passive: true });
   // Mausrad nach oben = der Nutzer will lesen, sofort nicht mehr mitscrollen
@@ -87,8 +98,10 @@ function tlStart(tc) {
   c.node.addEventListener('toggle', () => followApply(c.inner));
   c.node.firstChild.addEventListener('click', () => { c.touched = true; }); // Nutzer hat selbst auf-/zugeklappt: nicht mehr automatisch öffnen
   TL.cards.set(tc.id, c);
-  $('#messages-inner').append(c.node);
-  if (S.stick) scrollBottom();
+  liveHost().append(c.node);
+  // Wächst die Ausgabe, läuft das Feld mit (unabhängig davon, wie die Zeilen ankommen)
+  if (typeof ResizeObserver !== 'undefined') { c.ro = new ResizeObserver(() => followApply(c.inner)); c.ro.observe(c.out); }
+  followBottom();
   tlPaint(c);
   if (!TL.timer) TL.timer = setInterval(tlTick, 500);
   return c;
@@ -105,6 +118,7 @@ function tlPaint(c) {
   let idle = false;
   if (c.state === 'queued') txt = 'in der Warteschlange';
   else if (c.state === 'approval') txt = 'wartet auf deine Freigabe';
+  else if (c.state === 'answer') txt = 'wartet auf deine Antwort';
   else {
     const run = (now - c.t0) / 1000;
     if (c.kind === 'exec') {
@@ -120,7 +134,7 @@ function tlPaint(c) {
   c.status.title = txt;
   if (c.stop) c.stop.style.display = c.state === 'running' && c.execId ? '' : 'none'; // nur sinnvoll, wenn ein Programm läuft
   c.node.classList.toggle('idle', idle);
-  c.node.classList.toggle('waiting', c.state === 'approval' || c.state === 'queued');
+  c.node.classList.toggle('waiting', c.state === 'approval' || c.state === 'answer' || c.state === 'queued');
   const hint = c.state === 'running' && !c.buf && c.kind === 'exec' ? 'Noch keine Ausgabe vom Programm.' : '';
   if (c.empty.textContent !== hint) c.empty.textContent = hint;
   c.empty.classList.toggle('hidden', !hint);
@@ -131,7 +145,7 @@ function tlState(id, state) {
   if (!c) return;
   const prev = c.state;
   c.state = state;
-  if (state === 'running' && (!c.t0 || prev === 'approval')) c.t0 = Date.now(); // Wartezeit auf die Freigabe zählt nicht zur Laufzeit
+  if (state === 'running' && (!c.t0 || prev === 'approval' || prev === 'answer')) c.t0 = Date.now(); // Wartezeit auf die Freigabe zählt nicht zur Laufzeit
   // Programme und Unteragenten klappen auf, sobald sie laufen, damit man zusehen kann
   if (state === 'running' && c.kind !== 'plain' && !c.touched) c.node.open = true;
   tlPaint(c);
@@ -162,7 +176,7 @@ function tlShow(c) {
   // Das Feld, das tatsächlich scrollt, ist .inner (max-height): dort gilt die Mitscroll-Regel
   followApply(c.inner);
   tlPaint(c);
-  if (S.stick) scrollBottom();
+  followBottom();
 }
 
 /* Programm-Ausgabe (stdout und stderr) anhängen */
@@ -189,14 +203,15 @@ function tlSetText(id, text) {
 function tlFinish(id, tm) {
   const c = TL.cards.get(id);
   TL.cards.delete(id);
+  if (c && c.ro) c.ro.disconnect();
   const done = toolEl(tm);
-  if (c && c.node.isConnected) c.node.replaceWith(done);
-  else $('#messages-inner').append(done);
-  if (S.stick) scrollBottom();
+  if (c && c.node.parentNode) c.node.replaceWith(done); // auch im unsichtbaren Container (Hintergrund-Lauf)
+  else liveHost().append(done);
+  followBottom();
 }
 
 /* Aufräumen, falls ein Lauf abbricht */
 function tlClear() {
-  for (const c of TL.cards.values()) c.node.remove();
+  for (const c of TL.cards.values()) { if (c.ro) c.ro.disconnect(); c.node.remove(); }
   TL.cards.clear();
 }

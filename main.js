@@ -1,14 +1,24 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, screen, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
 const { spawn, execFile } = require('child_process');
 const http = require('http');
 const https = require('https');
+const DOCS = require('./docs');
 
 let win = null;
 const aborts = new Map();
+
+// Läuft gerade ein Werkzeug (PowerShell/cmd über run_command, Installation, …), soll die Oberfläche und der
+// Stopp-Button auch dann sofort reagieren, wenn das Fenster minimiert, verdeckt oder nicht fokussiert ist.
+// Ohne diese Schalter drosselt Chromium Timer und Darstellung im Hintergrund stark (spart sonst Akku/CPU bei
+// normalen Tabs/Fenstern), wodurch die App eingefroren wirkt, bis man wieder aktiv hineinklickt - der Prozess
+// selbst lief die ganze Zeit im Hauptprozess weiter und produzierte Ausgaben, nur die Anzeige/Bedienung staute sich.
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -32,7 +42,30 @@ try {
 /* ───────────────────────── Speicher ───────────────────────── */
 
 const dataDir = () => app.getPath('userData');
-const chatsDir = () => path.join(dataDir(), 'chats');
+/* ───── Geräteübergreifende Chats ─────
+   Jeder Rechner hat seine eigenen Einstellungen. Nur die Chats können in einen gemeinsamen Ordner (NAS, Netzlaufwerk, OneDrive …) gelegt werden.
+   Pro Chat gibt es zwei Dateien: <id>.json (Inhalt) und <id>.meta.json (Titel, Zeit, Revision, Gerät, „arbeitet gerade“).
+   Es gibt bewusst KEINE gemeinsame Index-Datei: Sie würde bei zwei Rechnern ständig kollidieren. Die Liste entsteht aus den kleinen Meta-Dateien. */
+const os = require('os');
+const crypto = require('crypto');
+const syncFile = () => path.join(dataDir(), 'sync.json');
+let syncCfg = null;
+function loadSyncCfg() {
+  if (syncCfg) return syncCfg;
+  let c = null;
+  try { c = JSON.parse(fs.readFileSync(syncFile(), 'utf8')); } catch {}
+  if (!c || typeof c !== 'object') c = {};
+  if (!c.deviceId) {
+    c.deviceId = crypto.randomBytes(6).toString('hex');
+    try { fs.writeFileSync(syncFile(), JSON.stringify(c)); } catch {}
+  }
+  syncCfg = c;
+  return c;
+}
+const saveSyncCfg = () => { try { fs.writeFileSync(syncFile(), JSON.stringify(syncCfg)); } catch {} };
+const localChatsDir = () => path.join(dataDir(), 'chats');
+const chatsDir = () => { const c = loadSyncCfg(); return c.dir ? path.join(c.dir, 'LLM-Box-Chats') : localChatsDir(); };
+const deviceName = () => os.hostname() || 'Gerät';
 
 async function writeJsonAtomic(file, data) {
   await fsp.mkdir(path.dirname(file), { recursive: true });
@@ -48,58 +81,165 @@ async function readJson(file, fallback) {
   }
 }
 
-let chatIndex = null; // [{id,title,created,updated,model,tokens}]
-const indexFile = () => path.join(chatsDir(), 'index.json');
-
-async function loadIndex() {
-  if (chatIndex) return chatIndex;
-  chatIndex = await readJson(indexFile(), null);
-  if (!Array.isArray(chatIndex)) {
-    chatIndex = [];
-    try {
-      for (const f of await fsp.readdir(chatsDir())) {
-        if (!f.endsWith('.json') || f === 'index.json') continue;
-        const c = await readJson(path.join(chatsDir(), f), null);
-        if (c && c.id) chatIndex.push({ id: c.id, title: c.title, created: c.created, updated: c.updated, model: c.model, tokens: 0 });
-      }
-    } catch {}
-  }
-  return chatIndex;
-}
-const safeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '');
-
 ipcMain.handle('store:get', async (_e, name) => readJson(path.join(dataDir(), safeId(name) + '.json'), null));
 ipcMain.handle('store:set', async (_e, name, data) => {
   await writeJsonAtomic(path.join(dataDir(), safeId(name) + '.json'), data);
   return true;
 });
 
+const safeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '');
+const metaFileIn = (dir, id) => path.join(dir, safeId(id) + '.meta.json');
+const chatFileIn = (dir, id) => path.join(dir, safeId(id) + '.json');
+const known = new Map(); // id -> Revision, die DIESER Rechner zuletzt gelesen oder geschrieben hat
+const seen = new Map(); // id -> Revision beim letzten Abgleich (Änderungserkennung)
+let metaChecked = '';
+let baseline = false; // Änderungserkennung hat den Ausgangsstand gesehen
+
+// Alte Datenstände (index.json bzw. nur Chat-Dateien) einmalig um Meta-Dateien ergänzen
+async function ensureMetas(dir) {
+  if (metaChecked === dir) return;
+  let files = [];
+  try { files = await fsp.readdir(dir); } catch { return; }
+  const oldIdx = await readJson(path.join(dir, 'index.json'), []);
+  const byId = new Map((Array.isArray(oldIdx) ? oldIdx : []).map((m) => [m.id, m]));
+  for (const f of files) {
+    if (!f.endsWith('.json') || f === 'index.json' || f.endsWith('.meta.json')) continue;
+    const id = f.slice(0, -5);
+    if (files.includes(id + '.meta.json')) continue;
+    let m = byId.get(id);
+    if (!m) {
+      const c = await readJson(path.join(dir, f), null);
+      if (!c || !c.id) continue;
+      m = { id: c.id, title: c.title, created: c.created, updated: c.updated, model: c.model, tokens: 0, source: c.source, importKey: c.importKey };
+    }
+    await writeJsonAtomic(metaFileIn(dir, id), { ...m, rev: 1, dev: loadSyncCfg().deviceId, devName: deviceName() });
+  }
+  metaChecked = dir;
+}
+// Liest alle Meta-Dateien. null = Ordner gerade nicht lesbar (Netzlaufwerk getrennt): dann NICHTS als gelöscht behandeln
+async function listMetas(dir) {
+  let files;
+  try { files = await fsp.readdir(dir); } catch (e) { return e.code === 'ENOENT' && dir === localChatsDir() ? [] : null; }
+  const out = await Promise.all(files.filter((f) => f.endsWith('.meta.json')).map((f) => readJson(path.join(dir, f), null)));
+  return out.filter((m) => m && m.id);
+}
+function resetSyncState() { known.clear(); seen.clear(); metaChecked = ''; baseline = false; }
+
 ipcMain.handle('chats:list', async () => {
-  const idx = await loadIndex();
-  return [...idx].sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  const dir = chatsDir();
+  await ensureMetas(dir);
+  const metas = await listMetas(dir);
+  if (!metas) return [];
+  for (const m of metas) seen.set(m.id, m.rev || 0);
+  baseline = true;
+  return metas.sort((a, b) => (b.updated || 0) - (a.updated || 0));
 });
-ipcMain.handle('chats:load', async (_e, id) => readJson(path.join(chatsDir(), safeId(id) + '.json'), null));
+ipcMain.handle('chats:load', async (_e, id) => {
+  const dir = chatsDir();
+  const c = await readJson(chatFileIn(dir, id), null);
+  const m = await readJson(metaFileIn(dir, id), null);
+  if (c) known.set(safeId(id), (m && m.rev) || 0);
+  return c;
+});
 ipcMain.handle('chats:save', async (_e, chat, meta) => {
-  const idx = await loadIndex();
-  await writeJsonAtomic(path.join(chatsDir(), safeId(chat.id) + '.json'), chat);
-  const i = idx.findIndex((x) => x.id === chat.id);
-  if (i >= 0) idx[i] = meta;
-  else idx.push(meta);
-  await writeJsonAtomic(indexFile(), idx);
-  return true;
+  const dir = chatsDir();
+  const cfg = loadSyncCfg();
+  let id = safeId(chat.id);
+  const cur = await readJson(metaFileIn(dir, id), null);
+  let conflict = null;
+  // Hat ein anderer Rechner den Chat geändert, seit dieser ihn zuletzt gelesen/geschrieben hat: nichts überschreiben, sondern als Kopie sichern
+  if (cur && known.has(id) && (cur.rev || 0) !== known.get(id) && cur.dev !== cfg.deviceId) {
+    const nid = id + '-k' + Date.now().toString(36);
+    const title = (chat.title || 'Chat') + ` (Konflikt ${deviceName()})`;
+    chat = { ...chat, id: nid, title };
+    meta = { ...meta, id: nid, title };
+    conflict = { id: nid, title };
+    id = nid;
+  }
+  const prev = conflict ? null : cur;
+  const rev = (prev ? prev.rev || 0 : 0) + 1;
+  await writeJsonAtomic(chatFileIn(dir, id), chat);
+  await writeJsonAtomic(metaFileIn(dir, id), { ...meta, id, rev, dev: cfg.deviceId, devName: deviceName() });
+  known.set(id, rev);
+  seen.set(id, rev);
+  return conflict ? { ok: true, conflict } : { ok: true };
 });
 ipcMain.handle('chats:delete', async (_e, id) => {
-  const idx = await loadIndex();
-  chatIndex = idx.filter((x) => x.id !== id);
-  await fsp.rm(path.join(chatsDir(), safeId(id) + '.json'), { force: true });
-  await writeJsonAtomic(indexFile(), chatIndex);
+  const dir = chatsDir();
+  known.delete(safeId(id));
+  seen.delete(safeId(id));
+  await fsp.rm(chatFileIn(dir, id), { force: true });
+  await fsp.rm(metaFileIn(dir, id), { force: true });
   return true;
 });
 ipcMain.handle('chats:deleteAll', async () => {
-  chatIndex = [];
+  resetSyncState();
   await fsp.rm(chatsDir(), { recursive: true, force: true });
   return true;
 });
+
+// Gemeinsamer Ordner: Einstellung, Umzug der lokalen Chats und Änderungserkennung (alle 3 s, nur wenn aktiv)
+ipcMain.handle('sync:get', () => { const c = loadSyncCfg(); return { dir: c.dir || '', deviceId: c.deviceId, deviceName: deviceName(), localDir: localChatsDir(), folder: chatsDir() }; });
+ipcMain.handle('sync:setDir', async (_e, dir) => {
+  const c = loadSyncCfg();
+  if (dir) {
+    try {
+      await fsp.mkdir(path.join(dir, 'LLM-Box-Chats'), { recursive: true });
+      const t = path.join(dir, 'LLM-Box-Chats', '.schreibtest-' + c.deviceId);
+      await fsp.writeFile(t, 'x');
+      await fsp.rm(t, { force: true });
+    } catch (e) { return { ok: false, error: 'Der Ordner ist nicht beschreibbar: ' + e.message }; }
+    c.dir = dir;
+  } else delete c.dir;
+  saveSyncCfg();
+  resetSyncState();
+  return { ok: true, folder: chatsDir() };
+});
+// Lokale Chats in den gemeinsamen Ordner kopieren (vorhandene Chats mit gleicher Kennung werden nicht überschrieben)
+ipcMain.handle('sync:migrate', async () => {
+  const c = loadSyncCfg();
+  if (!c.dir) return { ok: false, error: 'Es ist kein gemeinsamer Ordner gewählt.' };
+  const src = localChatsDir();
+  const dst = chatsDir();
+  await ensureMetas(src);
+  let n = 0;
+  let skipped = 0;
+  const metas = (await listMetas(src)) || [];
+  for (const m of metas) {
+    if (fs.existsSync(metaFileIn(dst, m.id))) { skipped++; continue; }
+    try {
+      await fsp.mkdir(dst, { recursive: true });
+      await fsp.copyFile(chatFileIn(src, m.id), chatFileIn(dst, m.id));
+      await writeJsonAtomic(metaFileIn(dst, m.id), { ...m, rev: 1, dev: c.deviceId, devName: deviceName() });
+      n++;
+    } catch {}
+  }
+  resetSyncState();
+  return { ok: true, copied: n, skipped };
+});
+let pollBusy = false;
+setInterval(async () => {
+  const c = loadSyncCfg();
+  if (!c.dir || !win || win.isDestroyed() || pollBusy) return;
+  pollBusy = true;
+  try {
+    const dir = chatsDir();
+    const metas = await listMetas(dir);
+    if (!metas) return; // Ordner nicht lesbar (z. B. Netzlaufwerk getrennt): nichts ableiten
+    if (!baseline) { metas.forEach((m) => seen.set(m.id, m.rev || 0)); baseline = true; return; }
+    const changed = [];
+    const ids = new Set();
+    for (const m of metas) {
+      ids.add(m.id);
+      if (seen.get(m.id) !== (m.rev || 0) && m.dev !== c.deviceId) changed.push(m);
+      seen.set(m.id, m.rev || 0);
+    }
+    const removed = [...seen.keys()].filter((id) => !ids.has(id));
+    removed.forEach((id) => { seen.delete(id); known.delete(id); });
+    if (changed.length || removed.length) win.webContents.send('chats:changed', { metas: changed, removed });
+  } catch {} finally { pollBusy = false; }
+}, 3000);
+
 
 /* ───────────────────────── Dateien ───────────────────────── */
 
@@ -118,10 +258,28 @@ async function readAttachment(abs, displayName, maxKB) {
     const buf = await fsp.readFile(abs);
     return { ...base, kind: 'image', dataUrl: `data:${IMG_MIME[ext]};base64,${buf.toString('base64')}` };
   }
+  if (DOCS.isDoc(ext)) {
+    // PDF, Word, Excel, PowerPoint, OpenDocument: Text wird lokal herausgelesen. Das Limit gilt für den Text, nicht für die Dateigröße.
+    try {
+      const r = await DOCS.extract(abs);
+      const cap = maxKB * 1024;
+      let text = r.text;
+      let note = r.info;
+      if (text.length > cap) {
+        note += `, auf ${Math.round(cap / 1024)} KB gekürzt`;
+        text = text.slice(0, cap) + `\n\n[… gekürzt: ${Math.round(r.text.length / 1024)} KB Text insgesamt. Mit aktivem Dateizugriff kann die KI den Rest gezielt lesen.]`;
+      }
+      return { ...base, size: st.size, kind: 'text', text, converted: note };
+    } catch (e) {
+      return { ...base, kind: 'skip', reason: e.message };
+    }
+  }
+  if (DOCS.legacyHint(ext)) return { ...base, kind: 'skip', reason: DOCS.legacyHint(ext) };
   if (st.size > maxKB * 1024) return { ...base, kind: 'skip', reason: `zu groß (${Math.round(st.size / 1024)} KB, Limit ${maxKB} KB)` };
   const buf = await fsp.readFile(abs);
-  if (buf.subarray(0, 8000).includes(0)) return { ...base, kind: 'skip', reason: 'Binärdatei (nicht unterstützt)' };
-  return { ...base, kind: 'text', text: buf.toString('utf8') };
+  const dec = DOCS.decodeText(buf);
+  if (dec === null) return { ...base, kind: 'skip', reason: 'Binärdatei (nicht unterstützt)' };
+  return { ...base, kind: 'text', text: dec };
 }
 
 async function collectFolder(absRoot, prefix, lim, acc) {
@@ -227,13 +385,14 @@ ipcMain.handle('folder:pick', async (_e, title) => {
   const r = await dialog.showOpenDialog(win, { title: title || 'Ordner wählen', properties: ['openDirectory', 'createDirectory'] });
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
-ipcMain.handle('file:saveAs', async (_e, { defaultName, content, defaultDir, filters }) => {
+ipcMain.handle('file:saveAs', async (_e, { defaultName, content, base64, defaultDir, filters }) => {
   const r = await dialog.showSaveDialog(win, {
     defaultPath: defaultDir ? path.join(defaultDir, defaultName || 'datei.txt') : defaultName || 'datei.txt',
     filters: filters || [{ name: 'Alle Dateien', extensions: ['*'] }],
   });
   if (r.canceled || !r.filePath) return null;
-  await fsp.writeFile(r.filePath, content, 'utf8');
+  if (base64) await fsp.writeFile(r.filePath, Buffer.from(base64, 'base64'));
+  else await fsp.writeFile(r.filePath, content, 'utf8');
   return r.filePath;
 });
 
@@ -267,13 +426,16 @@ async function listDir(root, rel, ignore) {
   return out;
 }
 
-async function searchText(root, query, rel, ignore) {
+// Laufende Dateiwerkzeuge (Stopp-Knopf): ws:abort setzt cancelled, die Schleifen brechen dann sofort ab
+const wsRuns = new Set();
+async function searchText(root, query, rel, ignore, ctl) {
   const ig = ignoreSet(ignore);
   const start = safe(root, rel || '.');
   const q = String(query).toLowerCase();
   const hits = [];
   let scanned = 0;
   async function walk(dir) {
+    if (ctl && ctl.cancelled) return;
     if (hits.length >= 60 || scanned > 3000) return;
     let entries;
     try {
@@ -282,6 +444,7 @@ async function searchText(root, query, rel, ignore) {
       return;
     }
     for (const en of entries) {
+      if (ctl && ctl.cancelled) return;
       if (hits.length >= 60 || scanned > 3000) return;
       if (ig.has(en.name)) continue;
       const abs = path.join(dir, en.name);
@@ -302,12 +465,20 @@ async function searchText(root, query, rel, ignore) {
     }
   }
   await walk(start);
+  if (ctl && ctl.cancelled) return 'Vom Nutzer abgebrochen.' + (hits.length ? '\nBis dahin gefunden:\n' + hits.join('\n') : '');
   return hits.length ? hits.join('\n') : 'Keine Treffer.';
 }
 
 ipcMain.handle('ws:list', async (_e, { root, rel, ignore }) => listDir(root, rel, ignore));
 
+ipcMain.handle('ws:abort', () => {
+  for (const c of wsRuns) c.cancelled = true;
+  return true;
+});
+
 ipcMain.handle('ws:tool', async (_e, { root, name, args, maxKB, ignore }) => {
+  const ctl = { cancelled: false };
+  wsRuns.add(ctl);
   try {
     args = args || {};
     if (name === 'list_files') {
@@ -317,9 +488,23 @@ ipcMain.handle('ws:tool', async (_e, { root, name, args, maxKB, ignore }) => {
     }
     if (name === 'read_file') {
       const abs = safe(root, args.path);
-      const buf = await fsp.readFile(abs);
-      if (buf.subarray(0, 8000).includes(0)) return { ok: false, result: 'Binärdatei kann nicht gelesen werden.' };
-      const lines = buf.toString('utf8').split(/\r?\n/);
+      const ext = path.extname(abs).toLowerCase();
+      let content;
+      let sizeInfo;
+      let head = '';
+      if (DOCS.isDoc(ext)) {
+        const r = await DOCS.extract(abs); // PDF, Word, Excel, PowerPoint, OpenDocument
+        content = r.text;
+        head = `[${r.info}, als Text ausgelesen]\n`;
+        sizeInfo = fmtSize(Buffer.byteLength(content)) + ' Text';
+      } else {
+        if (DOCS.legacyHint(ext)) return { ok: false, result: 'Dieses Format kann nicht gelesen werden: ' + DOCS.legacyHint(ext) };
+        const buf = await fsp.readFile(abs);
+        content = DOCS.decodeText(buf);
+        if (content === null) return { ok: false, result: 'Binärdatei kann nicht gelesen werden.' };
+        sizeInfo = fmtSize(buf.length);
+      }
+      const lines = content.split(/\r?\n/);
       const total = lines.length;
       const limit = (maxKB || 40) * 1024;
       const from = Math.max(1, parseInt(args.start_line, 10) || 1);
@@ -335,14 +520,18 @@ ipcMain.handle('ws:tool', async (_e, { root, name, args, maxKB, ignore }) => {
         out.push(l);
         last = i + 1;
       }
-      let text = out.join('\n');
-      if (last < to) text += `\n\n[… gekürzt: Zeilen ${from}–${last} von ${total} (${fmtSize(buf.length)} gesamt). Lies den Rest gezielt mit start_line=${last + 1}, oder suche mit search_text die richtige Stelle.]`;
+      let text = head + out.join('\n');
+      if (last < to) text += `\n\n[… gekürzt: Zeilen ${from}–${last} von ${total} (${sizeInfo} gesamt). Lies den Rest gezielt mit start_line=${last + 1}, oder suche mit search_text die richtige Stelle.]`;
       else if (from > 1 || to < total) text += `\n\n[Zeilen ${from}–${to} von ${total}]`;
       return { ok: true, result: text };
     }
     if (name === 'edit_file') {
       const abs = safe(root, args.path);
-      let text = await fsp.readFile(abs, 'utf8');
+      const ext = path.extname(abs).toLowerCase();
+      if (DOCS.isDoc(ext) || DOCS.legacyHint(ext)) return { ok: false, result: `${ext}-Dateien kann die App nicht ändern. Schreibe stattdessen eine neue Datei in einem Textformat (z. B. .csv, .md, .html) oder nutze ein Skript über run_command.` };
+      const dec = DOCS.decodeTextEx(await fsp.readFile(abs));
+      if (!dec) return { ok: false, result: 'Binärdatei kann nicht geändert werden.' };
+      let text = dec.text;
       let oldT = String(args.old_text ?? '');
       let newT = String(args.new_text ?? '');
       if (!oldT) return { ok: false, result: 'old_text darf nicht leer sein.' };
@@ -354,22 +543,28 @@ ipcMain.handle('ws:tool', async (_e, { root, name, args, maxKB, ignore }) => {
       if (n === 0) return { ok: false, result: 'old_text wurde nicht gefunden. Prüfe Schreibweise und Einrückung, indem du die Stelle mit read_file (start_line/end_line) erneut liest.' };
       if (n > 1 && !args.replace_all) return { ok: false, result: `old_text kommt ${n}-mal vor. Nimm mehr umgebenden Text hinzu, damit er eindeutig ist, oder setze replace_all.` };
       text = text.split(oldT).join(newT);
-      await fsp.writeFile(abs, text, 'utf8');
+      await fsp.writeFile(abs, DOCS.encodeText(text, dec.enc)); // in der ursprünglichen Kodierung zurückschreiben
       return { ok: true, result: `Geändert: ${args.path} (${n} Ersetzung${n > 1 ? 'en' : ''})` };
     }
     if (name === 'write_file') {
       const abs = safe(root, args.path);
+      const ext = path.extname(abs).toLowerCase();
+      if (DOCS.isDoc(ext) || DOCS.legacyHint(ext)) return { ok: false, result: `${ext}-Dateien kann die App nicht erzeugen (Text würde eine ungültige Datei ergeben). Schreibe stattdessen .csv, .md oder .html, oder nutze ein Skript über run_command.` };
       await fsp.mkdir(path.dirname(abs), { recursive: true });
       const content = String(args.content ?? '');
-      await fsp.writeFile(abs, content, 'utf8');
+      let enc = 'utf8';
+      try { const ex = DOCS.decodeTextEx(await fsp.readFile(abs)); if (ex) enc = ex.enc; } catch {} // bestehende Datei: Kodierung beibehalten
+      await fsp.writeFile(abs, DOCS.encodeText(content, enc));
       return { ok: true, result: `Geschrieben: ${args.path} (${fmtSize(Buffer.byteLength(content))})` };
     }
     if (name === 'search_text') {
-      return { ok: true, result: await searchText(root, args.query, args.path, ignore) };
+      return { ok: true, result: await searchText(root, args.query, args.path, ignore, ctl) };
     }
     return { ok: false, result: 'Unbekanntes Werkzeug: ' + name };
   } catch (e) {
     return { ok: false, result: 'Fehler: ' + e.message };
+  } finally {
+    wsRuns.delete(ctl);
   }
 });
 
@@ -411,9 +606,31 @@ function trimOutput(t) {
   return `${head}\n\n[… ${t.length - head.length - tail.length} Zeichen ausgelassen. Filtere die Ausgabe (z. B. mit findstr / Select-String / grep) oder leite sie in eine Datei im Workspace um und lies sie gezielt mit read_file …]\n\n${tail}`;
 }
 
+// Windows: taskkill /T verlässt sich auf seine eigene, nicht öffentlich dokumentierte Baum-Logik und kann
+// Prozesse übersehen, die sich bewusst vom Elternprozess lösen (z. B. der Gradle-Daemon bei Android-Builds,
+// der extra so gebaut ist, dass er spätere Builds beschleunigt, indem er über das Ende des aufrufenden
+// Skripts hinaus weiterläuft). Deshalb zusätzlich: alle Nachkommen-Prozess-IDs selbst ermitteln (per
+// ParentProcessId, auch mehrere Ebenen tief) und jeden einzeln beenden, statt uns nur auf /T zu verlassen.
+function killDescendantsWin(pid) {
+  const ps = `
+$ErrorActionPreference='SilentlyContinue'
+$all=@(${pid}); $queue=@(${pid})
+while ($queue.Count -gt 0) {
+  $p = $queue[0]; $queue = @($queue[1..($queue.Count-1)])
+  $kids = Get-CimInstance Win32_Process -Filter "ParentProcessId=$p" | Select-Object -ExpandProperty ProcessId
+  foreach ($k in $kids) { if ($all -notcontains $k) { $all += $k; $queue += $k } }
+}
+foreach ($id in $all) { taskkill /PID $id /F 2>$null | Out-Null }
+`;
+  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true }, () => {});
+}
+
 function killTree(child) {
   try {
-    if (IS_WIN) execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+    if (IS_WIN) {
+      execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+      killDescendantsWin(child.pid); // Nachzügler (z. B. ein abgekoppelter Gradle-Daemon) separat einfangen
+    }
     else {
       try {
         process.kill(-child.pid, 'SIGKILL'); // ganze Prozessgruppe (Kindprozesse), siehe detached beim Start
@@ -444,6 +661,7 @@ async function runProc({ id, command, shellKind, cwd, timeoutSec, onData }) {
     let out = '';
     let timedOut = false;
     let aborted = false;
+    let exitCode = null;
     // Live-Ausgabe an die Oberfläche (gebündelt, damit der Chat nicht mit Mini-Paketen überflutet wird)
     let pend = '';
     let flushT = null;
@@ -461,15 +679,24 @@ async function runProc({ id, command, shellKind, cwd, timeoutSec, onData }) {
     child.stdout.on('data', add('o'));
     child.stderr.on('data', add('e'));
     const limit = Math.max(5, Math.min(3600, +timeoutSec || 120)) * 1000;
-    const timer = setTimeout(() => { timedOut = true; killTree(child); }, limit);
-    if (id) procs.set(id, () => { aborted = true; killTree(child); });
+    const timer = setTimeout(() => { timedOut = true; killTree(child); setTimeout(() => done(exitCode), 1200); }, limit);
+    let finished = false;
     child.on('error', (e) => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       if (id) procs.delete(id);
       resolve({ ok: false, result: 'Start fehlgeschlagen: ' + e.message });
     });
-    child.on('close', (code) => {
+    // „close“ kommt erst, wenn ALLE Ausgabe-Leitungen zu sind. Startet das Programm einen Hintergrundprozess, der die
+    // Leitungen erbt (z. B. der Gradle-Daemon bei Android-Builds), kommt „close“ nie: Der Befehl wirkt „hängend“ und
+    // auch Stopp hilft nicht, weil nach dem Beenden nichts mehr ankommt. Deshalb zählt „exit“ plus eine kurze Frist
+    // zum Auslesen der restlichen Ausgabe; nach Stopp/Zeitlimit wird noch schneller abgeschlossen.
+    const done = (code) => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
+      try { child.stdout.destroy(); child.stderr.destroy(); } catch {}
       flush();
       if (id) procs.delete(id);
       const body = trimOutput(out.replace(/\r\n/g, '\n').trim());
@@ -478,7 +705,12 @@ async function runProc({ id, command, shellKind, cwd, timeoutSec, onData }) {
       else if (timedOut) head = `Abgebrochen nach ${Math.round(limit / 1000)} s (Zeitlimit). Das Programm lief zu lange oder wartet auf eine Eingabe. Starte es nicht-interaktiv oder mit Optionen, die keine Rückfrage brauchen.`;
       else head = `Exit-Code: ${code}`;
       resolve({ ok: !aborted && !timedOut && code === 0, result: head + (body ? '\n--- Ausgabe ---\n' + body : '\n(keine Ausgabe)') });
-    });
+    };
+    child.on('close', (code) => done(code));
+    child.on('exit', (code) => { exitCode = code; setTimeout(() => done(code), 1500); });
+    // Stopp / Zeitlimit: nicht auf „exit“/„close“ warten, falls ein Nachzügler die Leitungen offen hält
+    const hardStop = () => setTimeout(() => done(exitCode), 1200);
+    if (id) procs.set(id, () => { aborted = true; killTree(child); hardStop(); });
   });
 }
 
@@ -661,19 +893,35 @@ async function startStrataJob(e, req) {
   let aborted = false;
   const limit = Math.max(10, Math.min(24 * 3600, +req.timeout || 600)) * 1000;
   const timer = setTimeout(() => { timedOut = true; killTree(child); }, limit);
-  procs.set(req.id, () => { aborted = true; killTree(child); });
+  procs.set(req.id, () => { aborted = true; killTree(child); setTimeout(() => { if (!finished) { try { child.stdout.destroy(); child.stderr.destroy(); } catch {} finish(null); } }, 1200); });
   const dec = { out: new TextDecoder(), err: new TextDecoder() };
   child.stdout.on('data', (b) => send({ type: 'data', text: dec.out.decode(b, { stream: true }) }));
   child.stderr.on('data', (b) => send({ type: 'data', text: dec.err.decode(b, { stream: true }) }));
+  let finished = false;
+  const finish = (code) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    procs.delete(req.id);
+    send({ type: 'end', code, timedOut, aborted });
+  };
   child.on('error', (err) => {
+    if (finished) return;
+    finished = true;
     clearTimeout(timer);
     procs.delete(req.id);
     send({ type: 'error', message: (err.code === 'ENOENT' ? `Programm nicht gefunden (${job.file || 'strata'}). Ist Strata installiert und im PATH?` : err.message) });
   });
-  child.on('close', (code) => {
-    clearTimeout(timer);
-    procs.delete(req.id);
-    send({ type: 'end', code, timedOut, aborted });
+  child.on('close', (code) => finish(code));
+  // „strata launch --no-tui“ startet den Server im Hintergrund und kehrt zurück. Der Server erbt dabei oft die Ausgabe-Leitungen:
+  // „close“ kommt dann erst, wenn der Server endet, und der Auftrag hinge ewig (kein weiterer Start möglich). Deshalb zählt „exit“
+  // plus eine kurze Frist zum Auslesen der restlichen Ausgabe.
+  child.on('exit', (code) => {
+    setTimeout(() => {
+      if (finished) return;
+      try { child.stdout.destroy(); child.stderr.destroy(); } catch {}
+      finish(code);
+    }, 1500);
   });
 }
 
@@ -768,9 +1016,65 @@ ipcMain.handle('shell:openExternal', (_e, url) => {
   if (/^https?:\/\//i.test(url)) shell.openExternal(url);
 });
 ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p));
+
+/* ───────────────────────── Rechtschreibprüfung ─────────────────────────
+   Falsch geschriebene Wörter werden in Eingabefeldern rot wellig unterstrichen. Rechtsklick auf das Wort zeigt Vorschläge.
+   Unter Windows und Linux lädt Chromium die Wörterbücher beim ersten Mal selbst herunter (Internet nötig), danach sind sie lokal. */
+const SPELL_LANGS = { de: ['de'], 'de-en': ['de', 'en-US'], en: ['en-US'] };
+function applySpell({ enabled, lang }) {
+  try {
+    if (!win || win.isDestroyed()) return false;
+    const ses = win.webContents.session;
+    ses.setSpellCheckerEnabled(enabled !== false);
+    const avail = ses.availableSpellCheckerLanguages || [];
+    const want = (SPELL_LANGS[lang] || SPELL_LANGS['de-en']).map((l) => (avail.includes(l) ? l : avail.find((a) => a.toLowerCase().startsWith(l.slice(0, 2).toLowerCase())))).filter(Boolean);
+    if (want.length) ses.setSpellCheckerLanguages([...new Set(want)]);
+    return true;
+  } catch (e) {
+    console.error('Rechtschreibprüfung:', e && e.message);
+    return false;
+  }
+}
+ipcMain.handle('app:spellSet', (_e, o) => applySpell(o || {}));
+
+// Kontextmenü (Rechtsklick): Rechtschreib-Vorschläge, Ausschneiden/Kopieren/Einfügen
+function showContextMenu(w, params) {
+  const items = [];
+  const wc = w.webContents;
+  if (params.isEditable && params.misspelledWord) {
+    const sug = params.dictionarySuggestions || [];
+    if (sug.length) sug.slice(0, 6).forEach((sg) => items.push({ label: sg, click: () => wc.replaceMisspelling(sg) }));
+    else items.push({ label: 'Keine Vorschläge', enabled: false });
+    items.push({ label: 'Zum Wörterbuch hinzufügen', click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) });
+    items.push({ type: 'separator' });
+  }
+  if (params.isEditable) {
+    items.push({ label: 'Ausschneiden', role: 'cut', enabled: !!params.editFlags.canCut });
+    items.push({ label: 'Kopieren', role: 'copy', enabled: !!params.editFlags.canCopy });
+    items.push({ label: 'Einfügen', role: 'paste', enabled: !!params.editFlags.canPaste });
+    items.push({ type: 'separator' });
+    items.push({ label: 'Alles auswählen', role: 'selectAll' });
+  } else if (params.selectionText && params.selectionText.trim()) {
+    items.push({ label: 'Kopieren', role: 'copy' });
+  }
+  if (!items.length) return;
+  Menu.buildFromTemplate(items).popup({ window: w });
+}
+// GPU-Beschleunigung der Oberfläche (Datei „disable-gpu.flag“ im Datenordner, wirkt nach Neustart)
+const gpuFlagFile = () => path.join(app.getPath('userData'), 'disable-gpu.flag');
+ipcMain.handle('app:gpuGet', () => !fs.existsSync(gpuFlagFile()));
+ipcMain.handle('app:gpuSet', (_e, on) => {
+  try {
+    if (on) fs.rmSync(gpuFlagFile(), { force: true });
+    else fs.writeFileSync(gpuFlagFile(), '1');
+    return true;
+  } catch {
+    return false;
+  }
+});
 ipcMain.handle('app:info', () => ({ version: app.getVersion(), dataDir: dataDir(), electron: process.versions.electron, platform: process.platform }));
 let winMaterial = 'none';
-let lastBgColor = '#04061a';
+let lastBgColor = '#f3f5fb';
 ipcMain.handle('win:theme', (_e, { color, symbolColor, dark }) => {
   nativeTheme.themeSource = dark ? 'dark' : 'light';
   if (win && process.platform === 'win32') {
@@ -822,21 +1126,24 @@ async function createWindow() {
     y: b.y,
     minWidth: 860,
     minHeight: 560,
-    backgroundColor: '#04061a',
+    backgroundColor: '#ffffff',
     title: 'LLM Box – Reuschler-IT',
     icon: path.join(__dirname, 'build', 'icon.png'),
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#04061a', symbolColor: '#98a2c8', height: 38 },
+    titleBarOverlay: { color: '#f3f5fb', symbolColor: '#4a5478', height: 38 },
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      spellcheck: false,
+      spellcheck: true,
+      backgroundThrottling: false,
     },
   });
   win.removeMenu();
+  applySpell({ enabled: true, lang: 'de-en' }); // Standard, bis die Oberfläche ihre gespeicherte Einstellung meldet
+  win.webContents.on('context-menu', (_e, params) => showContextMenu(win, params));
   if (b.maximized) win.maximize();
   const showWin = () => {
     if (win && !win.isDestroyed() && !win.isVisible()) win.show();

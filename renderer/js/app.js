@@ -10,27 +10,73 @@ const S = {
   generating: false,
   run: null,
   stopRequested: false,
+  hardStop: null, // Promise, das beim Stopp-Knopf sofort erfüllt wird: damit hängt kein Schritt (Werkzeug, Stream) den Abbruch auf
+  stopResolve: null,
+  paused: false, // Pause gedrückt: die KI hält an der nächsten sicheren Stelle an
+  pauseAborted: false, // laufende Antwort wurde wegen Pause abgebrochen (wird nach Fortsetzen neu angefragt)
+  pauseWaiters: [],
+  streaming: false,
   panelOpen: true,
   search: '',
   stick: true,
   themeKey: '',
   pendingApproval: null,
+  runChat: null, // Chat, in dem gerade die KI arbeitet (kann im Hintergrund weiterlaufen, während ein anderer Chat angezeigt wird)
+  runNode: null, // Knoten der gerade streamenden Antwort
+  runAm: null, // zugehörige Nachricht
+  sync: { dir: '', deviceId: 'lokal', deviceName: 'Dieser Rechner' },
+  unread: new Set(), // Chats, in denen im Hintergrund eine Antwort fertig wurde
+  queuedMessage: null, // { text, attachments } - während die KI noch arbeitet eingegeben, wird nach Abschluss automatisch gesendet
 };
 const MAX_STEPS = 8;
 
-const saveSettings = debounce(() => api.store.set('settings', S.settings), 400);
-const saveChatSoon = debounce(() => saveChatNow(), 500);
+/* Kontext-Grenze: Nach „Kontext leeren“ sieht die KI nur noch Nachrichten ab chat.ctxStart (die älteren bleiben sichtbar, werden aber nicht mehr gesendet) */
+const ctxStart = (chat) => Math.max(0, Math.min(+(chat && chat.ctxStart) || 0, chat ? chat.messages.length : 0));
 
-const activeConn = () => S.settings.connections.find((c) => c.id === S.settings.activeConnection) || S.settings.connections[0];
+const saveSettings = debounce(() => api.store.set('settings', S.settings), 400);
+const _soonSet = new Set();
+const _soonRun = debounce(() => { const l = [..._soonSet]; _soonSet.clear(); l.forEach((c) => c && saveChatNow(c)); }, 500);
+const saveChatSoon = (chat) => { _soonSet.add(chat || S.chat); _soonRun(); };
+
+/* Hintergrund-Lauf: Zeigt der Nutzer gerade einen anderen Chat, landen Live-Elemente (Antwort, Programm-Karten, Rückfragen)
+   in einem unsichtbaren Container und werden beim Zurückwechseln wieder angezeigt. */
+const GHOST = document.createElement('div');
+const runView = () => !S.generating || !S.runChat || S.chat === S.runChat;
+const liveHost = () => (runView() ? document.querySelector('#messages-inner') : GHOST);
+function followBottom() { if (S.stick && runView()) scrollBottom(); }
+function parkLive() {
+  if (!(S.generating && S.runChat && S.chat === S.runChat)) return;
+  if (S.runNode) GHOST.append(S.runNode);
+  if (typeof TL !== 'undefined') for (const c of TL.cards.values()) GHOST.append(c.node);
+  if (S.pendingApproval && S.pendingApproval.card) GHOST.append(S.pendingApproval.card);
+}
+
+// Ohne angelegte Verbindung liefert activeConn() einen Platzhalter (none: true), damit nirgends ein Fehler entsteht
+const NO_CONN = { id: '', name: 'Keine Verbindung', type: 'openai', baseUrl: '', apiKey: '', extraParams: false, none: true };
+const activeConn = () => S.settings.connections.find((c) => c.id === S.settings.activeConnection) || S.settings.connections[0] || NO_CONN;
 const currentModel = () => (S.chat && S.chat.model) || S.settings.model || '';
 const useTools = () => !!(S.settings.workspace.toolsEnabled && S.settings.workspace.path);
 const EXEC_TOOLS = ['run_command', 'install_tool', 'check_tool'];
+const askOn = () => S.settings.workspace.askUser !== false;
+const askAlone = () => !useTools() && askOn() && S.settings.workspace.askUserAlways === true;
+// Welche Werkzeuge dem Modell angeboten werden
+function toolsFor() {
+  if (useTools()) return LLM.WORKSPACE_TOOLS.filter((t) => (subOn() || t.function.name !== 'delegate_task') && (hoOn() || t.function.name !== 'propose_new_session') && (execOn() || !EXEC_TOOLS.includes(t.function.name)) && (askOn() || t.function.name !== 'ask_user'));
+  if (askAlone()) return LLM.WORKSPACE_TOOLS.filter((t) => t.function.name === 'ask_user');
+  return null;
+}
 const execOn = () => S.settings.workspace.execEnabled !== false;
 
 /* ═════════════ Start ═════════════ */
 async function init() {
   const stored = await api.store.get('settings');
   S.settings = deepMerge(DEFAULTS, stored || {});
+  // Einmalig (V43): Standard-Design ist Hell. Ein früher gespeichertes „Dunkel“ würde den neuen Standard sonst überschreiben.
+  if (!S.settings.appearance.lightDefaultApplied) {
+    S.settings.appearance.theme = 'light';
+    S.settings.appearance.lightDefaultApplied = true;
+    api.store.set('settings', S.settings);
+  }
   // Migration: Preise waren früher in USD gespeichert, jetzt direkt in €
   if (stored && stored.pricing && !stored.pricing.eur) {
     const pr = S.settings.pricing;
@@ -47,8 +93,24 @@ async function init() {
     saveSettings();
   }
   if (stored && stored.workspace && stored.workspace.confirmWrites === false && !stored.workspace.approval) S.settings.workspace.approval = 'none';
-  if (!Array.isArray(S.settings.connections) || !S.settings.connections.length) S.settings.connections = JSON.parse(JSON.stringify(DEFAULTS.connections));
-  if (!S.settings.connections.some((c) => c.id === S.settings.activeConnection)) S.settings.activeConnection = S.settings.connections[0].id;
+  if (!Array.isArray(S.settings.connections)) S.settings.connections = [];
+  // Einmalig (V47): Steht noch der alte Mini-Standard-Prompt drin, wird er durch den neuen Standard ersetzt. Eigene Prompts bleiben.
+  if (!S.settings.promptDefaultV47) {
+    S.settings.promptDefaultV47 = true;
+    if (!S.settings.systemPrompt || S.settings.systemPrompt.trim() === 'Du bist ein hilfreicher, präziser Assistent. Antworte in der Sprache des Nutzers.') S.settings.systemPrompt = DEFAULTS.systemPrompt;
+    api.store.set('settings', S.settings);
+  }
+  // Einmalig (V46): Die alten Vorgaben „Ollama (lokal)“ und „LM Studio“ entfernen (nur wenn unverändert) und „Strata_API“ als Standard sicherstellen.
+  if (!S.settings.connDefaultsV46) {
+    S.settings.connDefaultsV46 = true;
+    const untouched = (c) => (c.id === 'ollama' && c.name === 'Ollama (lokal)' && c.baseUrl === 'http://localhost:11434' && !c.apiKey)
+      || (c.id === 'lmstudio' && c.name === 'LM Studio' && c.baseUrl === 'http://localhost:1234/v1' && !c.apiKey);
+    S.settings.connections = S.settings.connections.filter((c) => !untouched(c));
+    if (!S.settings.connections.some((c) => c.name === 'Strata_API')) S.settings.connections.unshift(JSON.parse(JSON.stringify(DEFAULTS.connections[0])));
+    if (!S.settings.connections.some((c) => c.id === S.settings.activeConnection)) S.settings.activeConnection = S.settings.connections[0].id;
+    api.store.set('settings', S.settings);
+  }
+  if (!S.settings.connections.some((c) => c.id === S.settings.activeConnection)) S.settings.activeConnection = S.settings.connections[0] ? S.settings.connections[0].id : '';
 
   buildChrome();
   api.appInfo().then((i) => {
@@ -57,9 +119,14 @@ async function init() {
     document.title = t;
   });
   applyAppearance();
+  applySpell();
   wireEvents();
+  try { S.sync = await api.sync.get(); } catch { S.sync = { dir: '', deviceId: 'lokal', deviceName: 'Dieser Rechner' }; }
+  api.onChatsChanged((m) => onRemoteChats(m));
+  setInterval(updateBusyNotice, 20000); // abgelaufene „arbeitet gerade“-Markierungen (Rechner abgestürzt) ausblenden
   await loadChatList();
   if (S.chatList.length) await openChat(S.chatList[0].id);
+  if (!S.settings.connections.length) setTimeout(() => { toast('Lege zuerst eine Verbindung zu deinem KI-Server an.', 6000); openSettings('conn'); }, 400);
   else newChat();
   renderConnSelect();
   renderFilePanel();
@@ -180,6 +247,7 @@ function applyAppearance() {
   if (img) rs.setProperty('--bg-img', `url("${img}")`);
   rs.setProperty('--bg-opacity', String((a.bgOpacity ?? 75) / 100));
   rs.setProperty('--bg-blur', (a.bgBlur || 0) + 'px');
+  rs.setProperty('--bg-filter', a.bgBlur > 0 ? `blur(${a.bgBlur}px)` : 'none');
   document.body.classList.toggle('has-bg', !!img);
   document.body.classList.toggle('has-assistant-bg', !!c.assistantBg);
 
@@ -194,8 +262,15 @@ function applyAppearance() {
   }
 }
 
+// Rechtschreibprüfung an den Hauptprozess melden (Ein/Aus und Sprachen)
+function applySpell() {
+  const sp = (S.settings && S.settings.spell) || {};
+  try { if (typeof api.spellSet === 'function') api.spellSet({ enabled: sp.enabled !== false, lang: sp.lang || 'de-en' }); } catch {}
+}
+
 const settingsChanged = debounce(() => {
   applyAppearance();
+  applySpell();
   renderConnSelect();
   updateToolsBtn();
   renderFilePanel();
@@ -208,6 +283,7 @@ const settingsChanged = debounce(() => {
 function renderConnSelect() {
   const s = $('#sel-conn');
   s.innerHTML = '';
+  if (!S.settings.connections.length) s.append(el('option', { value: '', text: 'Keine Verbindung' }));
   S.settings.connections.forEach((c) => s.append(el('option', { value: c.id, text: c.name })));
   s.value = activeConn().id;
 }
@@ -249,8 +325,34 @@ async function refreshModelInfo() {
   updateCtxMeter();
 }
 
+// Fragt bei Strata-artigen Servern, ob das Modell geladen ist (/v1/status, /health). null = unbekannt.
+async function probeServerState(conn) {
+  if (!conn || conn.type === 'ollama') return null;
+  const root = String(conn.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+  const headers = conn.apiKey ? { Authorization: 'Bearer ' + conn.apiKey } : {};
+  for (const path of ['/v1/status', '/health']) {
+    try {
+      const r = await api.fetch({ url: root + path, method: 'GET', headers, timeout: 4000 });
+      if (!r.ok) continue;
+      let j = null;
+      try { j = JSON.parse(r.text); } catch {}
+      if (j && typeof j.loaded === 'boolean') return j.loaded ? 'Modell geladen' : 'Modell entladen';
+    } catch {}
+  }
+  return null;
+}
+
 async function refreshModels() {
   const conn = activeConn();
+  S.srvState = null;
+  if (conn.none) {
+    S.models = [];
+    S.modelsErr = 'Keine Verbindung eingerichtet';
+    setConnStatus('err', 'Keine Verbindung');
+    renderModelSelect();
+    renderStatus();
+    return;
+  }
   setConnStatus('pending', 'Verbinde …');
   try {
     S.models = await LLM.listModels(conn);
@@ -267,6 +369,7 @@ async function refreshModels() {
   renderStatus();
   if (S.chat && !S.chat.messages.length) renderMessages();
   refreshModelInfo();
+  probeServerState(conn).then((st) => { if (activeConn().id === conn.id && st !== S.srvState) { S.srvState = st; renderStatus(); } });
 }
 
 function setConnStatus(state, text) {
@@ -305,7 +408,11 @@ function renderChatList() {
       last = g;
     }
     const title = el('span', { class: 't' }, c.source === 'strata' ? el('span', { class: 'src-badge', text: 'Strata', title: 'Aus der Strata-Weboberfläche importiert' }) : null, c.title || 'Chat');
+    const isRun = !!(S.generating && S.runChat && S.runChat.id === c.id);
+    const dot = isRun ? el('span', { class: 'chat-dot ' + (S.pendingApproval ? 'attn' : 'run'), title: S.pendingApproval ? 'Wartet auf deine Antwort oder Freigabe' : 'Die KI arbeitet hier gerade' })
+      : S.unread.has(c.id) ? el('span', { class: 'chat-dot unread', title: 'Neue Antwort' }) : null;
     const item = el('div', { class: 'chat-item' + (S.chat && S.chat.id === c.id ? ' active' : ''), title: `${c.title}\n${fmt.tok(c.tokens || 0)} Tokens`, onclick: () => openChat(c.id) },
+      dot,
       title,
       el('span', { class: 'acts' },
         el('button', { class: 'mini-btn', title: 'Umbenennen', html: icon('edit', 14), onclick: (e) => { e.stopPropagation(); renameChat(c.id); } }),
@@ -318,11 +425,12 @@ function renderChatList() {
 }
 
 function newChat() {
-  if (S.generating) return toast('Bitte erst die Antwort stoppen.');
   if (S.chat && !S.chat.messages.length) {
     $('#input').focus();
     return;
   }
+  parkLive();
+  S.stick = true;
   S.chat = { id: uid(), title: 'Neuer Chat', created: Date.now(), updated: Date.now(), connectionId: activeConn().id, model: S.settings.model, messages: [] };
   S.attachments = [];
   renderAll();
@@ -330,31 +438,96 @@ function newChat() {
 }
 
 async function openChat(id) {
-  if (S.generating) return toast('Bitte erst die Antwort stoppen.');
-  const c = await api.chats.load(id);
+  if (S.generating && S.chat && S.chat.id === id) return;
+  // Läuft in diesem Chat gerade die KI, gilt das Objekt im Speicher (die Datei auf der Platte ist veraltet)
+  const running = !!(S.generating && S.runChat && S.runChat.id === id);
+  const c = running ? S.runChat : await api.chats.load(id);
   if (!c) return;
+  parkLive();
   S.chat = c;
   S.attachments = [];
-  if (c.connectionId && c.connectionId !== S.settings.activeConnection && S.settings.connections.some((x) => x.id === c.connectionId)) {
+  S.stick = true;
+  S.unread.delete(id);
+  if (!S.generating && c.connectionId && c.connectionId !== S.settings.activeConnection && S.settings.connections.some((x) => x.id === c.connectionId)) {
     S.settings.activeConnection = c.connectionId;
     saveSettings();
     renderConnSelect();
     refreshModels();
   }
   renderAll();
+  if (S.generating && !running && S.runChat) toast(`Die Antwort in „${S.runChat.title}“ läuft im Hintergrund weiter.`, 3500);
+  submitQueuedMessageIfAny();
 }
 
-async function saveChatNow() {
-  const c = S.chat;
+async function saveChatNow(chat) {
+  const c = chat || S.chat;
   if (!c || !c.messages.length) return;
   c.updated = Date.now();
-  const meta = { id: c.id, title: c.title, created: c.created, updated: c.updated, model: c.model, tokens: chatTotals(c).total, source: c.source, importKey: c.importKey };
-  await api.chats.save(c, meta);
+  // „arbeitet gerade“: Andere Rechner sehen, dass hier eine Antwort läuft, und schreiben nicht dazwischen
+  const busy = S.generating && S.runChat === c ? { dev: S.sync.deviceId, name: S.sync.deviceName, ts: Date.now() } : null;
+  const meta = { id: c.id, title: c.title, created: c.created, updated: c.updated, model: c.model, tokens: chatTotals(c).total, source: c.source, importKey: c.importKey, busy };
+  let r = null;
+  try { r = await api.chats.save(c, meta); } catch (e) { toast('Chat konnte nicht gespeichert werden: ' + e.message, 6000); return; }
+  if (r && r.conflict) {
+    // Ein anderer Rechner hat diesen Chat gleichzeitig geändert: Nichts überschrieben, die eigene Fassung liegt als Kopie vor
+    c.id = r.conflict.id;
+    c.title = r.conflict.title;
+    toast(`Der Chat wurde auf einem anderen Rechner gleichzeitig geändert. Deine Fassung wurde als Kopie „${c.title}“ gespeichert.`, 10000);
+    await loadChatList();
+    return;
+  }
   const i = S.chatList.findIndex((x) => x.id === c.id);
   if (i >= 0) S.chatList[i] = meta;
   else S.chatList.push(meta);
   S.chatList.sort((a, b) => (b.updated || 0) - (a.updated || 0));
   renderChatList();
+}
+
+/* ───── Geräteübergreifend: Änderungen von anderen Rechnern ───── */
+const chatSig = (c) => { const l = c && c.messages && c.messages[c.messages.length - 1]; return (c ? c.messages.length : 0) + ':' + (l ? String(l.content || '').length + ':' + (l.toolCalls || []).length + ':' + (l.error ? 1 : 0) : 0); };
+function remoteBusy(chat) {
+  const m = chat && S.chatList.find((x) => x.id === chat.id);
+  const b = m && m.busy;
+  return b && b.dev !== S.sync.deviceId && Date.now() - (b.ts || 0) < 180000 ? b : null; // 3 min ohne Lebenszeichen = abgestürzt
+}
+function updateBusyNotice() {
+  const s = $('#busy-strip');
+  if (!s) return;
+  const b = remoteBusy(S.chat);
+  s.classList.toggle('hidden', !b);
+  s.innerHTML = '';
+  if (b) s.append(el('span', { class: 'queued-icon', html: icon('zap', 13, 2) }), el('span', { class: 'queued-hint', text: `Auf „${b.name || 'einem anderen Rechner'}“ arbeitet die KI gerade in diesem Chat. Senden ist erst danach möglich.` }));
+}
+let remoteWarned = '';
+async function onRemoteChats(m) {
+  if (!m) return;
+  try { S.chatList = await api.chats.list(); } catch { return; }
+  renderChatList();
+  const cur = S.chat;
+  if (cur) {
+    if ((m.removed || []).includes(cur.id)) toast('Dieser Chat wurde auf einem anderen Rechner gelöscht. Er wird beim nächsten Speichern neu angelegt.', 6000);
+    else if ((m.metas || []).some((x) => x.id === cur.id)) {
+      if (S.generating && S.runChat === cur) {
+        if (remoteWarned !== cur.id) { remoteWarned = cur.id; toast('Dieser Chat wurde auf einem anderen Rechner geändert. Beim Speichern entsteht eine Konfliktkopie.', 8000); }
+      } else {
+        const c = await api.chats.load(cur.id);
+        if (c && S.chat === cur) {
+          const changed = chatSig(c) !== chatSig(cur);
+          cur.title = c.title;
+          if (changed) {
+            S.chat = c;
+            renderMessages();
+            renderStatus();
+            updateCtxMeter();
+            renderChatList();
+            toast('Chat wurde auf einem anderen Rechner aktualisiert.', 2500);
+          }
+        }
+      }
+    }
+  }
+  updateBusyNotice();
+  updateSendBtn();
 }
 
 async function renameChat(id) {
@@ -398,7 +571,7 @@ function pricesFor(conn) {
 }
 function costOfStats(s, conn) {
   const pr = pricesFor(conn);
-  return ((s.promptTokens || 0) * pr.in + (s.completionTokens || 0) * pr.out) / 1e6;
+  return (fin(s.promptTokens) * pr.in + fin(s.completionTokens) * pr.out) / 1e6;
 }
 function chatCost(chat) {
   const conn = connOf(chat);
@@ -409,19 +582,25 @@ function chatCost(chat) {
 const fmtNum = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
 const moneyTip = (pr) => `Eingabe ${fmtNum(pr.in)} € und Ausgabe ${fmtNum(pr.out)} € je 1 Mio. Token`;
 
+const fin = (v) => (Number.isFinite(+v) && +v > 0 ? +v : 0);
 function chatTotals(c) {
-  let prompt = 0, comp = 0, tpsSum = 0, tpsN = 0, last = null, duration = 0, runs = 0;
-  for (const m of c.messages) {
+  let prompt = 0, comp = 0, tokSum = 0, secSum = 0, last = null, duration = 0, runs = 0;
+  const cs0 = ctxStart(c);
+  for (let mi = 0; mi < c.messages.length; mi++) {
+    const m = c.messages[mi];
     if (m.role === 'assistant' && m.stats) {
-      prompt += m.stats.promptTokens || 0;
-      comp += m.stats.completionTokens || 0;
-      duration += m.stats.duration || 0;
+      const ct = fin(m.stats.completionTokens);
+      prompt += fin(m.stats.promptTokens);
+      comp += ct;
+      duration += fin(m.stats.duration);
       runs++;
-      if (m.stats.tps) { tpsSum += m.stats.tps; tpsN++; }
-      last = m.stats;
+      // Durchschnitt nach Tokens gewichtet (Σ Tokens / Σ Zeit): kurze Antworten verfälschen ihn nicht, ein ungültiger Wert macht ihn nicht unsichtbar
+      const tps = fin(m.stats.tps);
+      if (tps > 0 && ct > 0) { tokSum += ct; secSum += ct / tps; }
+      if (mi >= cs0) last = m.stats; // Füllstand zählt nur den Kontext, den die KI noch sieht
     }
   }
-  return { prompt, comp, total: prompt + comp, avgTps: tpsN ? tpsSum / tpsN : null, last, duration, runs };
+  return { prompt, comp, total: prompt + comp, avgTps: secSum > 0 ? tokSum / secSum : null, tokSum, secSum, last, duration, runs };
 }
 
 /* ═════════════ Rendering: Gesamt ═════════════ */
@@ -430,6 +609,8 @@ function renderAll() {
   renderModelSelect();
   renderMessages();
   renderAttachStrip();
+  renderQueuedStrip();
+  updateBusyNotice();
   updateEstimate();
   renderStatus();
   updateCtxMeter();
@@ -440,18 +621,45 @@ function renderAll() {
 function renderStatus() {
   const conn = activeConn();
   if (S.modelsErr) setConnStatus('err', `${conn.name}: nicht erreichbar`);
-  else setConnStatus('ok', `${conn.name} · ${S.models.length} Modell${S.models.length === 1 ? '' : 'e'}`);
+  else setConnStatus('ok', `${conn.name} · ${S.models.length} Modell${S.models.length === 1 ? '' : 'e'}${S.srvState ? ' · ' + S.srvState : ''}`);
   $('#st-left').textContent = S.modelsErr ? S.modelsErr.split('\n')[0] : currentModel() ? 'Modell: ' + currentModel() : 'Kein Modell gewählt';
-  const t = S.chat ? chatTotals(S.chat) : { total: 0, prompt: 0, comp: 0, avgTps: null };
+  const t = S.chat ? chatTotals(S.chat) : { total: 0, prompt: 0, comp: 0, avgTps: null, tokSum: 0, secSum: 0, duration: 0, runs: 0 };
   const lv = S.live; // laufende Anfrage: Werte in Echtzeit dazurechnen
-  if (lv) { t.prompt += lv.prompt; t.comp += lv.comp; t.total += lv.prompt + lv.comp; }
+  let tokSum = t.tokSum;
+  let secSum = t.secSum;
+  let dur = t.duration;
+  let liveTps = null;
+  if (lv) {
+    t.prompt += lv.prompt;
+    t.comp += lv.comp;
+    t.total += lv.prompt + lv.comp;
+    const r = lv.run;
+    if (r) {
+      const now = performance.now();
+      const sec = r.tFirst ? (now - r.tFirst) / 1000 : 0;
+      if (sec > 0.4 && r.n > 0) {
+        tokSum += r.n;
+        secSum += sec;
+        liveTps = r.n / sec;
+      }
+      dur += (now - r.t0) / 1000;
+    }
+  }
+  const avg = secSum > 0 ? tokSum / secSum : null;
   const tl = lv ? '<span class="live-dot" title="Läuft – Werte aktualisieren sich live"></span>' : '';
-  $('#st-right').innerHTML = `${tl}Chat: <b>${lv ? '~' : ''}${fmt.tok(t.total)}</b> Tokens (↑ ${fmt.tok(t.prompt)} · ↓ ${fmt.tok(t.comp)})` + (t.avgTps ? ` · Ø <b>${fmt.tps(t.avgTps)}</b> Tokens/s` : '') + (t.runs ? ` · Dauer: <b>${fmt.dur(t.duration)}</b>` : '');
+  const tilde = lv ? '~' : '';
+  // Alle Werte stehen immer da (in einem neuen Chat zunächst 0 bzw. –) und laufen während einer Antwort live mit
+  $('#st-right').innerHTML = `${tl}Chat: <b>${tilde}${fmt.tok(t.total)}</b> Tokens (↑ ${fmt.tok(t.prompt)} · ↓ ${fmt.tok(t.comp)})` +
+    ` · Ø <b>${avg ? tilde + fmt.tps(avg) : '–'}</b> Tokens/s` + (lv && liveTps ? ` (jetzt <b>~${fmt.tps(liveTps)}</b>)` : '') +
+    ` · Dauer: <b>${fmt.dur(dur)}</b>`;
   let tip = `Exakt: ${fmt.num(t.total)} Tokens gesamt, ${fmt.num(t.prompt)} Prompt, ${fmt.num(t.comp)} Antwort`;
-  if (t.runs) tip += `\nDauer: Summe der Verarbeitungszeit aller ${t.runs} Anfragen dieses Chats (inklusive Werkzeug-Schritte, ohne Wartezeit auf Freigaben und ohne deine Schreibzeit): ${fmt.dur(t.duration)}`;
+  tip += `\nØ Tokens/s: Antwort-Tokens geteilt durch Generierungszeit über alle Anfragen dieses Chats${lv ? ', die laufende Anfrage ist live eingerechnet (1 Chunk ≈ 1 Token)' : ''}`;
+  tip += `\nDauer: Summe der Verarbeitungszeit aller ${t.runs}${lv ? ' + 1 laufenden' : ''} Anfragen dieses Chats (inklusive Werkzeug-Schritte, ohne Wartezeit auf Freigaben und ohne deine Schreibzeit): ${fmt.dur(dur)}`;
   if (S.settings.pricing.enabled && S.chat) {
     const c = chatCost(S.chat);
-    $('#st-right').innerHTML += ` · Kosten ${c.est ? '~' : '≈'} <b>${fmt.money(c.amount, 'EUR')}</b>`;
+    let amount = c.amount;
+    if (lv) amount += (lv.prompt * c.pr.in + lv.comp * c.pr.out) / 1e6; // laufende Anfrage live einrechnen
+    $('#st-right').innerHTML += ` · Kosten ${c.est || lv ? '~' : '≈'} <b>${fmt.money(amount, 'EUR')}</b>`;
     tip += `\nKosten (Vergleichswert zu Listenpreisen): ${moneyTip(c.pr)}`;
   }
   $('#st-right').title = tip;
@@ -461,7 +669,7 @@ function updateCtxMeter() {
   const box = $('#ctx-meter');
   const max = +S.settings.params.numCtx || 0;
   const t = S.chat ? chatTotals(S.chat) : { last: null };
-  const lv = S.live;
+  const lv = runView() ? S.live : null;
   const used = lv ? lv.prompt + lv.comp : t.last ? (t.last.promptTokens || 0) + (t.last.completionTokens || 0) : 0;
   box.classList.toggle('live', !!lv);
   const pct = max ? Math.min(100, (used / max) * 100) : 0;
@@ -487,7 +695,21 @@ function renderMessages() {
   }
   let lastAssistant = -1;
   msgs.forEach((m, i) => { if (m.role === 'assistant') lastAssistant = i; });
-  msgs.forEach((m, i) => box.append(messageEl(m, i, i === lastAssistant)));
+  const atRun = !!(S.generating && S.runChat && S.runChat === S.chat);
+  const cs = ctxStart(S.chat);
+  msgs.forEach((m, i) => {
+    if (cs && i === cs) box.append(el('div', { class: 'ctx-divider' }, el('span', { html: icon('eraser', 14) + '<span>Kontext geleert – ab hier sieht die KI nur die Übergabe und was danach kommt</span>' })));
+    if (atRun && S.runNode && S.runAm === m) box.append(S.runNode); // gerade streamende Antwort: derselbe Knoten läuft weiter
+    else {
+      const n = messageEl(m, i, i === lastAssistant);
+      if (cs && i < cs && n.classList) n.classList.add('ctx-old');
+      box.append(n);
+    }
+  });
+  if (atRun) {
+    if (typeof TL !== 'undefined') for (const c of TL.cards.values()) box.append(c.node); // noch laufende Programme
+    if (S.pendingApproval && S.pendingApproval.card) box.append(S.pendingApproval.card); // offene Rückfrage / Freigabe
+  }
   if (!S.generating) {
     const lastMsg = msgs[msgs.length - 1];
     if (S.chat.pendingContinue) box.append(continueNotice());
@@ -531,7 +753,7 @@ function actionBtn(ic, title, fn, label) {
 
 function fileChip(f, onRemove) {
   const tokens = f.kind === 'text' ? estimateTokens(f.text) : 0;
-  return el('div', { class: 'chip', title: f.path || f.name, onclick: () => previewFile(f) },
+  return el('div', { class: 'chip', title: (f.path || f.name) + (f.converted ? `\n${f.converted}: als Text ausgelesen` : ''), onclick: () => previewFile(f) },
     el('span', { html: icon(f.kind === 'image' ? 'image' : 'file', 14) }),
     el('span', { class: 'n', text: f.name }),
     el('span', { class: 's', text: f.kind === 'text' ? '~' + fmt.tok(tokens) + ' T' : fmt.size(f.size || 0) }),
@@ -558,18 +780,19 @@ function messageEl(m, i, isLast) {
 function userEl(m, i) {
   const node = el('div', { class: 'msg user' });
   if (m.files && m.files.length) node.append(el('div', { class: 'chips' }, m.files.map((f) => fileChip(f))));
-  if (m.content && m.handoff) node.append(el('details', { class: 'bubble handoff-msg' }, el('summary', { text: `Übergabe aus der vorherigen Sitzung (${fmt.num(m.content.length)} Zeichen)` }), el('pre', { text: m.content })));
+  if (m.content && m.handoff) node.append(el('details', { class: 'bubble handoff-msg' }, el('summary', { text: `${m.cleared ? 'Übergabe nach „Kontext leeren“' : 'Übergabe aus der vorherigen Sitzung'} (${fmt.num(m.content.length)} Zeichen)` }), el('pre', { text: m.content })));
   else if (m.content) node.append(el('div', { class: 'bubble', text: m.content }));
   node.append(el('div', { class: 'msg-actions' }, actionBtn('copy', 'Kopieren', () => copyText(m.content || '')), actionBtn('edit', 'Bearbeiten und neu senden', () => editMessage(i))));
   return node;
 }
 
 function assistantEl(m, i, isLast) {
-  const node = el('div', { class: 'msg assistant' });
+  const node = el('div', { class: 'msg assistant', 'data-mid': m.id || '' });
   const r = {
     who: el('div', { class: 'who' }, el('span', { html: icon('zap', 13) }), el('b', { text: m.model || 'Assistent' })),
     think: el('div'),
     body: el('div', { class: 'md' }),
+    imgs: el('div', { class: 'gen-imgs hidden' }),
     err: el('div', { class: 'err-box hidden' }),
     note: el('div', { class: 'note hidden' }),
     stats: el('div', { class: 'stats' }),
@@ -577,9 +800,10 @@ function assistantEl(m, i, isLast) {
     thinkInner: null,
   };
   node._r = r;
-  node.append(r.who, r.think, r.body, r.err, r.note, r.stats);
+  node.append(r.who, r.think, r.body, r.imgs, r.err, r.note, r.stats);
   const acts = el('div', { class: 'msg-actions' }, actionBtn('copy', 'Antwort kopieren', () => copyText(LLM.splitThink(m.content || '').answer)));
   if (isLast) acts.append(actionBtn('refresh', 'Neu generieren', regenerate, 'Neu generieren'));
+  if (m.request) acts.append(actionBtn('sliders', 'Zeigt, was an den Server gesendet wurde (Parameter, Anzahl Nachrichten und Werkzeuge)', () => showRequest(m), 'Anfrage'));
   node._acts = acts;
   node.append(acts);
   if (m.error && isLast) node.append(el('div', { class: 'row-gap' }, el('button', { class: 'btn sm', text: 'Erneut versuchen', onclick: retryLast })));
@@ -617,6 +841,8 @@ function renderAssistantParts(node, m, mode) {
   r.body.classList.toggle('cursor-blink', live);
   r.body.classList.toggle('hidden', !answer && !live);
 
+  renderGenImages(r.imgs, m.images || []);
+
   if (m.error) {
     r.err.classList.remove('hidden');
     r.err.textContent = m.error;
@@ -629,6 +855,49 @@ function renderAssistantParts(node, m, mode) {
   if (!live) r.stats.innerHTML = statsHtml(m);
 }
 
+/* ───── Gesendete Anfrage ───── */
+function showRequest(m) {
+  const q = m.request || {};
+  const txt = [
+    `POST ${q.url}`,
+    '',
+    JSON.stringify(q.body || {}, null, 2),
+    '',
+    `Nachrichten: ${q.messageCount ?? '?'} · Werkzeuge: ${q.toolCount ?? 0}`,
+    '',
+    'Antwort des Servers (Verbrauch und Zeiten, soweit er sie liefert):',
+    q.response ? JSON.stringify(q.response, null, 2) : '(nicht gespeichert, nur bei neuen Antworten)',
+    '',
+    'Vergleiche diese Werte mit denen der Weboberfläche des Servers. Abweichende Sampling-Werte (temperature, top_p, top_k, repeat_penalty) oder Werkzeug-Definitionen können Geschwindigkeit und Antworten verändern. Einstellungen → Verbindungen → „Sampling-Parameter“ → „Dem Server überlassen“ sendet sie nicht mehr.',
+  ].join('\n');
+  openModal({ title: 'Gesendete Anfrage', body: el('pre', { class: 'preview', text: txt }), wide: true });
+}
+
+/* ───── Vom Modell erzeugte Bilder ───── */
+const dataBase64 = (u) => String(u || '').split(',')[1] || '';
+const imgExt = (u) => (/^data:image\/(\w+)/.exec(u || '') || [])[1] === 'jpeg' ? 'jpg' : (/^data:image\/(\w+)/.exec(u || '') || [, 'png'])[1];
+function renderGenImages(box, imgs) {
+  box.classList.toggle('hidden', !imgs.length);
+  if (box._n === imgs.length) return; // nichts Neues: vorhandene Bilder nicht neu laden
+  box._n = imgs.length;
+  box.replaceChildren(...imgs.map((im, i) => {
+    const ext = imgExt(im.dataUrl);
+    const name = `bild-${i + 1}.${ext}`;
+    const isData = im.dataUrl.startsWith('data:');
+    return el('figure', { class: 'gen-img' },
+      el('img', { src: im.dataUrl, alt: 'Vom Modell erzeugtes Bild', title: 'Klicken zum Vergrößern', onclick: () => openModal({ title: name, body: el('img', { class: 'preview', src: im.dataUrl }), wide: true }) }),
+      el('figcaption', {},
+        isData ? el('button', { class: 'mini-btn', html: icon('download', 13) + '<span>Speichern</span>', title: 'Bild als Datei speichern', onclick: async () => {
+          const p = await api.files.saveAs({ defaultName: name, base64: dataBase64(im.dataUrl), defaultDir: S.settings.workspace.path || undefined, filters: [{ name: 'Bild', extensions: [ext] }] });
+          if (p) toast('Gespeichert: ' + p);
+        } }) : null,
+        isData ? el('button', { class: 'mini-btn', html: icon('paperclip', 13) + '<span>Weiterbearbeiten</span>', title: 'Als Anhang an die nächste Nachricht hängen', onclick: () => {
+          addAttachments({ files: [{ name, kind: 'image', size: Math.round(dataBase64(im.dataUrl).length * 0.75), dataUrl: im.dataUrl }] });
+          $('#input').focus();
+        } }) : null));
+  }));
+}
+
 function stat(cls, tip, value, label) {
   return `<span class="st ${cls}" title="${tip}"><b>${value}</b> ${label}</span>`;
 }
@@ -637,7 +906,8 @@ function statsHtml(m) {
   if (!s) return m.aborted ? '<span class="st">Abgebrochen</span>' : '';
   const t = s.estimated ? '~' : '';
   const out = [
-    stat('speed', 'Generierungsgeschwindigkeit' + (s.estimated ? ' (geschätzt – der Server liefert keine Token-Zahlen)' : ''), t + fmt.tps(s.tps), 'Tokens/s'),
+    stat('speed', 'Generierungsgeschwindigkeit' + (s.estimated ? ' (geschätzt – der Server liefert keine Token-Zahlen)' : '') + '\nGemessen in der App vom ersten Token bis zum Ende der Antwort.', t + fmt.tps(s.tps), 'Tokens/s'),
+    s.serverTps ? stat('', 'Vom Server selbst gemessene Geschwindigkeit dieser Antwort (/metrics), ohne Netzwerk und Oberfläche. Das ist die Zahl, die auch die Server-Weboberfläche zeigt.', fmt.tps(s.serverTps), 'Tokens/s Server') : '',
     stat('', 'Tokens im Prompt (System, Verlauf, Anhänge)' + (s.promptTps ? `\nVerarbeitung: ${fmt.tps(s.promptTps)} Tokens/s` : ''), t + fmt.tok(s.promptTokens), 'Prompt'),
     stat('', 'Erzeugte Tokens', t + fmt.tok(s.completionTokens), 'Antwort'),
     stat('', 'Prompt + Antwort', t + fmt.tok(s.totalTokens), 'Gesamt'),
@@ -655,12 +925,13 @@ function statsHtml(m) {
 
 function toolEl(m) {
   if (m.name === 'propose_new_session') return hoCard(m);
-  const argRaw = m.args && (m.args.path || m.args.query || m.args.label || m.args.command || m.args.package || m.args.name);
+  const askQ = m.name === 'ask_user' ? (normalizeQuestions(m.args)[0] || {}).question : '';
+  const argRaw = askQ || m.args && (m.args.path || m.args.query || m.args.label || m.args.command || m.args.package || m.args.name);
   const arg = argRaw ? ' · ' + String(argRaw).replace(/\s+/g, ' ').slice(0, 90) : '';
   const res = String(m.content || '');
   const argText = Object.entries(m.args || {}).map(([k, v]) => `${k}:\n${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n\n');
   const cut = (t, n) => (t.length > n ? t.slice(0, n) + `\n[… gekürzt, ${fmt.num(t.length)} Zeichen]` : t);
-  const inner = `Argumente\n${cut(argText, 6000)}\n\nErgebnis\n${cut(res, 4000)}`;
+  const inner = m.name === 'ask_user' ? res : `Argumente\n${cut(argText, 6000)}\n\nErgebnis\n${cut(res, 4000)}`;
   return el('details', { class: 'tool' + (m.ok === false ? ' fail' : '') },
     el('summary', {}, el('span', { class: 'chev', html: icon('chevron', 14) }), el('span', { html: icon('wrench', 14) }), el('span', { text: `${m.name}${arg}` }), el('span', { text: m.ok === false ? 'fehlgeschlagen' : 'ok', style: { marginLeft: 'auto', fontSize: '12px' } })),
     el('div', { class: 'inner', text: inner })
@@ -731,18 +1002,72 @@ function scrollBottom() {
 /* ═════════════ Senden & Generieren ═════════════ */
 function updateSendBtn() {
   const b = $('#btn-send');
-  b.classList.toggle('stop', S.generating);
-  b.innerHTML = icon(S.generating ? 'stop' : 'send', S.generating ? 18 : 18, 2.2);
-  b.title = S.generating ? 'Stoppen' : 'Senden';
+  const hasInput = !!($('#input').value.trim() || S.attachments.length);
+  const other = S.generating && !runView(); // anderer Chat als der laufende: der Knopf darf dessen Lauf nicht stoppen
+  const willStop = S.generating && !hasInput && !other;
+  b.classList.toggle('stop', willStop);
+  b.innerHTML = icon(willStop ? 'stop' : 'send', 18, 2.2);
+  b.title = S.generating ? (willStop ? 'Stoppen' : other ? 'Vormerken – wird gesendet, sobald die Antwort im anderen Chat fertig ist' : 'Vormerken – wird gesendet, sobald die KI fertig ist') : 'Senden';
   b.disabled = false;
+  document.body.classList.toggle('gen', !!(S.generating && S.settings.appearance.calmDuringGen !== false)); // Sparmodus: keine Animationen/Unschärfe beim Antworten
+  updatePauseUI();
   if (typeof hoRefresh === 'function') hoRefresh();
 }
 
+/* ═════════════ Pause / Fortsetzen ═════════════
+   - Während die KI Text erzeugt: Die Antwort wird angehalten, der Teil bleibt bis zum Fortsetzen stehen. Beim Fortsetzen
+     fragt die App diesen Schritt mit demselben Verlauf neu an (der Server nutzt dafür meist seinen Prompt-Cache).
+   - Während ein Programm oder Unteragent läuft: Es wird nicht zerstört. Die Pause greift, sobald dieser Schritt fertig ist.
+   - Offene Rückfragen und Freigaben bleiben offen.
+   - „Stopp“ beendet den Auftrag auch aus der Pause heraus. */
+function pauseGate() {
+  if (!S.paused || S.stopRequested) return Promise.resolve();
+  return new Promise((resolve) => { S.pauseWaiters.push(resolve); updatePauseUI(); });
+}
+function releasePause() {
+  S.paused = false;
+  const w = S.pauseWaiters.splice(0);
+  w.forEach((f) => f());
+  updatePauseUI();
+}
+function togglePause() {
+  if (!S.generating || !runView()) return;
+  if (S.paused) return releasePause();
+  S.paused = true;
+  if (S.streaming && S.run) { S.pauseAborted = true; S.run.abort(); }
+  updatePauseUI();
+}
+function updatePauseUI() {
+  const b = $('#btn-pause');
+  const strip = $('#pause-strip');
+  if (!b || !strip) return;
+  const show = !!(S.generating && runView());
+  b.classList.toggle('hidden', !show);
+  b.classList.toggle('paused', show && S.paused);
+  b.innerHTML = icon(S.paused ? 'play' : 'pause', 16, 2);
+  b.title = S.paused ? 'Fortsetzen: die KI macht an derselben Stelle weiter' : 'Pausieren: die KI hält an und wartet';
+  strip.innerHTML = '';
+  if (!(show && S.paused)) { strip.classList.add('hidden'); return; }
+  const waiting = S.pauseWaiters.length > 0;
+  strip.append(
+    el('span', { class: 'queued-icon', html: icon('pause', 13, 2) }),
+    el('span', { class: 'queued-hint', text: waiting ? 'Pausiert. Mit „Fortsetzen“ macht die KI an derselben Stelle weiter.' : 'Pause wird wirksam, sobald der laufende Schritt (Programm oder Unteragent) fertig ist …' }),
+    el('button', { class: 'btn primary sm', text: 'Fortsetzen', onclick: releasePause })
+  );
+  strip.classList.remove('hidden');
+}
+
 async function send() {
-  if (S.generating) return stopGeneration();
+  if (S.generating) {
+    const text = $('#input').value.trim();
+    if (!text && !S.attachments.length) return runView() ? stopGeneration() : undefined; // nichts vorzumerken: der Knopf wirkt als Stopp (nur im laufenden Chat)
+    return queueMessage(text, S.attachments);
+  }
   const ta = $('#input');
   const text = ta.value.trim();
   if (!text && !S.attachments.length) return;
+  const rb = remoteBusy(S.chat);
+  if (rb) return toast(`In diesem Chat arbeitet gerade die KI auf „${rb.name || 'einem anderen Rechner'}“. Bitte warten, bis sie fertig ist.`, 5000);
   if (!currentModel()) {
     toast('Bitte zuerst ein Modell wählen.');
     if (S.modelsErr) openSettings('conn');
@@ -765,26 +1090,33 @@ async function send() {
   await generate();
 }
 
+/* Stopp = harter Abbruch: Alles, worauf die Schleife gerade wartet, wird sofort beendet oder übergangen
+   (Modell-Stream, Programme, Dateiwerkzeuge, Unteragenten, offene Rückfragen/Freigaben, Pause). */
 function stopGeneration() {
   S.stopRequested = true;
+  if (S.paused) releasePause(); // aus der Pause heraus beenden
   if (S.pendingApproval) S.pendingApproval.resolve('deny');
-  if (S.run) S.run.abort();
+  try { if (S.run) S.run.abort(); } catch {}
   if (S.execId) api.sys.abort(S.execId);
+  try { api.ws.abortAll(); } catch {}
   abortSubagents();
+  if (S.stopResolve) S.stopResolve(); // die Schleife wartet nicht mehr auf ein hängendes Werkzeug
 }
 
 function buildSystem() {
   let s = S.settings.systemPrompt || '';
   if (S.settings.appearance.thinkInGerman) s += (s ? '\n\n' : '') + 'Denke und überlege auf Deutsch (auch im Gedankengang).';
   if (useTools()) {
-    s += `\n\nDu hast über Werkzeuge Zugriff auf einen Workspace-Ordner (${S.settings.workspace.path}). Verfügbar: list_files, search_text, read_file, edit_file, write_file${subOn() ? ', delegate_task' : ''}. Alle Pfade sind relativ zum Workspace. Der Kontext ist begrenzt: Lies große Dateien nie komplett, sondern finde die Stelle mit search_text und lies dann gezielt mit start_line/end_line. Lies eine Datei nicht erneut, wenn sie sich nicht geändert hat. Ändere vorhandene Dateien mit edit_file (kleine Ersetzungen) statt sie mit write_file komplett neu zu schreiben. Lies Dateien, bevor du Aussagen über ihren Inhalt machst. Schreibe oder ändere Dateien nur, wenn der Nutzer das wünscht. Erfinde keine Funktionen, Dateien oder Zeilen: Was du nicht gelesen hast, kennst du nicht.${hoOn() ? ' Wird die Arbeit sehr lang oder weist dich die App auf einen vollen Kontext hin, rufe propose_new_session auf (mit vollständiger Übergabe in summary und next_steps) und beende dann deine Antwort. Schreibe das nicht nur als Text.' : ''}${subOn() ? ' Für umfangreiche Erkundung oder getrennte Teilfragen nutze delegate_task: Der Unteragent arbeitet mit eigenem Kontext, darf nur lesen und liefert dir eine Zusammenfassung. Mehrere Unteragenten kannst du in einer Antwort gleichzeitig starten.' : ''}`;
+    s += `\n\nDu hast über Werkzeuge Zugriff auf einen Workspace-Ordner (${S.settings.workspace.path}). Verfügbar: list_files, search_text, read_file, edit_file, write_file${subOn() ? ', delegate_task' : ''}. Alle Pfade sind relativ zum Workspace. Der Kontext ist begrenzt: Lies große Dateien nie komplett, sondern finde die Stelle mit search_text und lies dann gezielt mit start_line/end_line. Lies eine Datei nicht erneut, wenn sie sich nicht geändert hat. Ändere vorhandene Dateien mit edit_file (kleine Ersetzungen) statt sie mit write_file komplett neu zu schreiben. Lies Dateien, bevor du Aussagen über ihren Inhalt machst. Schreibe oder ändere Dateien nur, wenn der Nutzer das wünscht. Erfinde keine Funktionen, Dateien oder Zeilen: Was du nicht gelesen hast, kennst du nicht.${askOn() ? ASK_HINT : ''}${hoOn() ? ' Wird die Arbeit sehr lang oder weist dich die App auf einen vollen Kontext hin, rufe propose_new_session auf (mit vollständiger Übergabe in summary und next_steps) und beende dann deine Antwort. Schreibe das nicht nur als Text.' : ''}${subOn() ? ' Für umfangreiche Erkundung oder getrennte Teilfragen nutze delegate_task: Der Unteragent arbeitet mit eigenem Kontext, darf nur lesen und liefert dir eine Zusammenfassung. Mehrere Unteragenten kannst du in einer Antwort gleichzeitig starten.' : ''}`;
     if (execOn()) {
       const win = /Win/i.test(navigator.platform || navigator.userAgent);
       s += `\n\nDu kannst außerdem Programme auf dem Rechner des Nutzers (${win ? 'Windows' : 'Desktop'}) nutzen: check_tool (Programm vorhanden?), run_command (Befehl ausführen${win ? ', Standard cmd, optional shell="powershell"' : ''}), install_tool (fehlendes Programm nach Rückfrage installieren). Das sind echte Werkzeuge: Du kannst sie selbst aufrufen und darfst nie behaupten, du hättest keinen Zugriff auf Programme. Vorgehen: 1) Mit check_tool prüfen, ob das Programm da ist (auch Namen wie apktool, jadx, java, python). 2) Fehlt es und wird es gebraucht, rufe install_tool auf: Der Nutzer bekommt eine Rückfrage mit dem genauen Befehl. Installiere nie ungefragt und nie etwas, das die Aufgabe nicht braucht. 3) Mit run_command ausführen. Befehle müssen nicht-interaktiv laufen. Lange Ausgaben werden gekürzt: filtere sie oder schreibe sie in eine Datei im Workspace und lies sie gezielt. Lege Ergebnisse (z. B. entpackte APKs) in einem Unterordner des Workspace ab, damit du sie mit read_file und search_text untersuchen kannst. Führe keine zerstörerischen Befehle aus (Löschen, Formatieren, Systemeinstellungen), außer der Nutzer verlangt es ausdrücklich. Du bist für Analyse und Entwicklung zuständig. Lies Ausgaben genau und berichte ehrlich, wenn ein Befehl fehlschlägt.`;
     }
   }
+  else if (askAlone()) s += `\n\n${ASK_HINT.trim()}`;
   return s.trim();
 }
+const ASK_HINT = ' Wenn dir Angaben fehlen, die Aufgabe mehrdeutig ist oder es mehrere sinnvolle Wege gibt, stelle dem Nutzer mit ask_user eine Rückfrage mit 2 bis 5 konkreten Antwortvorschlägen, statt zu raten, und warte auf die Antwort.';
 
 
 /* ═════════════ Kontext-Verwaltung ═════════════ */
@@ -858,7 +1190,7 @@ function compactMessages(messages, system) {
   return { messages: out, info };
 }
 
-const TOOL_LABEL = { delegate_task: 'Unteragent starten', list_files: 'Ordner auflisten', read_file: 'Datei lesen', write_file: 'Datei schreiben', edit_file: 'Datei ändern', search_text: 'Text suchen', run_command: 'Programm ausführen', install_tool: 'Tool installieren', check_tool: 'Tool suchen' };
+const TOOL_LABEL = { ask_user: 'Rückfrage', delegate_task: 'Unteragent starten', list_files: 'Ordner auflisten', read_file: 'Datei lesen', write_file: 'Datei schreiben', edit_file: 'Datei ändern', search_text: 'Text suchen', run_command: 'Programm ausführen', install_tool: 'Tool installieren', check_tool: 'Tool suchen' };
 const approvalDefault = () => S.settings.workspace.approval || 'write';
 
 /* ═════════════ Freigaben pro Chat (live umstellbar) ═════════════
@@ -877,15 +1209,15 @@ function permOf(chat) {
   p.installs = !!p.installs;
   return p;
 }
-const approvalMode = () => permOf().mode || approvalDefault();
-const permHas = (key) => permOf().keys.includes(key);
-function permAdd(key) {
-  const p = permOf();
+const approvalMode = (chat) => permOf(chat).mode || approvalDefault();
+const permHas = (key, chat) => permOf(chat).keys.includes(key);
+function permAdd(key, chat) {
+  const p = permOf(chat);
   if (!p.keys.includes(key)) p.keys.push(key);
-  permChanged();
+  permChanged(chat);
 }
-function permChanged() {
-  saveChatSoon();
+function permChanged(chat) {
+  saveChatSoon(chat);
   updatePermBtn();
 }
 
@@ -894,7 +1226,7 @@ const PERM_MODES = [
   { id: 'write', label: 'Nur Schreiben und Befehle bestätigen', hint: 'Lesen läuft automatisch' },
   { id: 'none', label: 'Nichts bestätigen', hint: 'Datei-Werkzeuge und Befehle laufen ohne Rückfrage' },
 ];
-const permIsAuto = () => approvalMode() === 'none' || permOf().runAll;
+const permIsAuto = (chat) => approvalMode(chat) === 'none' || permOf(chat).runAll;
 
 function updatePermBtn() {
   const b = $('#btn-perm');
@@ -953,9 +1285,10 @@ function permKeyLabel(k) {
 // Wurde live auf „ohne Nachfrage“ umgestellt, während eine Karte offen ist: Karte sofort genehmigen.
 function resolvePendingIfAuto() {
   const pa = S.pendingApproval;
-  if (!pa) return;
-  const p = permOf();
-  if (pa.kind === 'install' ? p.installs : pa.kind === 'run' ? permIsAuto() : approvalMode() === 'none') pa.resolve('allow');
+  if (!pa || pa.kind === 'ask') return;
+  const rc = S.runChat || S.chat;
+  const p = permOf(rc);
+  if (pa.kind === 'install' ? p.installs : pa.kind === 'run' ? permIsAuto(rc) : approvalMode(rc) === 'none') pa.resolve('allow');
 }
 
 /* Befehlsanalyse für „Programm immer erlauben“ */
@@ -998,6 +1331,92 @@ function retryLast() {
   generate();
 }
 
+/* ═════════════ Rückfragen mit Antwortvorschlägen (ask_user) ═════════════ */
+// Modelle liefern die Fragen in leicht verschiedenen Formen: Liste, JSON-Text oder eine einzelne Frage. Alles wird vereinheitlicht.
+function normalizeQuestions(args) {
+  let list = args && args.questions;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch { list = null; } }
+  if (!Array.isArray(list)) list = args && (args.question || args.text) ? [args] : [];
+  const str = (v) => String(v && typeof v === 'object' ? (v.label || v.text || v.title || v.value || '') : v ?? '').trim().slice(0, 200);
+  return list.slice(0, 4).map((q) => {
+    if (typeof q === 'string') q = { question: q, options: [] };
+    let opts = q.options || q.choices || q.answers || q.suggestions || [];
+    if (typeof opts === 'string') opts = opts.split(/\s*\|\s*|\s*;\s*|\n/);
+    return { question: str(q.question || q.text || q.title || q.q), options: (Array.isArray(opts) ? opts : []).map(str).filter(Boolean).slice(0, 6), multiple: q.multiple === true || q.multi === true || q.multiselect === true };
+  }).filter((q) => q.question);
+}
+
+async function runAskUser(tc, base) {
+  const qs = normalizeQuestions(tc.args);
+  if (!qs.length) return { ...base, ok: false, content: 'ask_user braucht "questions": eine Liste mit Objekten {question, options}. Stelle die Frage im Chat oder rufe das Werkzeug korrekt auf.' };
+  tlState(tc.id, 'answer');
+  const ans = await requestAnswers(tc, qs);
+  tlState(tc.id, 'running');
+  if (!ans) return { ...base, ok: true, content: 'Der Nutzer hat die Rückfragen übersprungen. Triff vernünftige Annahmen, nenne sie kurz und arbeite weiter.' };
+  const lines = qs.map((q, i) => `${i + 1}. ${q.question}\n   Antwort: ${ans[i] && ans[i].length ? ans[i].join('; ') : '(keine Angabe)'}`);
+  return { ...base, ok: true, content: 'Antworten des Nutzers:\n' + lines.join('\n') };
+}
+
+function requestAnswers(tc, qs) {
+  return new Promise((resolve) => {
+    const state = qs.map(() => ({ sel: [], own: '' }));
+    const answerOf = (i) => {
+      const s = state[i];
+      return qs[i].multiple ? [...s.sel, ...(s.own ? [s.own] : [])] : s.own ? [s.own] : s.sel.slice(0, 1);
+    };
+    const complete = () => qs.every((_, i) => answerOf(i).length);
+    const done = (v) => { S.pendingApproval = null; card.remove(); resolve(v); renderChatList(); };
+    const send = el('button', { class: 'btn primary', text: 'Antworten', disabled: true, onclick: () => done(qs.map((_, i) => answerOf(i))) });
+    const refresh = () => { send.disabled = !complete(); };
+    const blocks = qs.map((q, i) => {
+      const st = state[i];
+      const btns = q.options.map((o) => {
+        const b = el('button', { class: 'opt', type: 'button', text: o, onclick: () => {
+          const k = st.sel.indexOf(o);
+          if (k >= 0) st.sel.splice(k, 1);
+          else if (q.multiple) st.sel.push(o);
+          else { st.sel = [o]; st.own = ''; own.value = ''; }
+          btns.forEach((x) => x.classList.toggle('sel', st.sel.includes(x.textContent)));
+          refresh();
+          // Einzelauswahl bei genau einer Frage: sofort abschicken
+          if (!q.multiple && qs.length === 1 && st.sel.length) send.click();
+        } });
+        return b;
+      });
+      const own = el('input', { class: 'q-own', type: 'text', placeholder: q.options.length ? 'Oder eigene Antwort eintippen …' : 'Antwort eintippen …' });
+      own.addEventListener('input', () => {
+        st.own = own.value.trim();
+        if (!q.multiple && st.own) { st.sel = []; btns.forEach((x) => x.classList.remove('sel')); }
+        refresh();
+      });
+      own.addEventListener('keydown', (e) => { if (e.key === 'Enter' && complete()) { e.preventDefault(); send.click(); } });
+      return el('div', { class: 'q-block' },
+        el('div', { class: 'q-text', text: (qs.length > 1 ? `${i + 1}. ` : '') + q.question + (q.multiple ? ' (Mehrfachauswahl)' : '') }),
+        btns.length ? el('div', { class: 'q-opts' }, btns) : null,
+        own);
+    });
+    const card = el('div', { class: 'approval ask', role: 'dialog', 'aria-label': 'Rückfrage der KI' },
+      el('div', { class: 'ap-head', html: icon('sparkle', 16) + '<span>Die KI hat ' + (qs.length > 1 ? 'Rückfragen' : 'eine Rückfrage') + '</span>' }),
+      blocks,
+      el('div', { class: 'ap-actions' }, send, el('button', { class: 'btn', text: 'Überspringen', title: 'Die KI trifft dann eigene Annahmen', onclick: () => done(null) }))
+    );
+    // „Stopp“ und Freigabe-Umstellungen: Stopp überspringt, Umstellungen lassen die Karte stehen (kind „ask“)
+    S.pendingApproval = { resolve: (d) => done(Array.isArray(d) ? d : null), kind: 'ask', card };
+    showLiveCard(card);
+    if (!document.hasFocus()) { try { new Notification('LLM Box – Rückfrage', { body: qs[0].question }); } catch {} }
+  });
+}
+
+/* Karte (Freigabe/Rückfrage) anzeigen: im laufenden Chat sichtbar, sonst vorgemerkt und in der Seitenleiste markiert */
+function showLiveCard(card) {
+  liveHost().append(card);
+  if (!runView()) {
+    renderChatList();
+    toast(`In „${S.runChat.title}“ wartet die KI auf dich.`, 6000);
+  } else if (S.stick) scrollBottom();
+  else $('#scroll-down').classList.add('attn');
+}
+
 function requestApproval(tc, opt = {}) {
   return new Promise((resolve) => {
     const a = tc.args || {};
@@ -1007,6 +1426,7 @@ function requestApproval(tc, opt = {}) {
       S.pendingApproval = null;
       card.remove();
       resolve(d);
+      renderChatList();
     };
     const allow = el('button', { class: 'btn primary', text: opt.allowLabel || 'Genehmigen', onclick: () => done('allow') });
     const card = el('div', { class: 'approval', role: 'alertdialog', 'aria-label': 'Freigabe erforderlich' },
@@ -1026,10 +1446,8 @@ function requestApproval(tc, opt = {}) {
         el('button', { class: 'btn danger', text: 'Ablehnen', onclick: () => done('deny') })
       )
     );
-    S.pendingApproval = { resolve: done, kind: opt.kind || 'tool' };
-    $('#messages-inner').append(card);
-    if (S.stick) scrollBottom();
-    else $('#scroll-down').classList.add('attn'); // Nutzer liest weiter oben: nicht wegscrollen, nur auffällig markieren
+    S.pendingApproval = { resolve: done, kind: opt.kind || 'tool', card };
+    showLiveCard(card); // Nutzer liest weiter oben: nicht wegscrollen, nur auffällig markieren
     allow.focus({ preventScroll: true });
     if (!document.hasFocus()) {
       try { new Notification('LLM Box – Freigabe nötig', { body: `${TOOL_LABEL[tc.name] || tc.name}: ${target}` }); } catch {}
@@ -1059,7 +1477,7 @@ function startLivePoll(conn) {
     updateCtxMeter();
     renderStatus();
   };
-  livePoll = setInterval(tick, 1000);
+  livePoll = setInterval(tick, 2000);
 }
 function stopLivePoll() {
   if (livePoll) clearInterval(livePoll);
@@ -1073,25 +1491,44 @@ async function generate() {
   const model = currentModel();
   const maxSteps = Math.max(1, +S.settings.workspace.maxSteps || 25);
   S.generating = true;
+  S.runChat = chat;
+  S.runNode = null;
+  S.runAm = null;
+  GHOST.innerHTML = '';
   S.stopRequested = false;
+  S.hardStop = new Promise((r) => { S.stopResolve = r; });
+  const hardStop = S.hardStop;
+  const STOPPED = Symbol('stopped');
+  const orStop = (p) => Promise.race([p, hardStop.then(() => STOPPED)]); // wartet höchstens bis zum Stopp
+  S.paused = false;
+  S.pauseAborted = false;
+  S.pauseWaiters = [];
+  S.streaming = false;
   chat.pendingContinue = false;
   $$('.notice', $('#messages-inner')).forEach((n) => n.remove());
   updateSendBtn();
+  saveChatNow(chat); // damit der Chat in der Seitenleiste steht und man beim Wechseln zurückfindet
+  renderChatList();
   let ticker = null;
   let finished = false;
   let nudged = false;
   let nudgeNext = false;
+  const heartbeat = setInterval(() => saveChatNow(chat), 45000); // Lebenszeichen für andere Rechner (und Zwischenstand)
 
   try {
     for (let step = 0; step < maxSteps; step++) {
+      await pauseGate(); // Pause aus dem vorigen Schritt (z. B. während ein Programm lief)
+      if (S.stopRequested) { finished = true; break; }
       const am = { id: uid(), role: 'assistant', content: '', thinking: '', model, ts: Date.now(), toolCalls: [] };
       chat.messages.push(am);
-      const box = $('#messages-inner');
+      const box = liveHost();
       box.querySelectorAll('.empty').forEach((n) => n.remove());
       const node = assistantEl(am, chat.messages.length - 1, false);
       renderAssistantParts(node, am, 'live');
       box.append(node);
-      if (S.stick) scrollBottom();
+      S.runAm = am;
+      S.runNode = node;
+      followBottom();
 
       const live = { n: 0, t0: performance.now(), tFirst: 0 };
       const paint = () => {
@@ -1106,13 +1543,19 @@ async function generate() {
       paint();
       ticker = setInterval(paint, 250);
 
+      // Die Anzeige wird höchstens etwa 10-mal pro Sekunde neu aufgebaut (Markdown + Bereinigung der ganzen Antwort kosten sonst bei langen Antworten viel Rechenzeit)
       const schedule = () => {
-        if (node._raf) return;
-        node._raf = requestAnimationFrame(() => {
-          node._raf = 0;
-          renderAssistantParts(node, am, 'live');
-          if (S.stick) scrollBottom();
-        });
+        if (node._raf || node._to) return;
+        const wait = Math.max(0, 100 - (performance.now() - (node._last || 0)));
+        node._to = setTimeout(() => {
+          node._to = 0;
+          node._raf = requestAnimationFrame(() => {
+            node._raf = 0;
+            node._last = performance.now();
+            renderAssistantParts(node, am, 'live');
+            followBottom();
+          });
+        }, wait);
       };
       const tick = (n) => {
         live.n = n;
@@ -1122,15 +1565,16 @@ async function generate() {
       const nudgeNow = nudgeNext;
       nudgeNext = false;
       const sysText = buildSystem();
-      const rawMsgs = nudgeNow ? [...chat.messages.slice(0, -1), { role: 'user', content: 'Fahre mit der Aufgabe fort. Nutze bei Bedarf weitere Werkzeuge oder fasse das Ergebnis für mich zusammen.' }] : chat.messages.slice(0, -1);
+      const cs = ctxStart(chat);
+      const rawMsgs = nudgeNow ? [...chat.messages.slice(cs, -1), { role: 'user', content: 'Fahre mit der Aufgabe fort. Nutze bei Bedarf weitere Werkzeuge oder fasse das Ergebnis für mich zusammen.' }] : chat.messages.slice(cs, -1);
       const cmp = compactMessages(rawMsgs, sysText);
-      if (cmp.info.newly) { am.compacted = { n: cmp.info.newly, before: cmp.info.before, after: cmp.info.after }; saveChatSoon(); }
+      if (cmp.info.newly) { am.compacted = { n: cmp.info.newly, before: cmp.info.before, after: cmp.info.after }; saveChatSoon(chat); }
       if (cmp.info.over && S.warnedOver !== chat.id) {
         S.warnedOver = chat.id;
-        toast('Achtung: Der Kontext ist trotz Verschlankung fast voll. Starte besser einen neuen Chat mit einer Zusammenfassung.', 8000);
+        toast('Achtung: Der Kontext ist trotz Verschlankung fast voll. Leere besser den Kontext (Knopf oben rechts), die Übergabe bleibt erhalten.', 8000);
       }
-      const lastStats = [...chat.messages].reverse().find((m) => m.role === 'assistant' && m.stats);
-      S.live = { prompt: cmp.info.after, comp: 0, real: false, stale: lastStats ? lastStats.stats.promptTokens : 0 };
+      const lastStats = chat.messages.slice(cs).reverse().find((m) => m.role === 'assistant' && m.stats);
+      S.live = { prompt: cmp.info.after, comp: 0, real: false, stale: lastStats ? lastStats.stats.promptTokens : 0, run: live }; // run: Zähler der laufenden Anfrage (Start, erstes Token, Anzahl) für die Statuszeile
       updateCtxMeter();
       renderStatus();
       startLivePoll(conn);
@@ -1140,17 +1584,23 @@ async function generate() {
         system: sysText,
         messages: cmp.messages,
         params: S.settings.params,
-        tools: useTools() ? LLM.WORKSPACE_TOOLS.filter((t) => (subOn() || t.function.name !== 'delegate_task') && (hoOn() || t.function.name !== 'propose_new_session') && (execOn() || !EXEC_TOOLS.includes(t.function.name))) : null,
+        tools: toolsFor(),
         thinkLevel: S.settings.thinking,
         handlers: {
           onContent: (full, n) => { am.content = full; tick(n); schedule(); },
           onThinking: (t, n) => { am.thinking = t; tick(n); schedule(); },
+          onImages: (imgs, n) => { am.images = imgs; tick(n); schedule(); },
         },
       });
 
       let res = null;
+      S.streaming = true;
       try {
-        res = await S.run.promise;
+        const r0 = await orStop(S.run.promise);
+        if (r0 === STOPPED) {
+          S.run.promise.catch(() => {}); // späte Fehler des abgebrochenen Streams ignorieren
+          res = { content: am.content || '', thinking: am.thinking || '', toolCalls: [], images: am.images || [], stats: null, aborted: true, finishReason: 'abort' };
+        } else res = r0;
       } catch (err) {
         am.error = err.message;
         const cm = /in the context \((\d{3,})\)/i.exec(err.message) || /context (?:length|window|size)[^\d]{0,40}(\d{4,})/i.exec(err.message);
@@ -1161,17 +1611,62 @@ async function generate() {
           am.error += `\n\nDie Kontextlänge in der LLM Box wurde auf ${fmt.num(+cm[1])} gesetzt (Wert des Servers). Klicke „Erneut versuchen“: Alte Werkzeug-Ausgaben werden jetzt automatisch entfernt.`;
         }
       }
+      S.streaming = false;
       clearInterval(ticker);
       ticker = null;
       if (!res) S.live = null;
       if (node._raf) cancelAnimationFrame(node._raf);
+      if (node._to) clearTimeout(node._to);
       node._raf = 0;
+      node._to = 0;
+
+      // Pause während des Schreibens: Der bisherige Text bleibt sichtbar, bis es weitergeht. Nach „Fortsetzen“ wird derselbe Schritt neu angefragt.
+      if (S.pauseAborted) {
+        S.pauseAborted = false;
+        if (!S.stopRequested && (!res || res.aborted)) {
+          if (res) { am.content = res.content; am.thinking = res.thinking; }
+          am.paused = true;
+          renderAssistantParts(node, am, 'live');
+          S.live = null;
+          updateCtxMeter();
+          renderStatus();
+          await pauseGate();
+          if (S.stopRequested) { // aus der Pause heraus gestoppt: Teilantwort als abgebrochen behalten
+            am.paused = false;
+            am.aborted = true;
+            renderAssistantParts(node, am, 'final');
+            saveChatSoon(chat);
+            finished = true;
+            break;
+          }
+          chat.messages.splice(chat.messages.indexOf(am), 1);
+          node.remove();
+          S.runNode = null;
+          S.runAm = null;
+          saveChatSoon(chat);
+          step--;
+          continue; // derselbe Schritt noch einmal
+        }
+      }
 
       if (res) {
         am.content = res.content;
         am.thinking = res.thinking;
         am.toolCalls = res.toolCalls;
         am.stats = res.stats;
+        if (S.run && S.run.request) am.request = S.run.request;
+        // (c) Vom Server gemessene Geschwindigkeit nachladen (z. B. Strata), ohne den Ablauf aufzuhalten
+        if (conn.type !== 'ollama' && res.stats && res.stats.completionTokens > 20) {
+          const st = res.stats;
+          LLM.serverDecodeStats(conn, st.completionTokens).then((sv) => {
+            if (!sv) return;
+            st.serverTps = sv.tps;
+            const live = document.querySelector(`.msg.assistant[data-mid="${am.id}"]`); // der Knoten kann inzwischen neu aufgebaut worden sein
+            if (live && live._r) live._r.stats.innerHTML = statsHtml(am);
+            saveChatSoon(chat);
+          }).catch(() => {});
+        }
+        if (res.images && res.images.length) am.images = res.images;
         am.finish = res.finishReason || '';
         S.live = null;
         updateCtxMeter();
@@ -1182,7 +1677,7 @@ async function generate() {
           am.thinking = [am.thinking, sp.think].filter(Boolean).join('\n');
           am.content = sp.answer;
         }
-        const empty = !am.content && !am.toolCalls.length && !am.aborted;
+        const empty = !am.content && !am.toolCalls.length && !am.aborted && !(am.images && am.images.length);
         const afterTool = chat.messages.length >= 2 && chat.messages[chat.messages.length - 2].role === 'tool';
         if (empty && afterTool && !nudged && !S.stopRequested) {
           // Manche lokalen Modelle antworten nach einem Werkzeug-Ergebnis leer: einmal automatisch nachfassen
@@ -1195,6 +1690,7 @@ async function generate() {
         if (empty) am.error = am.thinking ? 'Das Modell hat nur nachgedacht, aber keine Antwort und keinen Werkzeugaufruf geliefert.' : 'Das Modell hat keine Antwort geliefert.';
       }
       renderAssistantParts(node, am, 'final');
+      saveChatSoon(chat); // andere Rechner sehen jeden Schritt
 
       if (am.error || am.aborted || S.stopRequested || !am.toolCalls.length) {
         finished = true;
@@ -1204,14 +1700,22 @@ async function generate() {
       // Unteragenten starten sofort und laufen gleichzeitig; die übrigen Werkzeuge laufen der Reihe nach
       // Für jeden Werkzeugaufruf sofort eine Live-Karte (Status + Ausgabe), damit man sieht, worauf die KI gerade wartet
       for (const tc of am.toolCalls) tlStart(tc);
+      const stoppedTool = (tc) => ({ id: uid(), role: 'tool', name: tc.name, toolCallId: tc.id, args: tc.args, ts: Date.now(), ok: false, content: 'Vom Nutzer abgebrochen. Dieser Werkzeugaufruf wurde nicht (zu Ende) ausgeführt.' });
       const early = new Map();
-      for (const tc of am.toolCalls) if (tc.name === 'delegate_task') early.set(tc.id, runTool(tc));
+      for (const tc of am.toolCalls) if (tc.name === 'delegate_task') early.set(tc.id, runTool(tc, chat));
       for (const tc of am.toolCalls) {
-        const tm = early.has(tc.id) ? await early.get(tc.id) : await runTool(tc);
-        if (tm.name !== 'propose_new_session' && typeof tm.content === 'string') tm.content += hoModelHint(chat); // bei vollem Kontext: KI bitten, eine Übergabe vorzuschlagen
+        let tm;
+        if (S.stopRequested) tm = stoppedTool(tc); // alle noch offenen Aufrufe bekommen ein Ergebnis, damit der Verlauf gültig bleibt
+        else {
+          const job = early.has(tc.id) ? early.get(tc.id) : runTool(tc, chat);
+          const r = await orStop(job);
+          if (r === STOPPED) { job.catch(() => {}); tm = stoppedTool(tc); } else tm = r;
+        }
+        if (tm.name !== 'propose_new_session' && typeof tm.content === 'string' && !S.stopRequested) tm.content += hoModelHint(chat); // bei vollem Kontext: KI bitten, eine Übergabe vorzuschlagen
         chat.messages.push(tm);
+        saveChatSoon(chat);
         tlFinish(tc.id, tm);
-        if (S.stopRequested) break;
+        if (!S.stopRequested) await pauseGate();
       }
       if (S.stopRequested || am.toolCalls.some((t) => t.name === 'propose_new_session')) {
         finished = true;
@@ -1225,37 +1729,58 @@ async function generate() {
     chat.messages.push({ id: uid(), role: 'assistant', content: '', thinking: '', model, ts: Date.now(), toolCalls: [], error: 'Unerwarteter Fehler: ' + e.message });
   } finally {
     if (ticker) clearInterval(ticker);
+    clearInterval(heartbeat);
     tlClear();
     S.live = null;
     stopLivePoll();
     S.generating = false;
     S.run = null;
+    S.hardStop = null;
+    S.stopResolve = null;
+    S.execId = null;
+    S.streaming = false;
+    S.paused = false;
+    S.pauseAborted = false;
+    S.pauseWaiters.splice(0).forEach((f) => f());
     S.pendingApproval = null;
+    const wasViewing = S.chat === chat;
+    S.runChat = null;
+    S.runNode = null;
+    S.runAm = null;
+    GHOST.innerHTML = '';
     updateSendBtn();
-    renderMessages();
+    if (wasViewing) renderMessages();
+    else {
+      S.unread.add(chat.id);
+      toast(`Antwort in „${chat.title}“ ist fertig.`, 5000);
+    }
+    renderChatList();
     renderStatus();
     updateCtxMeter();
-    saveChatNow();
+    saveChatNow(chat);
     trAuto(chat); // Gedankengänge im Hintergrund ins Deutsche übersetzen
+    submitQueuedMessageIfAny();
   }
 }
 
-async function runTool(tc) {
+async function runTool(tc, chat) {
+  const rc = chat || S.runChat || S.chat;
   const ws = S.settings.workspace;
   const base = { id: uid(), role: 'tool', name: tc.name, toolCallId: tc.id, args: tc.args, ts: Date.now() };
   tlState(tc.id, 'running');
+  if (tc.name === 'ask_user') return runAskUser(tc, base);
   if (tc.name === 'delegate_task') return runSubagent(tc, base); // nur lesend: keine Freigabe nötig
-  if (EXEC_TOOLS.includes(tc.name)) return runExecTool(tc, base);
+  if (EXEC_TOOLS.includes(tc.name)) return runExecTool(tc, base, rc);
   if (tc.name === 'propose_new_session') return { ...base, ok: true, content: 'Der Vorschlag wurde dem Nutzer mit einer Schaltfläche angezeigt. Beende deine Antwort jetzt (höchstens ein Satz) und rufe keine weiteren Werkzeuge auf.' };
   try {
-    const mode = approvalMode();
+    const mode = approvalMode(rc);
     const needs = mode === 'all' || (mode === 'write' && (tc.name === 'write_file' || tc.name === 'edit_file'));
     const key = tc.name;
-    if (needs && !permHas(key)) {
+    if (needs && !permHas(key, rc)) {
       tlState(tc.id, 'approval');
       const d = await requestApproval(tc);
       tlState(tc.id, 'running');
-      if (d === 'always') permAdd(key);
+      if (d === 'always') permAdd(key, rc);
       if (d === 'deny') return { ...base, ok: false, content: 'Der Benutzer hat die Ausführung abgelehnt. Frage nach, wie du stattdessen vorgehen sollst.' };
     }
     const r = await api.ws.tool({ root: ws.path, name: tc.name, args: tc.args, maxKB: +ws.readKB || 40, ignore: ignoreList() });
@@ -1267,7 +1792,8 @@ async function runTool(tc) {
 }
 
 /* ═════════════ Programme auf dem Client ═════════════ */
-async function runExecTool(tc, base) {
+async function runExecTool(tc, base, rc) {
+  rc = rc || S.runChat || S.chat;
   const ws = S.settings.workspace;
   const a = tc.args || {};
   if (!execOn()) return { ...base, ok: false, content: 'Das Ausführen von Programmen ist in den Einstellungen ausgeschaltet. Sage dem Nutzer, dass er es unter Einstellungen → Workspace & Dateien aktivieren kann.' };
@@ -1284,10 +1810,10 @@ async function runExecTool(tc, base) {
       const heads = cmdHeads(command);
       const prog = heads ? heads[0] : ((command.match(/^\s*(?:"([^"]+)"|(\S+))/) || [])[1] || (command.match(/^\s*(\S+)/) || [])[1] || '').toLowerCase();
       const keyOf = (h) => 'run:' + shellKind + ':' + h;
-      const progAllowed = !!heads && heads.every((h) => !INTERPRETERS.has(h) && permHas(keyOf(h)));
+      const progAllowed = !!heads && heads.every((h) => !INTERPRETERS.has(h) && permHas(keyOf(h), rc));
       // Ohne Nachfrage: Modus „Nichts bestätigen“, „Alle Befehle erlaubt“ oder alle beteiligten Programme freigegeben.
       tlHead(tc.id, (shellKind === 'powershell' ? 'PS> ' : '> ') + command);
-      if (!(permIsAuto() || progAllowed)) {
+      if (!(permIsAuto(rc) || progAllowed)) {
         tlState(tc.id, 'approval');
         const canProg = !!heads && heads.length === 1 && !INTERPRETERS.has(heads[0]) && !!prog;
         const d = await requestApproval(tc, {
@@ -1301,8 +1827,8 @@ async function runExecTool(tc, base) {
         });
         tlState(tc.id, 'running');
         if (d === 'deny') return { ...base, ok: false, content: 'Der Benutzer hat die Ausführung abgelehnt. Frage nach, wie du stattdessen vorgehen sollst.' };
-        if (d === 'always' && canProg) permAdd(keyOf(heads[0]));
-        if (d === 'all') { permOf().runAll = true; permChanged(); }
+        if (d === 'always' && canProg) permAdd(keyOf(heads[0]), rc);
+        if (d === 'all') { permOf(rc).runAll = true; permChanged(rc); }
       }
       S.execId = uid();
       const tmo = +a.timeout > 0 ? Math.min(+a.timeout, 3600) : timeout;
@@ -1318,8 +1844,8 @@ async function runExecTool(tc, base) {
       const c = await api.sys.installCmd({ manager, pkg });
       if (c.error) return { ...base, ok: false, content: c.error };
       tlHead(tc.id, '> ' + c.command);
-      if (!permOf().installs) tlState(tc.id, 'approval');
-      const d = permOf().installs ? 'allow' : await requestApproval(tc, {
+      if (!permOf(rc).installs) tlState(tc.id, 'approval');
+      const d = permOf(rc).installs ? 'allow' : await requestApproval(tc, {
         kind: 'install',
         target: c.command,
         note: `${a.reason ? 'Grund: ' + a.reason + '. ' : ''}Die Installation ändert deinen Rechner. Je nach Paketmanager kann Windows eine Administrator-Abfrage (UAC) zeigen. Genehmige nur, wenn du dem Paket „${pkg}“ vertraust.`,
@@ -1359,6 +1885,7 @@ function editMessage(i) {
   $('#input').value = m.content || '';
   S.attachments = (m.files || []).slice();
   S.chat.messages.length = i;
+  if (ctxStart(S.chat) > i || (S.chat.ctxStart || 0) > i) S.chat.ctxStart = 0; // Kontext-Grenze lag hinter der bearbeiteten Stelle
   renderMessages();
   renderAttachStrip();
   autosize();
@@ -1370,10 +1897,71 @@ function editMessage(i) {
 }
 
 /* ═════════════ Anhänge ═════════════ */
+/* ═════════════ Vorgemerkte Nachricht (während die KI noch arbeitet) ═════════════ */
+function queueMessage(text, attachments) {
+  S.queuedMessage = { text, attachments: (attachments || []).slice(), chatId: S.chat && S.chat.id };
+  S.attachments = [];
+  const ta = $('#input');
+  ta.value = '';
+  autosize();
+  renderAttachStrip();
+  updateEstimate();
+  renderQueuedStrip();
+}
+
+function cancelQueuedMessage() {
+  if (!S.queuedMessage) return;
+  const q = S.queuedMessage;
+  S.queuedMessage = null;
+  // Zurück ins Eingabefeld legen, damit nichts verloren geht
+  const ta = $('#input');
+  ta.value = q.text;
+  S.attachments = q.attachments || [];
+  autosize();
+  renderAttachStrip();
+  updateEstimate();
+  renderQueuedStrip();
+  updateSendBtn();
+  ta.focus();
+}
+
+function renderQueuedStrip() {
+  const s = $('#queued-strip');
+  s.innerHTML = '';
+  const mine = !!(S.queuedMessage && S.chat && S.queuedMessage.chatId === S.chat.id);
+  s.classList.toggle('hidden', !mine);
+  if (!mine) return;
+  const q = S.queuedMessage;
+  const n = (q.attachments || []).length;
+  const label = q.text || (n ? `${n} Datei(en)` : '');
+  s.append(
+    el('span', { class: 'queued-icon', html: icon('send', 13, 2) }),
+    el('span', { class: 'queued-text', text: label }),
+    el('span', { class: 'queued-hint', text: 'wird gesendet, sobald die KI fertig ist' }),
+    el('button', { class: 'queued-cancel', title: 'Zurück ins Eingabefeld holen', html: icon('x', 13), onclick: cancelQueuedMessage })
+  );
+}
+
+// Nachdem eine Antwort fertig ist (gleich welcher Auslöser: send(), „Weitermachen“, regenerate(), …):
+// eine zwischenzeitlich vorgemerkte Nachricht jetzt als neue, eigenständige Aufgabe abschicken.
+function submitQueuedMessageIfAny() {
+  if (S.generating || !S.queuedMessage) return;
+  if (!S.chat || S.queuedMessage.chatId !== S.chat.id) return; // anderer Chat gerade offen: wartet, bis man zurückwechselt
+  const q = S.queuedMessage;
+  S.queuedMessage = null;
+  renderQueuedStrip();
+  const ta = $('#input');
+  ta.value = q.text;
+  S.attachments = q.attachments || [];
+  renderAttachStrip();
+  autosize();
+  send();
+}
+
 function renderAttachStrip() {
   const s = $('#attach-strip');
   s.innerHTML = '';
-  S.attachments.forEach((f, i) => s.append(fileChip(f, () => { S.attachments.splice(i, 1); renderAttachStrip(); updateEstimate(); })));
+  S.attachments.forEach((f, i) => s.append(fileChip(f, () => { S.attachments.splice(i, 1); renderAttachStrip(); updateEstimate(); if (S.generating) updateSendBtn(); })));
 }
 
 function addAttachments(res) {
@@ -1388,6 +1976,7 @@ function addAttachments(res) {
   if (res.truncated) toast('Limit erreicht – nicht alle Dateien wurden angehängt (siehe Einstellungen → Workspace & Dateien).', 6000);
   renderAttachStrip();
   updateEstimate();
+  if (S.generating) updateSendBtn();
   const tokens = attachTokens();
   const max = +S.settings.params.numCtx || 0;
   if (max && tokens > max * 0.8) toast(`Achtung: Anhänge ≈ ${fmt.num(tokens)} Tokens, Kontextlänge ist ${fmt.num(max)}. Erhöhe num_ctx oder hänge weniger an.`, 7000);
@@ -1457,7 +2046,7 @@ function renderFilePanel() {
   const p = $('#filepanel');
   p.classList.toggle('collapsed', !S.panelOpen);
   $('#btn-panel').classList.toggle('on', S.panelOpen);
-  if (!S.panelOpen) return;
+  if (!S.panelOpen) { if (typeof svDockSync === 'function') svDockSync(); return; }
   p.innerHTML = '';
   const ws = S.settings.workspace;
   const name = ws.path ? ws.path.split(/[\\/]/).filter(Boolean).pop() : '';
@@ -1487,6 +2076,7 @@ function renderFilePanel() {
     el('div', { class: 'fctrl', style: { justifyContent: 'space-between' } }, el('span', { text: 'KI-Dateizugriff' }), sw),
     el('div', { class: 'fctrl', style: { marginTop: '8px' } }, appr)
   ));
+  if (typeof svDockMount === 'function') svDockMount(p); // Monitor-Dock unter dem Workspace
 }
 
 async function loadTree(container, rel, depth) {
@@ -1565,14 +2155,14 @@ function exportChat() {
 /* ═════════════ Events ═════════════ */
 function wireEvents() {
   const ta = $('#input');
-  ta.addEventListener('input', () => { autosize(); updateEstimate(); });
+  ta.addEventListener('input', () => { autosize(); updateEstimate(); if (S.generating) updateSendBtn(); });
   ta.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing) return;
     const enterSends = S.settings.appearance.enterToSend;
     if ((enterSends && !e.shiftKey && !e.ctrlKey) || (!enterSends && e.ctrlKey)) {
       e.preventDefault();
-      // Enter darf eine laufende Arbeit NICHT stoppen – dafür gibt es den Stopp-Knopf
-      if (S.generating) return toast('Die KI arbeitet noch. Zum Abbrechen den Stopp-Knopf nutzen.');
+      // Arbeitet die KI noch und steht Text/ein Anhang im Feld, merkt send() es vor (siehe queueMessage);
+      // ist das Feld leer, stoppt es die laufende Arbeit wie gewohnt.
       send();
     }
   });
@@ -1585,10 +2175,14 @@ function wireEvents() {
   });
 
   $('#btn-send').addEventListener('click', send);
+  $('#btn-pause').addEventListener('click', togglePause);
+  updatePauseUI();
   $('#btn-new').addEventListener('click', newChat);
   $('#btn-settings').addEventListener('click', () => openSettings('conn'));
   $('#btn-server').innerHTML = icon('cpu', 16) + '<span>Server</span>';
   $('#btn-server').addEventListener('click', () => openServer('monitor'));
+  $('#btn-monitor').innerHTML = icon('activity', 16) + '<span>Monitor</span>';
+  $('#btn-monitor').addEventListener('click', svToggleDock);
   $('#btn-refresh').addEventListener('click', refreshModels);
   $('#btn-export').addEventListener('click', exportChat);
   $('#btn-panel').addEventListener('click', () => { S.panelOpen = !S.panelOpen; renderFilePanel(); });
@@ -1625,23 +2219,41 @@ function wireEvents() {
   const msgs = $('#messages');
   // Mitscrollen: nur echtes Hochscrollen durch den Nutzer hält die Ansicht an. Wachsender Inhalt (Streaming, neue Karten)
   // verändert scrollTop nicht und darf das Mitlaufen daher nie stoppen.
+  // Nur eine ECHTE Nutzer-Bewegung (Mausrad, Scrollleiste ziehen, Touch, Tasten) hält die Ansicht an. Schrumpft oder wächst der Inhalt
+  // (Karte klappt zu, Live-Karte wird ersetzt, Programm startet), verschiebt der Browser scrollTop von selbst: Das ist KEINE Nutzer-Bewegung.
   let lastTop = 0;
+  let dragging = false;
+  let userAt = 0;
+  const userMove = () => { userAt = performance.now(); };
+  msgs.addEventListener('pointerdown', (e) => { if (e.target === msgs) { dragging = true; userMove(); } }, { passive: true }); // Klick auf die Scrollleiste
+  window.addEventListener('pointerup', () => { dragging = false; }, { passive: true });
+  msgs.addEventListener('touchmove', userMove, { passive: true });
+  window.addEventListener('keydown', (e) => {
+    if (['PageUp', 'Home', 'ArrowUp'].includes(e.key) && !(e.target.closest && e.target.closest('textarea,input,select,[contenteditable]'))) userMove();
+  });
   msgs.addEventListener('scroll', () => {
     const top = msgs.scrollTop;
     const gap = msgs.scrollHeight - top - msgs.clientHeight;
     if (gap <= 32) {
       S.stick = true;
       $('#scroll-down').classList.remove('attn');
-    } else if (top < lastTop - 1) S.stick = false; // Position hat sich nach oben verschoben
+    } else if (top < lastTop - 1 && (dragging || performance.now() - userAt < 700)) S.stick = false; // Nutzer hat nach oben gescrollt
     lastTop = top;
     $('#scroll-down').classList.toggle('hidden', gap < 240);
   }, { passive: true });
   msgs.addEventListener('wheel', (e) => {
+    userMove();
     if (e.deltaY >= 0 || msgs.scrollHeight <= msgs.clientHeight) return;
     // Mausrad in einem inneren Feld (Gedankengang, Programm-Ausgabe), das selbst scrollen kann: betrifft nur dieses Feld
     for (let n = e.target; n && n !== msgs; n = n.parentNode) if (n._fol && n.scrollHeight > n.clientHeight && n.scrollTop > 0) return;
     S.stick = false;
   }, { passive: true });
+  // Wächst der Inhalt aus irgendeinem Grund (Programm-Ausgabe, Karte öffnet sich, Bild lädt), bleibt die Ansicht unten, solange der Nutzer nicht hochgescrollt hat
+  let rz = 0;
+  new ResizeObserver(() => {
+    if (rz) return;
+    rz = requestAnimationFrame(() => { rz = 0; followBottom(); });
+  }).observe($('#messages-inner'));
   $('#scroll-down').addEventListener('click', () => { S.stick = true; scrollBottom(); });
   msgs.addEventListener('click', (e) => {
     const a = e.target.closest('a[href]');

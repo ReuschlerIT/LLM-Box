@@ -32,9 +32,11 @@
   /* ───── Modelle ───── */
   async function listModels(conn) {
     const url = conn.type === 'ollama' ? joinUrl(conn.baseUrl, '/api/tags') : joinUrl(conn.baseUrl, '/models');
-    const res = await api().fetch({ url, method: 'GET', headers: headersFor(conn) });
+    const res = await api().fetch({ url, method: 'GET', headers: { ...headersFor(conn), Accept: 'application/json' } });
     if (!res.ok) throw new Error(res.error || errorText(res.status, res.text));
-    const j = JSON.parse(res.text);
+    if (/^\s*(<!doctype html|<html)/i.test(res.text || '')) throw new Error(`Die Adresse ${url} liefert eine Webseite statt der API. Das ist vermutlich die Strata-Oberfläche, nicht der Modell-Server: Prüfe Adresse und Port der Verbindung (Strata-API: meist http://localhost:8080/v1) und den API-Schlüssel.`);
+    let j;
+    try { j = JSON.parse(res.text); } catch { throw new Error(`Die Antwort von ${url} ist kein JSON: ${String(res.text || '').replace(/\s+/g, ' ').slice(0, 120)}`); }
     if (conn.type === 'ollama') return (j.models || []).map((m) => ({ id: m.name, size: m.size, details: m.details }));
     return (j.data || j.models || []).map((m) => ({ id: m.id || m.name, raw: m })).filter((m) => m.id);
   }
@@ -56,7 +58,7 @@
 
   async function getJson(conn, url, method, body) {
     try {
-      const res = await api().fetch({ url, method: method || 'GET', headers: headersFor(conn), body });
+      const res = await api().fetch({ url, method: method || 'GET', headers: { ...headersFor(conn), Accept: 'application/json' }, body });
       if (!res.ok) return null;
       return JSON.parse(res.text);
     } catch {
@@ -168,7 +170,7 @@
   }
 
   /* ───── Nachrichten → Wire-Format ───── */
-  const fileBlock = (f) => `<file name="${f.name}">\n${f.text}\n</file>`;
+  const fileBlock = (f) => `<file name="${f.name}"${f.converted ? ` format="${f.converted}, als Text ausgelesen"` : ''}>\n${f.text}\n</file>`;
   function userText(m) {
     const tf = (m.files || []).filter((f) => f.kind === 'text');
     const t = m.content || '';
@@ -193,8 +195,9 @@
       } else if (m.role === 'assistant') {
         const calls = m.toolCalls || [];
         if (m.error && !m.content && !calls.length) continue;
-        if (!m.content && !calls.length) continue;
-        const o = { role: 'assistant', content: m.content || '' };
+        const hasImg = !!(m.images && m.images.length);
+        if (!m.content && !calls.length && !hasImg) continue;
+        const o = { role: 'assistant', content: m.content || (hasImg ? '[Bild erzeugt]' : '') };
         if (calls.length) {
           o.tool_calls = calls.map((tc) =>
             ollama
@@ -212,6 +215,8 @@
 
   function buildOptions(conn, p) {
     const has = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(v);
+    // „Dem Server überlassen“: keine Sampling-Werte senden, der Server nimmt seine eigenen Standards (wie seine Weboberfläche)
+    if (conn.samplingMode === 'server') p = { ...p, temperature: null, topP: null, topK: null, repeatPenalty: null, minP: null, presencePenalty: null, seed: null };
     const stop = String(p.stop || '')
       .split('|')
       .map((s) => s.replace(/\\n/g, '\n'))
@@ -273,6 +278,29 @@
     } else if (mode === 'openrouter') body.reasoning = level === 'off' ? { enabled: false } : { effort: level };
   }
 
+  /* Bildausgabe (OpenRouter u. a.): Der Server liefert Bilder nur, wenn die Anfrage "modalities" enthält.
+     Ohne diesen Parameter antwortet auch ein bildfähiges Modell nur mit Text und behauptet, es könne keine Bilder erzeugen.
+     conn.imageOutput: 'auto' (nach Modellname), 'on' (immer) oder 'off'. */
+  const IMG_ANY = /image|dall-?e|nano[-_ ]?banana|flux|riverflow|seedream|sdxl|stable[-_ ]?diffusion/i;
+  const IMG_ONLY = /flux|riverflow|seedream|sdxl|stable[-_ ]?diffusion/i; // reine Bildmodelle liefern keinen Text
+  function imageModalities(conn, model) {
+    if (conn.type === 'ollama') return null;
+    const mode = conn.imageOutput || 'auto';
+    if (mode === 'off') return null;
+    if (mode === 'auto' && !IMG_ANY.test(model || '')) return null;
+    return mode === 'auto' && IMG_ONLY.test(model || '') ? ['image'] : ['image', 'text'];
+  }
+
+  /* Bild aus einer Antwort lesen: image_url-Objekt, direkte URL oder base64 */
+  function imageOf(x) {
+    if (!x) return null;
+    if (typeof x === 'string') return /^(data:image\/|https?:)/.test(x) ? { dataUrl: x } : null;
+    const u = (x.image_url && (x.image_url.url || x.image_url)) || x.url || (x.b64_json ? 'data:image/png;base64,' + x.b64_json : '') || (x.data && x.mime_type ? `data:${x.mime_type};base64,${x.data}` : '');
+    return typeof u === 'string' && u ? { dataUrl: u } : null;
+  }
+
+  const numOr0 = (v) => (Number.isFinite(+v) && +v > 0 ? +v : 0);
+
   function streamChat({ conn, model, system, messages, params, tools, thinkLevel, handlers }) {
     const id = uid();
     const ollama = conn.type === 'ollama';
@@ -288,10 +316,21 @@
     }
     if (tools && tools.length) body.tools = tools;
     applyThinking(conn, body, thinkLevel, model);
+    const mods = imageModalities(conn, model);
+    if (mods) body.modalities = mods;
     const url = joinUrl(conn.baseUrl, ollama ? '/api/chat' : '/chat/completions');
 
     let content = '';
     let thinking = '';
+    const images = [];
+    const addImages = (list) => {
+      let added = false;
+      for (const x of list || []) {
+        const im = imageOf(x);
+        if (im && !images.some((y) => y.dataUrl === im.dataUrl)) { images.push(im); added = true; }
+      }
+      if (added) { mark(); n++; if (h.onImages) h.onImages(images.slice(), n); }
+    };
     let n = 0;
     const toolCalls = [];
     const oaiTools = {};
@@ -349,12 +388,19 @@
           thinking += think;
           if (h.onThinking) h.onThinking(thinking, n);
         }
-        if (d.content) {
+        if (Array.isArray(d.content)) {
+          // Manche Server liefern den Inhalt als Teile-Liste (Text und Bilder gemischt)
+          const txt = d.content.filter((p) => p && p.type === 'text' && p.text).map((p) => p.text).join('');
+          if (txt) { mark(); n++; content += txt; if (h.onContent) h.onContent(content, n); }
+          addImages(d.content.filter((p) => p && p.type !== 'text'));
+        } else if (d.content) {
           mark();
           n++;
           content += d.content;
           if (h.onContent) h.onContent(content, n);
         }
+        if (d.images) addImages(d.images);
+        if (c && c.message && c.message.images) addImages(c.message.images);
         if (d.tool_calls) {
           mark();
           for (const t of d.tool_calls) {
@@ -371,6 +417,9 @@
       }
     }
 
+    // Was tatsächlich gesendet wurde (ohne Nachrichtentexte), damit sich Abweichungen zur Weboberfläche eines Servers finden lassen
+    const { messages: _m, tools: _t, ...bodyInfo } = body;
+    const request = { url, body: bodyInfo, messageCount: wire.length, toolCount: (body.tools || []).length };
     const promise = new Promise((resolve, reject) => {
       openStream(
         { id, url, method: 'POST', headers: headersFor(conn), body: JSON.stringify(body) },
@@ -417,26 +466,45 @@
             stats.promptTps = finalObj.prompt_eval_duration && finalObj.prompt_eval_count ? finalObj.prompt_eval_count / (finalObj.prompt_eval_duration / 1e9) : null;
             stats.loadSec = finalObj.load_duration ? finalObj.load_duration / 1e9 : 0;
             if (finalObj.total_duration) stats.duration = finalObj.total_duration / 1e9;
-          } else if (usage) {
-            stats.promptTokens = usage.prompt_tokens || 0;
-            stats.completionTokens = usage.completion_tokens || 0;
-            stats.tps = timings && timings.predicted_per_second ? timings.predicted_per_second : genSec && stats.completionTokens ? stats.completionTokens / genSec : null;
-            stats.promptTps = timings && timings.prompt_per_second ? timings.prompt_per_second : null;
+          } else if (usage && (+usage.completion_tokens > 0 || +usage.prompt_tokens > 0)) {
+            // Server-Angaben immer als Zahlen lesen (manche liefern Text oder 0 als Platzhalter)
+            stats.promptTokens = numOr0(usage.prompt_tokens);
+            stats.completionTokens = numOr0(usage.completion_tokens) || n;
+            const srvTps = timings ? numOr0(timings.predicted_per_second) : 0;
+            stats.tps = srvTps > 0 ? srvTps : genSec >= 0.25 && stats.completionTokens ? stats.completionTokens / genSec : null; // sehr kurze Stöße ergeben keine brauchbare Geschwindigkeit
+            const srvPp = timings ? numOr0(timings.prompt_per_second) : 0;
+            stats.promptTps = srvPp > 0 ? srvPp : null;
           } else {
             // Server liefert keine Zahlen → Schätzung (1 Stream-Chunk ≈ 1 Token, Prompt ≈ Zeichen/4)
             stats.estimated = true;
             stats.completionTokens = n;
             stats.promptTokens = Math.ceil(JSON.stringify(wire).length / 4);
-            stats.tps = genSec && n ? n / genSec : null;
+            stats.tps = genSec >= 0.25 && n ? n / genSec : null;
           }
           stats.totalTokens = (stats.promptTokens || 0) + (stats.completionTokens || 0);
-          resolve({ content, thinking, toolCalls, stats, aborted, finishReason });
+          request.response = { usage: usage || null, timings: timings || null, finish: finishReason || null }; // zur Fehlersuche unter „Anfrage“
+          resolve({ content, thinking, images, toolCalls, stats, aborted, finishReason });
         },
         (err) => reject(err)
       );
     });
 
-    return { id, promise, abort: () => api().abort(id) };
+    return { id, promise, abort: () => api().abort(id), request };
+  }
+
+  /* Vom Server selbst gemessene Geschwindigkeit der letzten Anfrage (Strata: /metrics). null, wenn der Server das nicht liefert. */
+  async function serverDecodeStats(conn, tokens) {
+    if (conn.type === 'ollama') return null;
+    const root = String(conn.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await new Promise((r) => setTimeout(r, attempt ? 1500 : 400));
+      const j = await getJson(conn, joinUrl(root, '/metrics'));
+      const r0 = j && Array.isArray(j.requests) ? j.requests[0] : null;
+      if (!r0 || !(+r0.decode_tok_s > 0)) return null;
+      const hw = j.hardware || {}; // GPU-Zustand kurz nach der Antwort (für den Geschwindigkeitstest)
+      if (!tokens || !r0.output_tokens || Math.abs(r0.output_tokens - tokens) <= Math.max(3, tokens * 0.03)) return { tps: +r0.decode_tok_s, temp: Number.isFinite(+hw.gpu_temp) ? +hw.gpu_temp : null, power: Number.isFinite(+hw.gpu_power) ? +hw.gpu_power : null };
+    }
+    return null; // Zahl passt nicht zu dieser Antwort (z. B. parallele Anfrage): lieber nichts anzeigen als falsch zuordnen
   }
 
   /* ───── Modelle laden (Ollama) ───── */
@@ -468,7 +536,7 @@
     fn('list_files', 'Listet Dateien und Ordner eines Verzeichnisses im Workspace auf.', { path: { type: 'string', description: 'Relativer Pfad, "." für den Workspace-Stamm' } }, ['path']),
     fn(
       'read_file',
-      'Liest eine Textdatei im Workspace mit vorangestellten Zeilennummern (Nummer, Tab, Zeile; die Nummern sind nicht Teil der Datei). Große Dateien werden abschnittsweise geliefert: nutze start_line und end_line, nachdem du mit search_text die richtige Stelle gefunden hast. Lies nie eine ganze große Datei, wenn du nur einen Teil brauchst.',
+      'Liest eine Datei im Workspace mit vorangestellten Zeilennummern. Unterstützt Textdateien (auch Konfigurationsdateien wie .ini, .json, .yaml, .env, .reg) sowie PDF, Word (.docx), Excel (.xlsx, Blätter als Tabellen mit Formeln), PowerPoint (.pptx) und OpenDocument (.odt, .ods, .odp), deren Text ausgelesen wird. Zeilennummern (Nummer, Tab, Zeile; die Nummern sind nicht Teil der Datei). Große Dateien werden abschnittsweise geliefert: nutze start_line und end_line, nachdem du mit search_text die richtige Stelle gefunden hast. Lies nie eine ganze große Datei, wenn du nur einen Teil brauchst.',
       { path: { type: 'string', description: 'Relativer Dateipfad' }, start_line: { type: 'integer', description: 'Erste Zeile (ab 1), optional' }, end_line: { type: 'integer', description: 'Letzte Zeile, optional' } },
       ['path']
     ),
@@ -483,6 +551,26 @@
       'Schreibt eine NEUE Datei im Workspace oder überschreibt eine kleine Datei komplett. Für Änderungen an vorhandenen Dateien nutze edit_file. Fehlende Ordner werden angelegt.',
       { path: { type: 'string', description: 'Relativer Dateipfad' }, content: { type: 'string', description: 'Vollständiger neuer Dateiinhalt' } },
       ['path', 'content']
+    ),
+    fn(
+      'ask_user',
+      'Stellt dem Nutzer Rückfragen mit Antwortvorschlägen zum Anklicken. Nutze das, wenn dir Angaben fehlen, die Aufgabe mehrdeutig ist oder es mehrere sinnvolle Wege gibt, statt zu raten. Gib pro Frage 2 bis 5 kurze, konkrete Vorschläge (der Nutzer kann auch selbst etwas eintippen). Stelle höchstens 4 Fragen auf einmal. Danach kommt die Antwort des Nutzers zurück: Warte darauf, statt weiterzumachen.',
+      {
+        questions: {
+          type: 'array',
+          description: 'Liste von Fragen',
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string', description: 'Die Frage' },
+              options: { type: 'array', items: { type: 'string' }, description: 'Antwortvorschläge, kurz und konkret' },
+              multiple: { type: 'boolean', description: 'true, wenn mehrere Vorschläge gleichzeitig gewählt werden dürfen' },
+            },
+            required: ['question', 'options'],
+          },
+        },
+      },
+      ['questions']
     ),
     fn('search_text', 'Sucht Text (ohne Beachtung der Groß-/Kleinschreibung) in allen Dateien des Workspace und liefert Datei:Zeile. Damit findest du die Stelle, die du danach mit read_file (start_line/end_line) liest.', { query: { type: 'string' }, path: { type: 'string', description: 'Optionaler Unterordner' } }, ['query']),
     fn(
@@ -511,7 +599,7 @@
     ),
     fn(
       'propose_new_session',
-      'Schlägt dem Nutzer eine neue Session vor und zeigt ihm dafür eine Schaltfläche. Rufe das auf, wenn der Kontext knapp wird (die App weist dich darauf hin), die Arbeit sehr lang geworden ist oder ein Abschnitt abgeschlossen ist. Die App öffnet dann einen neuen Chat und übergibt automatisch deine Übergabe. Schreibe die Übergabe so, dass jemand ohne den bisherigen Verlauf nahtlos weiterarbeiten kann.',
+      'Schlägt dem Nutzer vor, den Kontext zu leeren (oder eine neue Session zu öffnen) und zeigt ihm dafür eine Schaltfläche. Rufe das auf, wenn der Kontext knapp wird (die App weist dich darauf hin), die Arbeit sehr lang geworden ist oder ein Abschnitt abgeschlossen ist. Die App leert dann den Kontext im selben Chat (bzw. öffnet einen neuen Chat) und übergibt automatisch deine Übergabe. Schreibe die Übergabe so, dass jemand ohne den bisherigen Verlauf nahtlos weiterarbeiten kann.',
       {
         reason: { type: 'string', description: 'Ein Satz: warum jetzt eine neue Session sinnvoll ist' },
         summary: { type: 'string', description: 'Vollständige Übergabe: Ziel, Erledigt (mit Dateipfaden und Funktionsnamen), wichtige Entscheidungen und Fakten, offene Punkte' },
@@ -521,7 +609,7 @@
     ),
   ];
 
-  const LLM = { thinkModeOf, listModels, modelInfo, slotInfo, streamChat, pullModel, splitThink, WORKSPACE_TOOLS, uid, joinUrl };
+  const LLM = { serverDecodeStats, imageModalities, thinkModeOf, listModels, modelInfo, slotInfo, streamChat, pullModel, splitThink, WORKSPACE_TOOLS, uid, joinUrl };
   root.LLM = LLM;
   if (typeof module !== 'undefined' && module.exports) module.exports = LLM;
 })(typeof window !== 'undefined' ? window : globalThis);

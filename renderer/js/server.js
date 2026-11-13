@@ -24,7 +24,7 @@ const svRoot = (c) => String((c && c.baseUrl) || '').replace(/\/+$/, '').replace
 async function svReq(path, { method = 'GET', body, timeout = 8000, long = false } = {}) {
   const c = svConn();
   if (!c) return { ok: false, status: 0, error: 'Keine Verbindung gewählt.', json: null };
-  const headers = {};
+  const headers = { Accept: 'application/json' }; // sonst liefern manche Server die Weboberfläche (HTML) statt der Daten
   if (method !== 'GET') headers['Content-Type'] = 'application/json';
   if (c.apiKey) headers.Authorization = 'Bearer ' + c.apiKey;
   const r = await api.fetch({ url: svRoot(c) + path, method, headers, body: body === undefined ? undefined : JSON.stringify(body), timeout, long });
@@ -35,29 +35,172 @@ async function svReq(path, { method = 'GET', body, timeout = 8000, long = false 
 const svErrText = (r) => (r.json && r.json.error && (r.json.error.message || r.json.error)) || r.error || `HTTP ${r.status}`;
 
 /* ───── Monitor: Abfrage ───── */
+const SV_METRIC_KEYS = ['engine', 'live', 'hardware', 'totals'];
+const svLooksLikeMetrics = (j) => !!j && typeof j === 'object' && !Array.isArray(j) && SV_METRIC_KEYS.some((k) => k in j);
+// Gateways und manche Versionen packen die Metrik in eine Hülle ({ data: … }, { metrics: … }): auspacken.
+function svUnwrap(j) {
+  if (!j || typeof j !== 'object') return null;
+  if (svLooksLikeMetrics(j)) return j;
+  for (const k of ['data', 'metrics', 'result', 'payload', 'stats', 'strata']) {
+    const v = Array.isArray(j[k]) ? j[k][0] : j[k];
+    if (svLooksLikeMetrics(v)) return v;
+  }
+  return null;
+}
+const svIsHtml = (r) => /^\s*(<!doctype html|<html)/i.test(String(r.text || ''));
+// Was kam bei HTTP 200 stattdessen? Hilft, die Ursache zu erkennen (falscher Port, Proxy, anderes Format).
+function svDescribe(r) {
+  const t = String(r.text || '').trim();
+  const snip = t.replace(/\s+/g, ' ').slice(0, 200) + (t.length > 200 ? ' …' : '');
+  let kind;
+  if (!t) kind = 'eine leere Antwort';
+  else if (/^<!doctype html|^<html/i.test(t)) kind = 'eine Webseite (HTML). Die Adresse zeigt vermutlich auf eine Oberfläche oder einen Proxy statt auf die Strata-API';
+  else if (/^#\s*(HELP|TYPE)\b/m.test(t)) kind = 'Prometheus-Text statt JSON';
+  else if (r.json && r.json.error) kind = `eine Fehlermeldung: ${svErrText(r)}`;
+  else if (r.json && typeof r.json === 'object') kind = `JSON ohne bekannte Felder (vorhanden: ${Object.keys(r.json).slice(0, 8).join(', ') || '–'})`;
+  else kind = 'Text, der kein JSON ist';
+  return `Antwort ${r.status}, aber kein Strata-Monitor-Format: Der Server lieferte ${kind}.${t ? ` Anfang der Antwort: „${snip}“` : ''}`;
+}
+
+/* Trifft die Verbindung nur die Oberfläche (HTML), nach der Strata-API auf diesem Rechner suchen.
+   Es wird KEIN API-Schlüssel gesendet (fremde lokale Programme sollen ihn nicht bekommen). Nur Adressen auf diesem Rechner. */
+const SV_PORT_GUESS = [8080, 8190, 8081, 8000];
+async function svDiscover() {
+  const c = svConn();
+  let u;
+  try { u = new URL(svRoot(c)); } catch { return null; }
+  if (!/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(u.hostname)) return null;
+  SV.scanned = SV.scanned || {};
+  if (u.origin in SV.scanned) return SV.scanned[u.origin];
+  let found = null;
+  for (const p of SV_PORT_GUESS) {
+    if (String(p) === (u.port || '80')) continue;
+    try {
+      const r = await api.fetch({ url: `http://127.0.0.1:${p}/v1/models`, method: 'GET', headers: { Accept: 'application/json' }, timeout: 1500 });
+      let j = null;
+      try { j = JSON.parse(r.text); } catch {}
+      if (r.ok && j && Array.isArray(j.data)) { found = { url: `http://127.0.0.1:${p}/v1`, models: j.data.map((x) => x.id).filter(Boolean), auth: false }; break; }
+      if ((r.status === 401 || r.status === 403) && j && j.error) { found = { url: `http://127.0.0.1:${p}/v1`, models: [], auth: true }; break; }
+    } catch {}
+  }
+  SV.scanned[u.origin] = found;
+  return found;
+}
+async function svUseFound() {
+  const f = SV.found;
+  const c = svConn();
+  if (!f || !c) return;
+  if (!(await confirmModal('Verbindung umstellen', `Auf ${f.url} antwortet eine Strata-API${f.models.length ? ' (Modell: ' + f.models[0] + ')' : ''}. Soll die Verbindung „${c.name}“ von ${c.baseUrl} auf diese Adresse umgestellt werden?${f.auth ? '\n\nDie API verlangt einen Schlüssel. Trage ihn danach unter Einstellungen → Verbindungen ein bzw. nutze „Schlüssel holen & verbinden“.' : ''}`, { okLabel: 'Umstellen' }))) return;
+  c.baseUrl = f.url;
+  changed();
+  SV.found = null;
+  toast('Verbindung umgestellt.');
+  svPoll();
+}
+
+/* Strata-Desktop-App: Der App-Host (Port der App, z. B. 47831) bietet Chat-API und Oberfläche, aber KEIN /metrics.
+   Seine Instanz-Daten liegen unter /api/native (Instanz mit status, port, metrics.engine …), der Monitor der App unter /api/monitor. */
+async function svTryHost() {
+  const n = await svReq('/api/native', { timeout: 5000 });
+  if (n.status === 401 || n.status === 403) return { auth: true };
+  const nj = n.ok ? n.json : null;
+  const list = nj && (Array.isArray(nj.instances) ? nj.instances : Array.isArray(nj) ? nj : null);
+  if (!list) return null;
+  if (!list.length) {
+    // App-Host ohne geladene Instanz: Laden ist möglich
+    return { data: { engine: { model: '' }, live: { state: 'unloaded' }, requests: [], totals: {}, history: {}, hostMode: true, source: '/api/native (keine Instanz geladen)' } };
+  }
+  const inst = list.find((i) => i && i.status === 'ready' && i.phase !== 'unavailable') || list.find((i) => i && i.status === 'ready') || list[0];
+  if (!inst || typeof inst !== 'object') return null;
+  const src = '/api/native' + (inst.port ? ` (Instanz-Port ${inst.port})` : '');
+  const mid = inst.modelId || inst.model || inst.name || '';
+  if (mid) SV.lastModel = mid;
+  // Meist liefert die Instanz dieselbe Metrik wie ein Modell-Server (engine, live, requests, hardware …)
+  const m = svUnwrap(inst.metrics);
+  if (m) {
+    const data = { ...m };
+    if (!data.engine) data.engine = {};
+    if (!data.engine.model && (inst.modelId || inst.model)) data.engine.model = inst.modelId || inst.model;
+    if (!data.live) data.live = { state: inst.phase === 'unavailable' ? 'unavailable' : 'idle' };
+    data.hostMode = true;
+    data.instanceId = inst.id;
+    if (!data.hardware) {
+      // Hardware-Werte der App (GPU, RAM …) aus dem Monitor der App, falls dort im gleichen Format vorhanden
+      const mon = await svReq('/api/monitor', { timeout: 4000 });
+      if (mon.ok && mon.json && svLooksLikeMetrics({ hardware: mon.json.hardware }) && mon.json.hardware) data.hardware = mon.json.hardware;
+    }
+    data.source = src;
+    return { data };
+  }
+  // Keine Metrik an der Instanz: Zustand aus Instanz und App-Monitor zusammensetzen
+  const mon = await svReq('/api/monitor', { timeout: 4000 });
+  const mj = mon.ok && mon.json && typeof mon.json === 'object' ? mon.json : {};
+  const state = inst.phase === 'unavailable' ? 'unavailable' : inst.status === 'ready' ? 'limited' : 'limited_unknown';
+  const data = {
+    engine: { model: inst.modelId || inst.model || inst.name || (mj.engine && mj.engine.modelId) || '', max_context: inst.context || (mj.context && mj.context.maxTokens) || undefined },
+    live: { state }, requests: [], totals: {}, history: {}, hostMode: true, instanceId: inst.id, source: src,
+    limited: `Strata-Desktop-App erkannt (${src}, Status „${inst.status || '?'}“${inst.phase ? ', Phase „' + inst.phase + '“' : ''}). Diese Quelle enthält keine Messwerte (Geschwindigkeit, GPU). Die volle Anzeige bietet die Oberfläche der App unter „#/monitor“.`,
+  };
+  if (mj.hardware && svLooksLikeMetrics({ hardware: mj.hardware })) data.hardware = mj.hardware;
+  return { data };
+}
+
 async function svPoll() {
-  if (SV.busy || !SV.modal) return;
+  if (SV.busy || !(SV.modal || svDockVisible())) return;
+  // Nur das Dock (kein Fenster offen): nichts abfragen, wenn die App im Hintergrund ist oder die Verbindung kein lokaler Strata-Server ist
+  if (!SV.modal && (document.hidden || !svDockEligible())) { svRenderDock(); return; }
   SV.busy = true;
   try {
     const r = await svReq('/metrics', { timeout: 6000 });
-    const j = r.json;
-    if (r.ok && j && (j.engine || j.live || j.hardware || j.totals)) { SV.data = j; SV.err = ''; }
+    const j = r.ok ? svUnwrap(r.json) : null;
+    if (j) { SV.data = j; SV.err = ''; svPushHist(j); }
     else {
       SV.data = null;
-      // Entladener Server: /metrics kann dann fehlen. /v1/status und /health sagen, ob das Modell geladen ist.
+      SV.found = null;
+      SV.authErr = r.status === 401 || r.status === 403; // Server läuft, aber der Schlüssel stimmt nicht: Starten würde nichts ändern
+      // /metrics fehlt oder hat ein unbekanntes Format: /v1/status und /health sagen, ob das Modell geladen ist.
       let fb = null;
-      if (r.status !== 401 && r.status !== 403) {
+      let hostDone = false;
+      if (!SV.authErr && (svIsHtml(r) || r.status === 404)) {
+        const h = await svTryHost();
+        if (h && h.auth) { SV.authErr = true; hostDone = true; SV.err = 'Die Strata-Desktop-App verlangt für ihre Daten (/api/native) einen Schlüssel, und der in der Verbindung eingetragene wird nicht angenommen. Trage den API-Schlüssel der App unter Einstellungen → Verbindungen ein.'; }
+        else if (h && h.data) { SV.data = h.data; SV.err = ''; hostDone = true; svPushHist(h.data); }
+      }
+      if (!SV.authErr && !hostDone) {
         for (const path of ['/v1/status', '/health']) {
           const x = await svReq(path, { timeout: 4000 });
-          if (x.ok && x.json && x.json.loaded === false) { fb = x.json; break; }
+          const xj = x.ok ? svUnwrap(x.json) || x.json : null;
+          if (xj && typeof xj === 'object' && !xj.error) { fb = xj; break; }
         }
       }
-      if (fb) {
+      if (hostDone) { /* Daten stammen aus dem App-Host (siehe svTryHost) */ } else if (fb && fb.loaded === false) {
         SV.data = { engine: { model: fb.model || '' }, live: { state: 'unloaded' }, requests: [], totals: {}, history: {} };
         SV.err = '';
+      } else if (fb && (fb.loaded === true || r.ok)) {
+        // Server erreichbar, Modell geladen (oder zumindest erreichbar), aber kein auswertbares /metrics: eingeschränkter Monitor statt „Offline“
+        const why = r.ok ? 'Die Adresse /metrics liefert kein bekanntes Format. ' + svDescribe(r).replace(/^Antwort \d+, aber kein Strata-Monitor-Format: /, '') : '„/metrics“ ist nicht verfügbar (Status ' + (r.status || '–') + ').';
+        SV.data = { engine: { model: fb.model || (fb.engine && fb.engine.model) || '' }, live: { state: fb.loaded === true ? 'limited' : 'limited_unknown' }, requests: [], totals: {}, history: {}, limited: `Server online${fb.loaded === true ? ', Modell geladen' : ''}. Eingeschränkter Monitor: ${why}` };
+        SV.err = '';
+      } else if (r.ok && svIsHtml(r)) {
+        // Webseite statt Daten: Ist das überhaupt die API? /v1/models entscheidet.
+        const m = await svReq('/v1/models', { timeout: 4000 });
+        const mj = m.ok && m.json;
+        if (mj && (Array.isArray(mj.data) || Array.isArray(mj.models))) {
+          const ids = (mj.data || mj.models).map((x) => x.id || x.name).filter(Boolean);
+          SV.data = { engine: { model: ids[0] || '' }, live: { state: 'limited_unknown' }, requests: [], totals: {}, history: {}, limited: 'Die API antwortet (/v1/models), aber „/metrics“ liefert die Strata-Weboberfläche statt Daten. Ein falscher API-Schlüssel würde bei Strata mit 401 beantwortet, nicht mit einer Seite. Vermutlich nutzt diese Strata-Version für die Monitor-Daten einen anderen Pfad oder die Adresse ist die Oberfläche der App. Chat und Modellliste laufen über die API und sind davon nicht betroffen.' };
+          SV.err = '';
+        } else if (m.status === 401 || m.status === 403) {
+          SV.authErr = true;
+          SV.err = 'Der Server verlangt einen (anderen) API-Schlüssel. Klicke auf „Schlüssel holen & verbinden“.';
+        } else {
+          SV.found = await svDiscover();
+          SV.err = `Diese Adresse (${svRoot(svConn())}) liefert nur die Strata-Weboberfläche (HTML), auch /v1/models ist keine API-Antwort. Hier lauscht nicht die Strata-API, sondern die Oberfläche der App. Trage in der Verbindung die Adresse des Modell-Servers ein (der Port steht bei „strata launch --status“ bzw. in der Ausgabe von „strata launch“; Standard ist 8080).`
+            + (SV.found ? ` GEFUNDEN: Auf ${SV.found.url} antwortet eine Strata-API${SV.found.models.length ? ' (Modell: ' + SV.found.models[0] + ')' : ''}${SV.found.auth ? ', sie verlangt einen Schlüssel' : ''}.` : ' Auf den üblichen lokalen Ports (8080, 8190, 8081, 8000) wurde keine API gefunden.');
+        }
       } else if (r.status === 401 || r.status === 403) SV.err = 'API-Schlüssel fehlt oder ist falsch. Trage ihn unter Einstellungen → Verbindungen ein.';
       else if (r.status === 404) SV.err = 'Dieser Server kennt „/metrics“ nicht. Ist es ein Strata-Server?';
-      else SV.err = r.status ? `Antwort ${r.status}` : `Server nicht erreichbar${r.error ? ' (' + r.error + ')' : ''}. Läuft Strata auf dem Zielrechner? Unter „Modell starten“ lässt es sich starten.`;
+      else if (r.ok) SV.err = svDescribe(r) + ` (abgefragt: ${svRoot(svConn())}/metrics)`;
+      else SV.err = r.status ? `Antwort ${r.status}` : `Server nicht erreichbar${r.error ? ' (' + r.error + ')' : ''}. Läuft Strata auf dem Zielrechner? Mit „Strata starten & Modell laden“ (oben rechts) startet die App es im Hintergrund mit den Werten aus „Modell starten“.`;
     }
   } catch (e) {
     SV.data = null;
@@ -65,9 +208,11 @@ async function svPoll() {
   }
   SV.busy = false;
   svRenderMonitor();
+  svRenderDock();
 }
 function svStartPoll() {
   svStopPoll();
+  SV.scanned = {};
   const ms = Math.max(1, +svs().pollSec || 2) * 1000;
   SV.timer = setInterval(svPoll, ms);
   svPoll();
@@ -77,18 +222,186 @@ function svStopPoll() {
   SV.timer = null;
 }
 
+/* ───── Monitor-Dock: kompakte Anzeige unter dem Workspace-Panel (Button „Monitor“ in der Kopfleiste) ─────
+   Nutzt dieselbe Abfrage und dieselben Daten wie das Fenster „Server & Monitor“ (SV.data), es gibt also nur eine Abfrage. */
+ICONS.activity = '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>';
+const SV_DOCK_MIN_W = 1100; // darunter blendet die Oberfläche das rechte Panel aus
+const svDockVisible = () => !!(typeof S !== 'undefined' && S.settings && svs().dock && S.panelOpen && window.innerWidth > SV_DOCK_MIN_W);
+const svIsLocalHost = (h) => /^(localhost|127\.|\[::1\]|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(h || '');
+// Das Dock fragt nur lokale/private Server oder die ausdrücklich gewählte Strata-Verbindung ab, nie still eine Cloud-Verbindung (Schlüssel!)
+function svDockEligible() {
+  const c = svConn();
+  if (!c) return false;
+  if (svs().connId) return true;
+  try { return svIsLocalHost(new URL(c.baseUrl).hostname); } catch { return false; }
+}
+const SV_DOCK_TILES = ['speed', 'gpu', 'vram', 'temp', 'power', 'ram'];
+
+function svBuildDock() {
+  const dk = { tileRefs: [] };
+  dk.badge = el('span', { class: 'sv-badge', text: '…' });
+  dk.model = el('div', { class: 'dk-model' });
+  dk.ctxBar = el('i');
+  dk.ctxTxt = el('span');
+  dk.ctx = el('div', { class: 'sv-ctx dk-ctx hidden' }, el('div', { class: 'bar' }, dk.ctxBar), dk.ctxTxt);
+  dk.note = el('div', { class: 'dk-note hidden' });
+  dk.tiles = el('div', { class: 'dk-tiles hidden' });
+  const bDetails = el('button', { class: 'icon-btn', title: 'Details: Server & Monitor (Laden, Entladen, Konfiguration)', html: icon('cpu', 15), onclick: () => openServer('monitor') });
+  const bClose = el('button', { class: 'icon-btn', title: 'Monitor ausblenden', html: icon('x', 14), onclick: () => svSetDock(false) });
+  dk.root = el('div', { class: 'fp-dock' },
+    el('div', { class: 'dk-head' }, el('span', { class: 'ttl', html: icon('activity', 15) + '<span>Monitor</span>' }), dk.badge, el('span', { class: 'sv-spacer' }), bDetails, bClose),
+    dk.model, dk.ctx, dk.note, dk.tiles);
+  return dk;
+}
+
+function svDockTiles(defs) {
+  const dk = SV.dock;
+  if (dk.tileRefs.length === defs.length) return;
+  dk.tiles.innerHTML = '';
+  dk.tileRefs = defs.map((t) => {
+    const r = { root: el('div', { class: 'sv-tile' }), label: el('div', { class: 'l', text: t.label }), val: el('div', { class: 'v' }), sub: el('div', { class: 's' }), bar: el('div', { class: 'tb' }, el('i')) };
+    r.root.append(r.label, r.val, r.bar, r.sub);
+    if (t.h) { // jede Kachel mit Messreihe bekommt einen Verlauf
+      r.svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      r.svg.setAttribute('viewBox', '0 0 100 28');
+      r.svg.setAttribute('preserveAspectRatio', 'none');
+      r.svg.setAttribute('class', 'sp');
+      r.path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      r.svg.append(r.path);
+      r.root.append(r.svg);
+    }
+    dk.tiles.append(r.root);
+    return r;
+  });
+}
+
+function svRenderDock() {
+  const dk = SV.dock;
+  if (!dk || !dk.root.isConnected) return;
+  const showNote = (txt, full) => { dk.note.textContent = txt; dk.note.title = full || txt; dk.note.classList.toggle('hidden', !txt); };
+  const c = svConn();
+  if (!svDockEligible()) {
+    dk.badge.textContent = '–';
+    dk.badge.className = 'sv-badge';
+    dk.model.textContent = c ? c.name : '';
+    dk.ctx.classList.add('hidden');
+    dk.tiles.classList.add('hidden');
+    showNote('Der Monitor ist für lokale Strata-Server gedacht. Die aktive Verbindung ist kein lokaler Server. Wähle unter „Server & Monitor → Zielrechner“ die Strata-Verbindung.');
+    return;
+  }
+  const d = SV.data;
+  if (!d) {
+    dk.badge.textContent = 'Offline';
+    dk.badge.className = 'sv-badge err';
+    dk.model.textContent = c ? c.name : '';
+    dk.ctx.classList.add('hidden');
+    dk.tiles.classList.add('hidden');
+    const e = String(SV.err || 'Keine Daten.');
+    showNote(e.length > 230 ? e.slice(0, 230) + ' …' : e, e);
+    return;
+  }
+  const live = d.live || {};
+  const eng = d.engine || {};
+  const [lab, cls] = STATE_LABEL[live.state] || [live.state || '–', 'ok'];
+  dk.badge.textContent = lab + (live.queued ? ` · ${live.queued} wartend` : '');
+  dk.badge.title = dk.badge.textContent;
+  dk.badge.className = 'sv-badge ' + cls;
+  dk.model.textContent = eng.model || (c ? c.name : '');
+  dk.model.title = eng.model || '';
+
+  const max = eng.max_context;
+  const last = (d.requests || [])[0];
+  const busy = live.state === 'reading' || live.state === 'generating';
+  const used = busy ? (live.prompt_tokens || 0) + (live.generated || 0) : last ? (last.prompt_tokens || 0) + (last.output_tokens || 0) : 0;
+  const frac = max ? Math.min(1, used / max) : 0;
+  dk.ctx.classList.toggle('hidden', !max);
+  dk.ctx.classList.toggle('warn', frac > 0.8);
+  dk.ctxBar.style.width = (frac * 100).toFixed(1) + '%';
+  dk.ctxTxt.textContent = max ? `${fmt.tok(used)} / ${fmt.tok(max)} · ${Math.round(frac * 100)} %` : '';
+
+  const defs = svTilesDef(d).filter((t) => SV_DOCK_TILES.includes(t.id));
+  const any = defs.some((t) => t.val !== '–');
+  dk.tiles.classList.toggle('hidden', !any);
+  if (any) {
+    svDockTiles(defs);
+    defs.forEach((t, i) => {
+      const r = dk.tileRefs[i];
+      r.val.innerHTML = '';
+      r.val.append(document.createTextNode(String(t.val)), el('small', { text: t.unit ? ' ' + t.unit : '' }));
+      r.sub.textContent = t.sub || '';
+      r.root.classList.toggle('dim', t.val === '–');
+      r.bar.style.display = t.bar === null || t.bar === undefined ? 'none' : '';
+      if (t.bar !== null && t.bar !== undefined) r.bar.firstChild.style.width = Math.min(100, t.bar * 100).toFixed(1) + '%';
+      if (r.path) r.path.setAttribute('d', spark(svSeries(d, t.h), t.max, t.min));
+    });
+  }
+  if (busy) {
+    const read = live.prompt_read, tot = live.prompt_total;
+    showNote(live.state === 'reading'
+      ? `Liest den Prompt${tot ? `: ${fmt.num(read || 0)} von ${fmt.num(tot)} Tokens` : ''}`
+      : `Antwortet: ${fmt.num(live.generated || 0)} Tokens · ${fmt.tps(live.tok_s)} tok/s · ${fmt.dur(live.elapsed_s)}`);
+  } else if (d.limited) showNote(d.limited.length > 230 ? d.limited.slice(0, 230) + ' …' : d.limited, d.limited);
+  else if (d.source && !any) showNote('Datenquelle: ' + d.source + ' (keine Messwerte in dieser Quelle)');
+  else showNote('');
+}
+
+// Dock anhängen (wird von renderFilePanel nach dem Neuaufbau des Panels aufgerufen) und Abfrage passend starten/stoppen
+function svDockMount(panel) {
+  if (!svs().dock) { svDockSync(); return; }
+  if (!SV.dock) SV.dock = svBuildDock();
+  panel.append(SV.dock.root);
+  svRenderDock();
+  svDockSync();
+}
+function svDockSync() {
+  const want = svDockVisible();
+  if (want && !SV.timer) svStartPoll();
+  else if (!want && !SV.modal && SV.timer) svStopPoll();
+  const b = document.getElementById('btn-monitor');
+  if (b) b.classList.toggle('on', want);
+}
+function svSetDock(on) {
+  svs().dock = !!on;
+  if (on) S.panelOpen = true;
+  changed();
+  renderFilePanel();
+  if (on) svPoll();
+}
+function svToggleDock() {
+  if (window.innerWidth <= SV_DOCK_MIN_W) return openServer('monitor'); // Panel ist bei schmalem Fenster ausgeblendet: Fenster öffnen
+  svSetDock(!svDockVisible());
+}
+
 /* ───── Monitor: Darstellung ───── */
 const GB = 1073741824;
 const nn = (v) => v !== null && v !== undefined && !Number.isNaN(v);
 const gbOf = (b) => (nn(b) ? (b / GB).toFixed(1).replace('.', ',') : '–');
 const pct = (v) => (nn(v) ? Math.round(v) : '–');
 
-function spark(vals, max) {
+function spark(vals, max, min = 0) {
   const v = (vals || []).filter(nn);
   if (v.length < 2) return '';
   const hi = max || Math.max(1, ...v);
+  const lo = Math.min(min || 0, hi - 1);
   const w = 100 / (v.length - 1);
-  return v.map((y, i) => `${i ? 'L' : 'M'}${(i * w).toFixed(1)},${(28 - Math.min(1, y / hi) * 26 - 1).toFixed(1)}`).join(' ');
+  return v.map((y, i) => `${i ? 'L' : 'M'}${(i * w).toFixed(1)},${(28 - Math.max(0, Math.min(1, (y - lo) / (hi - lo))) * 26 - 1).toFixed(1)}`).join(' ');
+}
+
+/* Verlauf: nimmt den Verlauf des Servers, falls er welchen liefert. Fehlt er (z. B. für GPU-Auslastung und Temperatur),
+   sammelt die LLM Box die Messwerte selbst bei jeder Abfrage (letzte 90 Werte). */
+const SV_HIST = {};
+const SV_HIST_MAX = 90;
+function svPushHist(d) {
+  const hw = d && d.hardware;
+  if (!hw) return;
+  const live = d.live || {};
+  const add = (k, v) => { if (!nn(v)) return; const a = SV_HIST[k] || (SV_HIST[k] = []); a.push(v); if (a.length > SV_HIST_MAX) a.shift(); };
+  for (const k of ['gpu_util', 'gpu_mem_used', 'gpu_temp', 'gpu_power', 'cpu', 'ram_used', 'disk_read_mb', 'gpu_pcie_rx_mb']) add(k, hw[k]);
+  add('tok_s', nn(live.tok_s) ? live.tok_s : hw.tok_s);
+}
+function svSeries(d, key) {
+  const s = (d && d.history || {})[key];
+  return Array.isArray(s) && s.filter(nn).length >= 2 ? s : (SV_HIST[key] || []);
 }
 
 function svTilesDef(d) {
@@ -102,8 +415,8 @@ function svTilesDef(d) {
     { id: 'speed', label: 'Geschwindigkeit', val: nn(speed) ? fmt.tps(speed) : '–', unit: 'tok/s', sub: `Ø ${fmt.tps(live.tok_s_mean ?? hw.tok_s_mean)} tok/s · Prompt ${fmt.tps(prefill)} tok/s`, h: 'tok_s' },
     { id: 'gpu', label: 'GPU-Auslastung', val: pct(hw.gpu_util), unit: nn(hw.gpu_util) ? '%' : '', sub: st.gpu_name || (st.gpu_note ? 'keine GPU-Werte lesbar' : ''), h: 'gpu_util', max: 100 },
     { id: 'vram', label: 'VRAM', val: gbOf(hw.gpu_mem_used), unit: nn(hw.gpu_mem_used) ? 'GB' : '', sub: nn(total) ? `von ${gbOf(total)} GB` : '', h: 'gpu_mem_used', bar: nn(hw.gpu_mem_used) && nn(total) ? hw.gpu_mem_used / total : null, max: total || null },
-    { id: 'temp', label: 'GPU-Temperatur', val: pct(hw.gpu_temp), unit: nn(hw.gpu_temp) ? '°C' : '', sub: '', h: 'gpu_temp' },
-    { id: 'power', label: 'GPU-Leistung', val: nn(hw.gpu_power) ? Math.round(hw.gpu_power) : '–', unit: nn(hw.gpu_power) ? 'W' : '', sub: nn(hw.gpu_power_limit) ? `Limit ${Math.round(hw.gpu_power_limit)} W` : '', h: 'gpu_power' },
+    { id: 'temp', label: 'GPU-Temperatur', val: pct(hw.gpu_temp), unit: nn(hw.gpu_temp) ? '°C' : '', sub: '', h: 'gpu_temp', min: 20, max: 100 },
+    { id: 'power', label: 'GPU-Leistung', val: nn(hw.gpu_power) ? Math.round(hw.gpu_power) : '–', unit: nn(hw.gpu_power) ? 'W' : '', sub: nn(hw.gpu_power_limit) ? `Limit ${Math.round(hw.gpu_power_limit)} W` : '', h: 'gpu_power', max: nn(hw.gpu_power_limit) ? hw.gpu_power_limit : null },
     { id: 'cpu', label: 'CPU', val: pct(hw.cpu), unit: nn(hw.cpu) ? '%' : '', sub: [st.cpu_name, st.threads ? st.threads + ' Threads' : ''].filter(Boolean).join(' · '), h: 'cpu', max: 100 },
     { id: 'ram', label: 'Arbeitsspeicher', val: gbOf(hw.ram_used), unit: nn(hw.ram_used) ? 'GB' : '', sub: nn(hw.ram_total) ? `von ${gbOf(hw.ram_total)} GB` : '', h: 'ram_used', bar: nn(hw.ram_used) && nn(hw.ram_total) ? hw.ram_used / hw.ram_total : null, max: hw.ram_total || null },
     { id: 'disk', label: 'Datenträger', val: nn(hw.disk_read_mb) ? hw.disk_read_mb.toFixed(1).replace('.', ',') : '–', unit: nn(hw.disk_read_mb) ? 'MB/s lesen' : '', sub: nn(hw.disk_write_mb) ? `schreiben ${hw.disk_write_mb.toFixed(1).replace('.', ',')} MB/s` : '', h: 'disk_read_mb' },
@@ -111,7 +424,7 @@ function svTilesDef(d) {
   ];
 }
 
-const STATE_LABEL = { idle: ['Bereit', 'ok'], reading: ['Liest den Prompt', 'run'], generating: ['Antwortet', 'run'], unloaded: ['Entladen', 'warn'] };
+const STATE_LABEL = { idle: ['Bereit', 'ok'], reading: ['Liest den Prompt', 'run'], generating: ['Antwortet', 'run'], unloaded: ['Entladen', 'warn'], limited: ['Online · geladen', 'ok'], limited_unknown: ['Online', 'ok'], unavailable: ['Modell nicht verfügbar', 'err'] };
 
 function svBuildMonitor() {
   const u = SV.ui;
@@ -189,20 +502,34 @@ function svRenderMonitor() {
     u.badge.className = 'sv-badge err';
     u.model.textContent = svConn() ? svConn().name : '';
     u.err.textContent = SV.err || 'Keine Daten.';
+    if (SV.found) u.err.append(' ', el('button', { class: 'btn sm', text: 'Verbindung auf ' + SV.found.url + ' umstellen', onclick: svUseFound }));
     if (/nicht erreichbar|Zeitüberschreitung|ECONN|ENOTFOUND|EHOST|ETIMEDOUT/i.test(SV.err || '')) u.err.append(' ', el('button', { class: 'btn sm', text: 'Zu „Modell starten“', onclick: () => svSwitch('launch') }));
     u.live.classList.add('hidden');
-    u.bLoad.disabled = true;
+    // Server nicht erreichbar: „Modell laden“ startet Strata im Hintergrund mit den Werten aus „Modell starten“
+    const lbl = u.bLoad.querySelector('span');
+    if (SV.authErr) {
+      // Server läuft, nimmt den Schlüssel aber nicht an: Schlüssel von Strata holen
+      if (lbl) lbl.textContent = 'Schlüssel holen & verbinden';
+      u.bLoad.title = 'Fragt Strata nach dem aktuellen API-Schlüssel (strata launch --show-key) und trägt ihn nach Rückfrage in der Verbindung ein';
+    } else {
+      if (lbl) lbl.textContent = 'Strata starten & Modell laden';
+      u.bLoad.title = 'Startet Strata im Hintergrund mit den Werten aus dem Tab „Modell starten“ (strata launch --yes --no-tui) und lädt das Modell';
+    }
+    u.bLoad.disabled = !!(SV.loading || SV.job);
     u.bUnload.disabled = true;
     return;
   }
+  SV.authErr = false;
+  { const lbl = u.bLoad.querySelector('span'); if (lbl) lbl.textContent = 'Modell laden'; u.bLoad.title = ''; }
   const live = d.live || {};
   const eng = d.engine || {};
   const [lab, cls] = STATE_LABEL[live.state] || [live.state || '–', 'ok'];
   u.badge.textContent = lab + (live.queued ? ` · ${live.queued} wartend` : '');
+  u.badge.title = u.badge.textContent;
   u.badge.className = 'sv-badge ' + cls;
   u.model.textContent = eng.model || '';
-  u.bLoad.disabled = live.state !== 'unloaded' || !!SV.loading;
-  u.bUnload.disabled = live.state === 'unloaded';
+  u.bLoad.disabled = !(live.state === 'unloaded' || (!!d.hostMode && live.state === 'unavailable')) || !!SV.loading;
+  u.bUnload.disabled = live.state === 'unloaded' || (!!d.hostMode && !d.instanceId); // App-Host: Entladen über die Instanz-ID
 
   /* Kontext */
   const max = eng.max_context;
@@ -217,7 +544,9 @@ function svRenderMonitor() {
 
   /* Laufende Anfrage */
   const busy = live.state === 'reading' || live.state === 'generating';
-  u.live.classList.toggle('hidden', !busy);
+  u.live.classList.toggle('hidden', !busy && !d.limited);
+  if (!busy && d.limited) u.live.textContent = d.limited;
+  else if (!busy && d.source) { u.live.classList.remove('hidden'); u.live.textContent = 'Datenquelle: ' + d.source + (d.hardware ? '' : ' · ohne Hardware-Werte (die App liefert sie hier nicht im Metrik-Format)'); }
   if (busy) {
     const read = live.prompt_read, tot = live.prompt_total;
     u.live.textContent = live.state === 'reading'
@@ -236,7 +565,7 @@ function svRenderMonitor() {
     r.root.classList.toggle('dim', t.val === '–');
     r.bar.style.display = t.bar === null || t.bar === undefined ? 'none' : '';
     if (t.bar !== null && t.bar !== undefined) r.bar.firstChild.style.width = Math.min(100, t.bar * 100).toFixed(1) + '%';
-    r.path.setAttribute('d', spark((d.history || {})[t.h], t.max));
+    r.path.setAttribute('d', spark(svSeries(d, t.h), t.max, t.min));
   });
   const gp = (d.hardware || {}).gpus;
   u.gpus.classList.toggle('hidden', !(Array.isArray(gp) && gp.length > 1));
@@ -308,7 +637,229 @@ function svLoadErr(r) {
     default: return `Laden fehlgeschlagen (${r.status}): ${srv}`;
   }
 }
+/* Adresse und Schlüssel aus der Ausgabe von „strata launch“ übernehmen ─ falls die Verbindung der App woanders hinzeigt */
+const svClean = (t) => String(t || '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+function svParseAddress(out) {
+  const m = /This computer\s+(https?:\/\/[^\s]+)/i.exec(svClean(out));
+  return m ? m[1].replace(/[),.;]+$/, '') : null;
+}
+const svOrigin = (u) => { try { return new URL(u).origin; } catch { return ''; } };
+// Zeigt die Monitor-Verbindung nicht dorthin, wo Strata läuft: bestehende Verbindung mit dieser Adresse wählen oder eine neue anlegen
+function svAdoptAddress(addr) {
+  const want = svOrigin(addr);
+  const cur = svConn();
+  if (!want || (cur && svOrigin(cur.baseUrl) === want)) return false;
+  let t = S.settings.connections.find((c) => c.type === 'openai' && svOrigin(c.baseUrl) === want);
+  if (!t) {
+    t = { id: uid(), name: 'Strata (' + new URL(addr).host + ')', type: 'openai', baseUrl: addr.replace(/\/+$/, ''), apiKey: cur && cur.type === 'openai' ? cur.apiKey || '' : '', extraParams: true, thinkMode: 'template' };
+    S.settings.connections.push(t);
+  }
+  svs().connId = t.id;
+  changed();
+  toast(`Strata läuft unter ${addr}. Die Monitor-Verbindung zeigt jetzt dorthin („${t.name}“).`, 8000);
+  return true;
+}
+// „strata launch --show-key“ ausführen und den Schlüssel aus der Ausgabe lesen
+function svFetchKey() {
+  return new Promise((resolve) => {
+    if (SV.job) return resolve(null);
+    svRun(['launch', '--show-key'], { timeout: 60, onEnd: (m, out) => {
+      const toks = svClean(out).match(/[A-Za-z0-9_\-.]{16,}/g) || [];
+      resolve(toks.length ? toks[toks.length - 1] : null);
+    } });
+  });
+}
+
+/* Ohne laufenden Server: Strata mit den Werten aus „Modell starten“ im Hintergrund starten, auf den Server warten und das Modell laden */
+const svLaunchConfigured = () => {
+  const f = svs().launch;
+  return ['preset', 'family', 'model', 'modelPath'].some((k) => String(f[k] || '').trim());
+};
+async function svAutoStart() {
+  if (SV.loading) return;
+  if (SV.job) return svMsg('Es läuft bereits ein Strata-Befehl (Tab „Modell starten“, Ausgabe). Bitte warten oder dort abbrechen.', 'err');
+  if (!svLaunchConfigured()) {
+    svSwitch('launch');
+    return toast('Trage zuerst unter „Modell starten“ Familie und Modell, einen Modell-Ordner oder ein Preset ein. Danach genügt „Modell laden“.', 8000);
+  }
+  // Vielleicht läuft der Server schon (die erste Abfrage war noch nicht fertig): dann normal laden statt neu zu starten
+  const chk = await svReq('/metrics', { timeout: 4000 });
+  if (chk.ok && chk.json) { await svPoll(); return svLoad(); }
+  SV.loading = true;
+  SV.ui.bLoad.disabled = true;
+  const t0 = Date.now();
+  const lastLine = () => (SV.cur || SV.lines[SV.lines.length - 1] || '').trim().slice(0, 160);
+  const tick = setInterval(() => svMsg(`Strata wird im Hintergrund gestartet … ${fmt.dur((Date.now() - t0) / 1000)}\n${lastLine()}\n(Die vollständige Ausgabe steht im Tab „Modell starten“.)`, 'ok'), 1000);
+  svMsg('Strata wird im Hintergrund gestartet …', 'ok');
+  try {
+    const res = await new Promise((resolve) => svRun(svLaunchArgs('start'), { timeout: 6 * 3600, onEnd: (m, out) => resolve({ m, out }) }));
+    const { m, out } = res;
+    const tail = String(out || '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').trim().split(/\r?\n/).filter(Boolean).slice(-8).join('\n');
+    if (m.error) {
+      svMsg(`Strata konnte nicht gestartet werden: ${m.error}\nIst Strata installiert? Prüfe unter „Zielrechner“, wo die Strata-CLI läuft und wie das Programm heißt (Standard: strata).`, 'err');
+      return;
+    }
+    if (m.aborted) { svMsg('Start abgebrochen.', 'err'); return; }
+    if (m.timedOut || (m.code !== 0 && m.code !== null && m.code !== undefined)) {
+      let hint = '';
+      if (/restart|already running|other settings|anderen Einstellungen|läuft schon/i.test(tail)) hint = '\nEin Modell läuft schon mit anderen Einstellungen: Schalte unter „Modell starten“ „Laufendes Modell ersetzen“ ein und versuche es erneut.';
+      else if (/not found|nicht gefunden|unknown|unbekannt/i.test(tail)) hint = '\nPrüfe Familie, Modell und Preset unter „Modell starten“ („Plan anzeigen“ zeigt, was passieren würde).';
+      svMsg(`Strata meldet ${m.timedOut ? 'eine Zeitüberschreitung' : 'Fehlercode ' + m.code}:\n${tail}${hint}`, 'err');
+      return;
+    }
+    // Der Server läuft im Hintergrund weiter: Adresse aus der Strata-Ausgabe übernehmen (falls die Verbindung woanders hinzeigt) und warten
+    const already = /already serving/i.test(out);
+    const addr = svParseAddress(out);
+    if (addr) svAdoptAddress(addr);
+    svMsg(already ? 'Strata lief bereits mit diesen Einstellungen. Verbinde …' : 'Strata ist gestartet. Warte auf den Server …', 'ok');
+    let up = null;
+    let keyTried = false;
+    for (let i = 0; i < 45 && SV.modal; i++) {
+      const r = await svReq('/metrics', { timeout: 6000 });
+      if (r.ok && r.json) { up = r.json; break; }
+      if (r.status === 401 || r.status === 403) {
+        // Der Server läuft, verlangt aber einen anderen Schlüssel: bei Strata über „--show-key“ holen und nach Rückfrage übernehmen
+        if (!keyTried) {
+          keyTried = true;
+          svMsg('Strata läuft, lehnt aber den API-Schlüssel ab. Hole den aktuellen Schlüssel …', 'ok');
+          const key = await svFetchKey();
+          if (key && (await confirmModal('API-Schlüssel übernehmen', `Strata hat einen Schlüssel gemeldet (${key.slice(0, 4)}…${key.slice(-4)}). Soll er in der Verbindung „${svConn().name}“ eingetragen werden?`, { okLabel: 'Übernehmen' }))) {
+            svConn().apiKey = key;
+            changed();
+            continue;
+          }
+        }
+        svMsg('Strata läuft, aber der API-Schlüssel in der Verbindung stimmt nicht. Klicke unter „Modell starten“ auf „Schlüssel anzeigen“ und trage ihn unter Einstellungen → Verbindungen ein.', 'err');
+        return;
+      }
+      await new Promise((res2) => setTimeout(res2, 2000));
+    }
+    if (!up) { svMsg('Strata wurde gestartet, der Server antwortet aber nicht unter der eingetragenen Adresse. Prüfe Adresse und Port unter Einstellungen → Verbindungen („Verbindung genau prüfen“).', 'err'); return; }
+    svMsg('');
+    toast(already ? 'Strata läuft bereits mit diesen Einstellungen.' : 'Strata läuft.');
+  } finally {
+    clearInterval(tick);
+    SV.loading = false;
+    await svPoll();
+    // Läuft der Server, hat aber noch kein Modell geladen: jetzt laden
+    if (SV.data && SV.data.live && SV.data.live.state === 'unloaded' && SV.modal) svLoad();
+  }
+}
+/* Server läuft, lehnt den Schlüssel aber ab: aktuellen Schlüssel von Strata holen und nach Rückfrage übernehmen */
+async function svFixKey() {
+  if (SV.loading || SV.job) return;
+  SV.loading = true;
+  SV.ui.bLoad.disabled = true;
+  svMsg('Hole den aktuellen API-Schlüssel von Strata …', 'ok');
+  try {
+    const key = await svFetchKey();
+    if (!key) { svMsg('Strata hat keinen Schlüssel gemeldet. Prüfe im Tab „Modell starten“ mit „Schlüssel anzeigen“, ob die Strata-CLI erreichbar ist.', 'err'); return; }
+    if (!(await confirmModal('API-Schlüssel übernehmen', `Strata hat einen Schlüssel gemeldet (${key.slice(0, 4)}…${key.slice(-4)}). Soll er in der Verbindung „${svConn().name}“ eingetragen werden?`, { okLabel: 'Übernehmen' }))) { svMsg(''); return; }
+    svConn().apiKey = key;
+    changed();
+    svMsg('');
+    toast('Schlüssel übernommen.');
+  } finally {
+    SV.loading = false;
+    await svPoll();
+    if (SV.data && SV.data.live && SV.data.live.state === 'unloaded' && SV.modal) svLoad();
+  }
+}
+/* ───── Laden/Entladen bei der Strata-Desktop-App (App-Host) ─────
+   Quellen: Strata-Tickets #4973 (POST /api/native/instances/<id>/unload, POST /api/native/operations {kind:'load'}) und
+   PR #4651 (POST /api/native/resume = zuletzt geladenes Modell). Der Host nimmt JSON ohne Browser-Origin an. */
+const svSleep = (ms) => new Promise((res) => setTimeout(res, ms));
+async function svHostInstance() {
+  const n = await svReq('/api/native', { timeout: 6000 });
+  const list = n.ok && n.json && Array.isArray(n.json.instances) ? n.json.instances : [];
+  const inst = list.find((i) => i && i.status === 'ready' && i.phase !== 'unavailable') || list[0] || null;
+  return { n, inst, installed: n.json && n.json.installed };
+}
+function svAskModel(ids) {
+  return new Promise((resolve) => {
+    const sel = el('select', {}, ids.map((id) => el('option', { value: id, text: id })));
+    openModal({
+      title: 'Modell laden',
+      body: el('div', {}, el('div', { text: 'Welches installierte Modell soll die Strata-App laden?', style: { marginBottom: '8px', color: 'var(--text-dim)' } }), sel),
+      buttons: [{ label: 'Abbrechen', value: null }, { label: 'Laden', primary: true, onClick: (close) => close(sel.value) }],
+      onClose: (r) => resolve(typeof r === 'string' ? r : null),
+    });
+  });
+}
+async function svHostPickModel(installed) {
+  let models = installed && (Array.isArray(installed.models) ? installed.models : Array.isArray(installed) ? installed : []);
+  const ids = (models || []).map((m) => (typeof m === 'string' ? m : m && (m.id || m.name))).filter(Boolean);
+  if (!ids.length) return { ids };
+  const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (SV.lastModel && ids.includes(SV.lastModel)) return { id: SV.lastModel, ids };
+  const want = norm(svs().launch && svs().launch.model);
+  const hit = want && ids.find((id) => norm(id).includes(want));
+  if (hit) return { id: hit, ids };
+  if (ids.length === 1) return { id: ids[0], ids };
+  return { id: await svAskModel(ids), ids };
+}
+async function svHostLoad() {
+  if (SV.loading) return;
+  SV.loading = true;
+  SV.ui.bLoad.disabled = true;
+  const t0 = Date.now();
+  svMsg('Modell wird über die Strata-App geladen …', 'ok');
+  const tick = setInterval(() => svMsg(`Modell wird über die Strata-App geladen … ${fmt.dur((Date.now() - t0) / 1000)}\nBeim ersten Start kann das viele Minuten dauern.`, 'ok'), 1000);
+  try {
+    const cur = await svHostInstance();
+    // Eine abgestürzte Instanz (phase „unavailable“) zuerst entfernen, wie es die App selbst tut
+    if (cur.inst && cur.inst.phase === 'unavailable' && cur.inst.id) {
+      await svReq(`/api/native/instances/${encodeURIComponent(cur.inst.id)}/unload`, { method: 'POST', body: {}, timeout: 60000 });
+      await svSleep(1500);
+    } else if (cur.inst && cur.inst.status === 'ready') { svMsg(''); toast('Ein Modell ist bereits geladen.'); return; }
+    // 1) Zuletzt geladenes Modell wiederholen; 2) sonst ein installiertes Modell laden
+    let r = await svReq('/api/native/resume', { method: 'POST', body: {}, timeout: 30000 });
+    let how = 'resume';
+    if (!r.ok) {
+      const pick = await svHostPickModel(cur.installed);
+      if (!pick.ids.length) { svMsg('Die Strata-App meldet kein installiertes Modell. Installiere oder lade eines in der App (Seite „Models“).', 'err'); return; }
+      if (!pick.id) { svMsg(''); return; }
+      how = pick.id;
+      r = await svReq('/api/native/operations', { method: 'POST', body: { kind: 'load', args: { model: pick.id } }, timeout: 30000 });
+    }
+    if (!r.ok) { svMsg(`Die Strata-App hat das Laden abgelehnt (${how}): ${svErrText(r)}`, 'err'); return; }
+    // Der Ladevorgang läuft in der App weiter: warten, bis die Instanz bereit ist
+    let ready = false;
+    let last = '';
+    for (let i = 0; i < 600 && SV.modal; i++) {
+      await svSleep(3000);
+      const x = await svHostInstance();
+      if (x.inst) {
+        last = `${x.inst.status || '?'}${x.inst.phase ? ' / ' + x.inst.phase : ''}`;
+        if (x.inst.status === 'ready' && x.inst.phase !== 'unavailable') { ready = true; break; }
+        if (/fail|error/i.test(String(x.inst.status) + String(x.inst.phase))) { svMsg(`Laden fehlgeschlagen: Zustand „${last}“. Details stehen in den Logs der Strata-App.`, 'err'); return; }
+      }
+    }
+    if (ready) { svMsg(''); toast('Modell geladen.'); }
+    else svMsg(`Das Modell ist noch nicht bereit${last ? ' (Zustand: ' + last + ')' : ''}. Schau in der Strata-App nach, ob der Ladevorgang noch läuft.`, 'err');
+  } catch (e) {
+    svMsg('Laden fehlgeschlagen: ' + e.message, 'err');
+  } finally {
+    clearInterval(tick);
+    SV.loading = false;
+    svPoll();
+  }
+}
+async function svHostUnload() {
+  const id = SV.data && SV.data.instanceId;
+  if (!id) return toast('Keine geladene Instanz gefunden.');
+  if (!(await confirmModal('Modell entladen', 'Die Strata-App entlädt das Modell und gibt den GPU-Speicher frei. Die App selbst bleibt geöffnet.', { okLabel: 'Entladen', danger: true }))) return;
+  const r = await svReq(`/api/native/instances/${encodeURIComponent(id)}/unload`, { method: 'POST', body: {}, timeout: 120000 });
+  if (r.ok) toast('Modell entladen. GPU-Speicher ist frei.');
+  else if (r.status === 409 || r.status === 503) toast('Es läuft gerade eine Anfrage. Bitte später erneut versuchen.', 6000);
+  else toast('Entladen fehlgeschlagen: ' + svErrText(r), 7000);
+  svPoll();
+}
+
 async function svLoad() {
+  if (SV.data && SV.data.hostMode) return svHostLoad();
+  if (!SV.data && SV.authErr) return svFixKey();
+  if (!SV.data) return svAutoStart(); // Server nicht erreichbar: erst Strata starten
   if (SV.loading) return;
   SV.loading = true;
   SV.ui.bLoad.disabled = true;
@@ -338,6 +889,7 @@ async function svLoad() {
   }
 }
 async function svUnload() {
+  if (SV.data && SV.data.hostMode) return svHostUnload();
   if (!(await confirmModal('Modell entladen', 'Das Modell wird aus dem GPU-Speicher entfernt. Der Server bleibt aktiv und lädt es bei der nächsten Anfrage automatisch neu (sofern „auto_load“ aktiv ist).', { okLabel: 'Entladen' }))) return;
   const r = await svReq('/v1/unload', { method: 'POST', body: {}, timeout: 60000 });
   if (r.ok) toast('Modell entladen. GPU-Speicher ist frei.');
@@ -525,6 +1077,17 @@ function svBuildConfig() {
     body.innerHTML = '';
     note.textContent = 'Lade …';
     const r = await svReq('/config');
+    if (r.ok && svIsHtml(r)) {
+      // Strata-Desktop-App: ihr Host liefert unter /config die Oberfläche, nicht die Run-Konfiguration eines Modell-Servers
+      note.textContent = '';
+      body.append(
+        el('div', { style: { padding: '8px 0', lineHeight: 1.55 } },
+          el('p', { text: 'Diese Verbindung führt zur Strata-Desktop-App. Deren Host stellt die Run-Konfiguration nicht über HTTP bereit („/config“ liefert die App-Oberfläche), deshalb kann die LLM Box sie hier nicht anzeigen oder ändern.' }),
+          el('p', { text: 'Einstellungen ändern: in der Strata-App (Oberfläche im Browser oder App-Fenster). Wichtig: Die Konfigurationsdatei enthält eigene Schlüssel der App (z. B. „user_args“); sie von Hand zu bearbeiten kann Einstellungen kosten.' }),
+          el('p', { text: 'Wenn du in der LLM Box die richtige Kontextgröße brauchst: unter Einstellungen → Verbindungen die Datei „strata-….json“ wählen, daraus liest die App „--max-context“.' })),
+        el('button', { class: 'btn sm', text: 'App-Oberfläche im Browser öffnen', onclick: () => api.openExternal(svRoot(svConn()) + '/v1#/monitor') }));
+      return;
+    }
     if (!r.ok || !r.json || !Array.isArray(r.json.keys)) {
       note.textContent = r.status === 404
         ? 'Dieser Server wurde ohne Run-Config gestartet. Starte ihn über „strata launch“ (Tab „Modell starten“), dann erscheinen die Einstellungen hier.'
@@ -650,12 +1213,11 @@ function openServer(tab = 'monitor') {
   if (SV.modal) return;
   svPane = el('div', { class: 'pane' });
   svNav = el('nav');
-  SV.data = null;
-  SV.err = '';
+  if (!svDockVisible()) { SV.data = null; SV.err = ''; } // bei sichtbarem Dock die Daten behalten (kein Flackern)
   const m = openModal({
     title: 'Server & Monitor', wide: true, bare: true,
     body: el('div', { class: 'settings' }, svNav, svPane),
-    onClose: () => { svStopPoll(); SV.modal = null; svNav = svPane = null; SV.ui = {}; },
+    onClose: () => { SV.modal = null; svNav = svPane = null; SV.ui = {}; if (!svDockVisible()) svStopPoll(); else svRenderDock(); },
   });
   SV.modal = m;
   svSwitch(tab);
