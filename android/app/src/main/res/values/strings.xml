@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LLM Box</string>
+    <color name="bg">#101418</color>
+</resources>

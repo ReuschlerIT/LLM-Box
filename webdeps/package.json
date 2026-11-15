@@ -1,0 +1,22 @@
+{
+  "name": "webdeps",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "esbuild": "^0.25.0",
+    "fast-xml-parser": "^4.5.7",
+    "jsdom": "^31.0.0",
+    "jsqr": "^1.4.0",
+    "jszip": "^3.10.2",
+    "pdfjs-dist": "^3.11.174"
+  }
+}

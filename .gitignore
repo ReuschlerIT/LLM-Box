@@ -1,0 +1,40 @@
+# Abhaengigkeiten und Build-Ergebnisse – nicht fuer das Repository.
+# Ohne diese Datei wuerden beim ersten git add ueber 300 MB Fremdcode und fertige
+# Programmdateien mitkommitiert. Die fertigen Programme liegen bewusst nur in download/.
+
+# Windows-App (Electron)
+llm-box/node_modules/
+llm-box/dist/
+llm-box/win-unpacked/
+
+# Web-Abhaengigkeiten der Android-Portierung (jsdom, esbuild, jsqr … – 62 MB Fremdcode).
+# Wird in der Kopie mit "npm install" in webdeps\ neu geholt; die Tests brauchen es dort.
+webdeps/node_modules/
+
+# Android-App (Gradle)
+android/.gradle/
+android/build/
+android/app/build/
+android/app/app_build/
+*.apk
+!download/*.apk
+
+# Eigene Programme und Zwischendateien
+*.exe
+!download/*.exe
+*.zip
+*.log
+tmp-*
+*.mit-sonden
+
+# Persoenliche Einstellungen der App (duerfen nie ins Repository)
+settings.json
+smb.json
+sync.json
+chats/
+.env
+
+# Betriebssystem-eigene Dateien
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,305 @@
+/* android.css – Mobil-Layout für die unveränderte Desktop-Oberfläche.
+   Querformat/breite Bildschirme nutzen das Original-Raster, schmale das Drawer-/Overlay-Layout. */
+
+:root { --drawer-w: 300px; }
+
+/* Kopfzeile der Desktop-Fenstersteuerung wird auf Android nicht gebraucht */
+#titlebar { display: none !important; }
+
+html.android body { -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+
+/* Touch-Ziele groß genug zum Tippen */
+html.touch .icon-btn { min-width: 42px; min-height: 38px; }
+html.touch select, html.touch #input { font-size: 16px; }   /* verhindert automatischen Zoom */
+
+/* ═══════════ schmale Bildschirme (Hochformat-Handy) ═══════════ */
+@media (max-width: 820px) {
+
+  /* ── Seitenleiste als Drawer, schließbar per Backdrop/Knopf/Auswahl ── */
+  #sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: var(--drawer-w); max-width: 86vw;
+    z-index: 92;
+    transform: translateX(-102%);
+    transition: transform .18s ease;
+    box-shadow: 0 0 34px rgba(0, 0, 0, .5);
+    display: flex !important;
+  }
+  body.drawer-open #sidebar { transform: translateX(0); }
+
+  /* echtes Backdrop (kein ::after) -> klickbar zum Schließen */
+  #drawer-backdrop {
+    position: fixed; inset: 0; z-index: 91;
+    background: rgba(0, 0, 0, .5);
+    opacity: 0; pointer-events: none; transition: opacity .18s ease;
+  }
+  body.drawer-open #drawer-backdrop { opacity: 1; pointer-events: auto; }
+
+  #main { width: 100%; min-width: 0; }
+
+  /* ── obere Leiste: Auswahlfelder bekommen je eine volle halbe Zeile,
+        damit Verbindung und Modell vollstaendig lesbar sind (vorher wurden sie
+        von sechs Knopfelementen auf ~100 px gedrueckt) ── */
+  #topbar { flex-wrap: wrap; gap: 6px; padding: 6px 8px; }
+  #topbar .selectors { flex: 1 1 100%; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  /* android-adapter.js verschiebt die Funktionsknopfe nach .topbar-right, damit hier
+     nur die beiden Auswahlfelder stehen. FRUEHER starr je 50 %: am Gerat gemessen brauchte
+     der Modellname aber 194 px (Feld war 133 px breit, Name abgeschnitten). Ein <select>
+     kann seinen Text nicht umbrechen - die Breite laesst sich also nicht durch Umbruch
+     retten. android-adapter.js misst den Bedarf beider Felder und setzt die Breiten; reicht
+     der Platz in einer Zeile nicht, erhaelt das Modellauswahlfeld eine eigene Zeile
+     (dafuer ist flex-wrap noetig). */
+  #topbar .selectors { flex-wrap: wrap; }
+  /* Verbindungsname und Modellname sollen in EINER Reihe stehen. Auf 384 CSS-px war dafür
+     bisher kein Platz (Modellname brauchte ~194 px bei 14 pt Schrift), deshalb rutschte das
+     Modelfeld in eine zweite Zeile. Kleinere Schrift und flachere Felder machen die Reihe
+     moeglich; android-adapter.js misst den Bedarf neu. */
+  #topbar .selectors select { min-width: 0; height: 36px; font-size: 12.5px; padding: 0 22px 0 8px; }
+  #topbar .selectors .icon-btn { width: 34px; height: 34px; flex: none; }
+
+  /* Der ausgeblendete Knopf "Modelle neu laden" (#btn-refresh) steht weiter unten als eigene,
+     bewusste Regel – NICHT hier in dieser Media-Query. Grund: innerhalb von
+     @media (max-width: 820px) gilt eine Regel nur bei schmalem Viewport, die automatischen
+     Tests laufen aber mit 1024 px und haetten sie nie gesehen. Genau das war der gemessene
+     Fehlschlag in test-log-v114 ("auf Android ausgeblendet" -> display:flex). */
+
+  /* eine Zeile mit allen Knöpfen inkl. Kontextanzeige */
+  #topbar .topbar-right { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 3px; min-width: 0; }
+  #topbar .topbar-right > * { flex: none; }
+  .ctx-meter { margin-right: auto; }
+
+  /* Unteragenten / Server / Monitor: nur Icon, sonst ragen sie über den Rand */
+  #topbar .chip-btn span { display: none; }
+  #topbar .chip-btn { padding: 0; width: 40px; height: 36px; min-height: 36px; justify-content: center; gap: 0; border-radius: 10px; }
+
+  /* ── Composer: reine Icon-Knöpfe, alles in einer Zeile ohne Umbruch ── */
+  #composer-wrap { padding: 6px 8px 10px; }
+  #input { max-height: 34vh; }
+  .composer-bar { flex-wrap: nowrap; gap: 6px; }
+  .composer-bar .left { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 auto; }
+  .composer-bar .right { display: flex; align-items: center; gap: 4px; flex: none; }
+
+  /* Denken / Dateizugriff / Freigabe: nur Icon, Status über Farbe */
+  #btn-think span, #btn-tools span, #btn-perm span { display: none; }
+  .composer-bar .chip-btn {
+    padding: 0; width: 42px; height: 38px; min-height: 38px;
+    justify-content: center; border-radius: 10px; gap: 0;
+  }
+  /* Farbe als Zustand (app.js setzt .on/.warn) – auf dem Icon-Knopf deutlich sichtbar */
+  .composer-bar .chip-btn.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-line, var(--accent)); }
+  .composer-bar .chip-btn.warn { background: rgba(224, 164, 58, .16); color: #e0a43a; box-shadow: inset 0 0 0 1px rgba(224, 164, 58, .5); }
+
+  /* Token-Schätzung einzeilig, bricht nicht um */
+  .token-estimate { white-space: nowrap; margin-right: 2px; font-size: 11.5px; }
+
+  /* Status-/Kontextzeile und Kontextbalken stehen weiter unten als eigene, bewusste Regeln –
+     nicht hier in der Media-Query. Grund: eine Regel innerhalb von @media (max-width: 820px)
+     gilt nur bei schmalem Viewport; die automatischen Tests laufen mit 1024 px und haetten sie
+     nie gesehen, obwohl sie auf dem Handy laengst gewirkt haette. */
+
+  /* Antworten breiter, Ränder enger */
+  #messages-inner { padding-left: 10px; padding-right: 10px; }
+  :root { --msg-width: 100%; }
+}
+
+/* ═══════════ "Modelle neu laden" auf dem Handy ausgeblendet (Nutzerwunsch 14.11.) ═══════════
+   Wunsch im Wortlaut: "Bitte den Aktualisierungsbutton auf der Startseite unter dem Burgermenü
+   links oben entfernen, damit es ein einheitliches sauberes Bild ergibt."
+
+   Der Knopf sitzt in .selectors direkt hinter der Modellauswahl. Weil #topbar und .selectors
+   flex-wrap tragen (Zeile 43/52), bricht er bei schmalem Bildschirm um und landet links in der
+   zweiten Zeile – genau unter dem Hamburger. Das wirkt wie ein stehen gebliebenes Restelement.
+
+   Bewusst per CSS und NICHT durch Entfernen aus dem DOM: app.js greift direkt auf das Element zu
+   (app.js:219 innerHTML fuer das Icon, app.js:2359 addEventListener). Fehlte der Knoten, waere
+   die App beim Start mit einem TypeError stehen geblieben. display:none laesst ihn unangetastet.
+
+   Funktionell fehlt nichts: refreshModels() laeuft beim App-Start (app.js:133 und 174), bei jedem
+   Verbindungswechsel (app.js:503, app.js:2374) und beim Schliessen der Einstellungen
+   (settings.js:943). android-adapter.js rechnet den Knopf nicht mehr in die Breitenberechnung der
+   Auswahlfelder ein (fitSelectors), damit fuer etwas unsichtbares kein Platz verplant wird.
+
+   ABSICHTICH ausserhalb von @media (max-width: 820px) und ohne Klassenpraefix "html.android".
+   Beide Varianten waren gemessene Fehler, keine Stilfrage: zuerst stand die Regel mit
+   html.android-Präfix innerhalb der Media-Query, und die WebView-Attrappe mass danach
+   display:flex (test-log-v114, Pruefung "auf Android ausgeblendet"). Die Datei wird
+   ausschliesslich in die ANDROID-index.html eingebunden (build-android.ps1:100 und :102);
+   die Windows-Fassung hat einen eigenen index.html ohne diesen Link. Diese Regel wirkt also von
+   allein nur auf Android – ohne Klasse, ohne Warten auf den Adapter und ohne kurzes Aufblitzen
+   des Knopfes beim Start. */
+#topbar .selectors #btn-refresh { display: none !important; }
+
+/* ═══════════ Workspace-Panel als Overlay (Handy und kleiner Tablet) ═══════════ */
+/* Sichtbarkeit steuert allein die Klasse .collapsed, die app.js selbst setzt.
+   Deshalb hier nichts ausblenden – nur Position/Größe für das Overlay festlegen. */
+@media (max-width: 1100px) {
+  #filepanel:not(.collapsed) {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: min(340px, 92vw);
+    z-index: 80;
+    border-left: 1px solid var(--line);
+    box-shadow: -6px 0 30px rgba(0, 0, 0, .5);
+  }
+
+  /* Die obere Leiste liegt über dem Backdrop: der Panel-Knopf bleibt jederzeit
+     bedienbar (erneut tippen schließt), und nichts Wesentliches wird verdeckt. */
+  #topbar { position: relative; z-index: 85; }
+
+  #panel-backdrop {
+    position: fixed; inset: 0; z-index: 79;
+    background: rgba(0, 0, 0, .45);
+    opacity: 0; pointer-events: none; transition: opacity .18s ease;
+  }
+  body.panel-open #panel-backdrop { opacity: 1; pointer-events: auto; }
+
+  body.panel-open .fp-dock { max-height: 46vh; overflow: auto; }
+}
+
+/* Querformat ab 821 px: Seitenleiste wieder stehend sichtbar */
+@media (min-width: 821px) and (max-width: 1100px) {
+  #sidebar { display: flex !important; transform: none !important; box-shadow: none; }
+}
+
+/* ═══════════ Einstellungen für schmale Displays brauchbar machen ═══════════ */
+@media (max-width: 820px) {
+  .modal-back { padding: 0; align-items: stretch; justify-content: stretch; }
+  .modal, .modal.wide { width: 100%; max-width: 100%; height: 100%; border-radius: 0; border-left: 0; border-right: 0; }
+
+  /* Tabs von einer Seitenspalte zu einer waagerechten, scrollbaren Leiste */
+  .settings { flex-direction: column; }
+  .settings nav {
+    width: auto; flex: none; flex-direction: row; gap: 4px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    border-right: 0; border-bottom: 1px solid var(--line);
+    padding: 8px; border-radius: 0;
+  }
+  .settings nav button { white-space: nowrap; font-size: 12.5px; padding: 7px 9px; min-height: 34px; gap: 6px; }
+  .settings nav button svg { flex: none; }
+  .settings .pane { flex: 1; overflow: auto; padding: 6px 14px 28px; }
+
+  /* Formularzeilen einspaltig stapeln statt zwei schmale Spalten */
+  .frow, .frow.stack { grid-template-columns: 1fr; gap: 8px; padding: 13px 0; align-items: stretch; }
+  .conn-layout { grid-template-columns: 1fr; gap: 12px; }
+  .preset-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* Bedienelemente touch-tauglich vergrößern */
+  .switch { width: 48px; height: 28px; }
+  .switch span::after { width: 22px; height: 22px; left: 3px; top: 2px; }
+  .switch input:checked + span::after { transform: translateX(20px); }
+
+  .fctrl > input[type="number"] { width: 96px; min-height: 42px; font-size: 15px; }
+  .fctrl > select, .modal select { min-height: 42px; font-size: 15px; }
+  .modal input[type="text"], .modal input[type="password"], .modal textarea { min-height: 42px; font-size: 16px; }
+  .fctrl > input[type="range"] { flex: 1 1 120px; min-width: 110px; height: 30px; }
+
+  /* Buttons: fruehere pauschale 40 px haben ganze Knopfgruppen aufgeblaht und
+     den eigentlichen Inhalt verdraengt. Nur so gross wie zum Tippen noetig. */
+  .btn { min-height: 38px; }
+  .btn.sm { min-height: 34px; padding: 6px 10px; font-size: 12.5px; }
+
+  /* ── Server & Monitor: Kacheln und Kopfzeile an schmale Breite anpassen ── */
+  /* Die Desktop-Kacheln sind fuer breite Fenster gedacht (min. 190/170 px) und
+     verdrngen auf dem Handy alles andere. Engere Spalten, kompaktere Werte. */
+  .sv-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .sv-kv { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .sv-tile { padding: 7px 9px; }
+  .sv-tile .l { font-size: 11.5px; }
+  .sv-tile .v { font-size: 15px; }
+  .sv-kv > div { padding: 6px 9px; }
+  .sv-kv b { font-size: 14px; }
+
+  /* Kopfzeile mit "Modell laden"/"Entladen": umbrechen lassen, Knöpfe kompakt */
+  .sv-head { gap: 8px; }
+  .sv-head .btn.sm { min-height: 36px; padding: 6px 10px; font-size: 12.5px; }
+
+  /* Tabellen bleiben seitlich scrollbar, damit nichts ueber den Rand laeuft */
+  .sv-scroll { max-width: 100%; -webkit-overflow-scrolling: touch; }
+  .sv-console { max-height: 34vh; }
+
+  /* FRUEHERE FEHLERQUELLE: hier stand eine zweite ".settings nav button"-Regel,
+     die die kompakte Regel weiter oben wieder aufgehoben hat (spaetere Regel gewinnt).
+     Die Tab-Leiste wird deshalb nur an einer Stelle definiert - siehe oben. */
+}
+
+/* ═══════════ Statuszeile unter dem Eingabefeld: nichts abschneiden ═══════════
+   Der Nutzer sah Tokens, Kosten und Dauer nicht vollständig. Grund war die
+   Desktop-Regel `#statusbar span { white-space:nowrap; overflow:hidden;
+   text-overflow:ellipsis }` (styles.css:305) – #st-right ist ein SPAN und wurde damit
+   einzeilig gekürzt. Die Anzeige „Chat: … Tokens (…) · Ø … Tokens/s · Dauer: … · Kosten …“
+   ist auf dem Handy laenger als eine Zeile. Jetzt darf sie umbrechen.
+   html.android vorangestellt, weil die Desktop-Regel zwei IDs braucht, um ihre
+   Spezifitaet (1 ID + 1 Element) sicher zu uebersteuern – und damit die Regel auch bei
+   breitem Viewport gilt (die automatischen Tests laufen mit 1024 px). */
+html.android #statusbar { flex-wrap: wrap; gap: 6px 12px; align-items: baseline; padding: 0 10px 8px; font-size: 11.5px; }
+/* 40 % statt 34 %: am Gerat gemessen brauchte der Modellname 127 px, bei 34 % waren nur
+   124 px Platz – drei Pixel fehlten und der Name war abgeschnitten. */
+html.android #statusbar #st-left { flex: none; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.android #statusbar #st-right {
+  flex: 1 1 auto; min-width: 0;
+  white-space: normal; overflow: visible; text-overflow: clip;
+  text-align: right; line-height: 1.5; word-break: break-word;
+}
+
+/* ═══════════ Statuszeile: drei gleichmaessige Zeilen ═══════════
+   Der Nutzer wollte unter dem Eingabefeld nicht den Modellnamen (steht oben in der
+   Auswahl), sondern Chat, Dauer und Kosten vollstaendig und ruhig untereinander.
+   build-android.ps1 verpackt die drei Angaben dafuer in <span class="st-line">.
+   display:block macht daraus echte Zeilen, padding verteilt sie gleichmaessig;
+   die dritte Zeile (Kosten) fehlt automatisch, wenn Kosten ausgeschaltet sind. */
+html.android #statusbar #st-right .st-line {
+  display: block;
+  padding: 1px 0;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+/* Links steht auf Android nichts Sinnvolles mehr (kein Modellname) - die freie Breite
+   bekommt die Statistik, damit lange Zahlenwerte nie umbrechen muessen. */
+html.android #statusbar #st-left { max-width: 34%; }
+html.android #statusbar #st-right { flex: 1 1 auto; text-align: left; }
+
+/* ═══════════ Kontext-Füllstand in einer eigenen Zeile ═══════════
+   Desktop haelt den Fuellstand-Balken rechts neben den Funktionsknoepfen der Kopfzeile.
+   Auf dem Handy ist diese Knopfreihe bereits voll (sechs Elemente auf 384 CSS-px) und der
+   Balken war dort gequetscht kaum ablesbar. android-adapter.js verschiebt das Element aus
+   .topbar-right direkt in #topbar; flex-basis:100% macht daraus eine eigene Zeile. */
+html.android #topbar > .ctx-meter {
+  flex: 1 1 100%; margin-right: 0; justify-content: space-between;
+  padding: 3px 2px 5px; border-top: 1px solid var(--line); font-size: 12.5px;
+}
+html.android #topbar > .ctx-meter .bar { width: auto; flex: 1 1 auto; margin-right: 10px; height: 6px; }
+
+/* ═══════════ Chatliste: Umbenennen und Löschen dauerhaft sichtbar ═══════════
+   Die Desktop-Oberflaeche blendet die Knopfe einer Chatzeile nur bei Maus-Hover ein
+   (styles.css: .chat-item .acts { display:none } / .chat-item:hover .acts { display:flex }).
+   Ein Handy hat kein Hover – die Knopfe waren damit praktisch unauffindbar und erschienen
+   erst, wenn man lange auf den Chat tippte. Auf Android sind sie deshalb immer sichtbar,
+   mit einer Groesse, die sicher zu treffen ist.
+   ACHTUNG (war schon einmal Fehlerquelle): diese Regeln nur hier definieren, keine zweite
+   .acts-Regel an anderer Stelle – die spaetere Regel wuerde sonst wieder gewinnen. */
+html.android .chat-item .acts { display: flex; gap: 2px; align-items: center; }
+
+/* Abstaende: der Titel darf die Knopfe nie verdecken und muss selbst kiirzbar bleiben.
+   Der verticale Innenabstand ist kleiner als im Desktop (7 px), weil die groesseren
+   Knopfe jede Zeile sonst auf ~50 px aufblaehen wuerden – es passen zu wenig Chats hinein. */
+html.android .chat-item { padding: 4px 6px; }
+html.android .chat-item .t { min-width: 0; }
+
+/* Die Symbole sind mit 14 px gezeichnet – zu klein, um sie als Stift/ Papierkorb zu
+   erkennen und sicher zu treffen. */
+html.android .chat-item .acts .mini-btn {
+  min-width: 36px; min-height: 36px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 9px; color: var(--text-dim);
+}
+html.android .chat-item .acts .mini-btn svg { width: 18px; height: 18px; }
+
+/* Rueckmeldung beim Druecken, damit man sieht, welchen Knopf man erwischt hat */
+html.android .chat-item .acts .mini-btn:active { background: var(--bg-hover); color: var(--text); }
+html.android .chat-item .acts .mini-btn:last-child:active { color: #d24b4b; }
+
+/* Der Punkt vor dem Chat (KI arbeitet / neue Antwort) braucht Platz neben den Knopfen */
+html.android .chat-item .chat-dot { flex: none; }
+
+/* Soft-Tastatur: Shortcuts sind auf dem Handy nicht vorhanden */
+html.softkeys kbd { display: none; }
