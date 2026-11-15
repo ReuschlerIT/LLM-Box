@@ -3,7 +3,8 @@
 Dieser Ordner enthält den Quelltext der **Desktop-Fassung**. Die vollständige
 Projektbeschreibung, alle Funktionen und die Anleitung stehen eine Ebene höher in
 [`../README.md`](../README.md), die ausführliche Dokumentation in
-[`docs/HANDBUCH.md`](docs/HANDBUCH.md).
+[`docs/HANDBUCH.md`](docs/HANDBUCH.md), die Änderungen jeder einzelnen Version seit 1.0.36
+in [`UPDATE.md`](UPDATE.md).
 
 ## Starten
 

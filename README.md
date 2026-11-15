@@ -5,7 +5,7 @@
 Von [Reuschler-IT](https://github.com/ReuschlerIT) · Windows und Android · Electron · Deutsch · MIT-Lizenz
 
 <p align="center">
-  <img src="docs/screenshots/01-chat.png" alt="LLM Box: Chat mit Gedankengang, Werkzeug-Karten, Code und Statistik unter jeder Antwort" width="100%">
+  <img src="llm-box/docs/screenshots/01-chat.png" alt="LLM Box: Chat mit Gedankengang, Werkzeug-Karten, Code und Statistik unter jeder Antwort" width="100%">
 </p>
 <p align="center"><sub>Chat mit Gedankengang, Werkzeugen der KI, Code und Statistik im hellen Standard-Design. Alle Screenshots zeigen Demo-Daten.</sub></p>
 
@@ -58,13 +58,13 @@ Sie ist gedacht für Menschen, die Modelle wie Llama, Qwen, Mistral oder gpt-oss
 - **Unteragenten:** Teilaufgaben werden an Hilfs-Agenten mit eigenem, frischem Kontext verteilt, die gleichzeitig arbeiten. Gedanken, Antwort und Werkzeug-Schritte siehst du live, auch im Fenster „Unteragenten“:
 
 <p align="center">
-  <img src="docs/screenshots/04-unteragenten.png" alt="Zwei Unteragenten arbeiten gleichzeitig, der Live-Verlauf zeigt Gedanken und Werkzeug-Schritte" width="100%">
+  <img src="llm-box/docs/screenshots/04-unteragenten.png" alt="Zwei Unteragenten arbeiten gleichzeitig, der Live-Verlauf zeigt Gedanken und Werkzeug-Schritte" width="100%">
 </p>
 
 - **Rückfragen mit Antwortvorschlägen:** Fehlen der KI Angaben, stellt sie dir Fragen mit Antworten zum Anklicken (Einzel- oder Mehrfachauswahl, eigene Antwort oder Überspringen möglich):
 
 <p align="center">
-  <img src="docs/screenshots/07-rueckfrage.png" alt="Rückfrage der KI mit Antwortvorschlägen zum Anklicken" width="100%">
+  <img src="llm-box/docs/screenshots/07-rueckfrage.png" alt="Rückfrage der KI mit Antwortvorschlägen zum Anklicken" width="100%">
 </p>
 
 - **Freigaben pro Chat**, live umstellbar: alles bestätigen, nur Schreiben und Befehle bestätigen, nichts bestätigen
@@ -76,13 +76,13 @@ Sie ist gedacht für Menschen, die Modelle wie Llama, Qwen, Mistral oder gpt-oss
 Jedes Werkzeug erscheint sofort als Live-Karte mit Befehl, Ausgabe und Status. Hier wartet die KI seit 14 Sekunden auf die Ausgabe von PowerShell, der nächste Befehl steht in der Warteschlange:
 
 <p align="center">
-  <img src="docs/screenshots/02-live-powershell.png" alt="Live-Karte für einen PowerShell-Befehl: läuft seit 47 s, wartet auf Ausgabe, mit Stopp-Knopf" width="100%">
+  <img src="llm-box/docs/screenshots/02-live-powershell.png" alt="Live-Karte für einen PowerShell-Befehl: läuft seit 47 s, wartet auf Ausgabe, mit Stopp-Knopf" width="100%">
 </p>
 
 Befehle, die Rechner oder Dateien verändern, bestätigst du vorher. Pro Programm lässt sich eine Dauer-Freigabe erteilen:
 
 <p align="center">
-  <img src="docs/screenshots/03-freigabe.png" alt="Freigabe-Karte für einen winget-Befehl mit Genehmigen, Immer erlauben und Ablehnen" width="100%">
+  <img src="llm-box/docs/screenshots/03-freigabe.png" alt="Freigabe-Karte für einen winget-Befehl mit Genehmigen, Immer erlauben und Ablehnen" width="100%">
 </p>
 
 - **Live-Karten** für jedes Werkzeug mit Befehl, Live-Ausgabe und Status ("wartet auf deine Freigabe", "läuft seit 12 s", "wartet auf Ausgabe")
@@ -95,12 +95,14 @@ Befehle, die Rechner oder Dateien verändern, bestätigst du vorher. Pro Program
 - Zielrechner lokal oder per SSH
 
 <p align="center">
-  <img src="docs/screenshots/05-monitor.png" alt="Server und Monitor: Geschwindigkeit, GPU-Auslastung, VRAM, Temperatur, parallele Plätze und letzte Anfragen" width="640">
+  <img src="llm-box/docs/screenshots/05-monitor.png" alt="Server und Monitor: Geschwindigkeit, GPU-Auslastung, VRAM, Temperatur, parallele Plätze und letzte Anfragen" width="640">
 </p>
 
 ### Übertragung zwischen PC und Handy
 
-- **Ein QR-Code statt sechs:** Die Windows-App bietet ihre Daten im WLAN an, das Handy holt sie ab – über „Im WLAN suchen" (das Handy findet den Rechner von selbst) oder durch Scannen des einen Codes. Format: `docs/TRANSFER-FORMAT.md`.
+- **Ein QR-Code statt sechs:** Die Windows-App bietet ihre Daten im WLAN an, das Handy holt sie ab – über „Im WLAN suchen" (das Handy findet den Rechner von selbst) oder durch Scannen des einen Codes. Format: `llm-box/docs/TRANSFER-FORMAT.md`.
+- **Was übertragen wird:** alle Einstellungen und Verbindungen **inklusive API-Schlüssel**, dazu Modell, Parameter, Darstellung und – wenn ausgewählt – Chats und Textdateien des Workspace. Gerätebezogenes (Fensterposition, Rechner-Kennung) bleibt dagegen auf jedem Gerät.
+- **Ohne Netz funktioniert dasselbe als Datei:** QR-Code oder WLAN sind der bequeme Weg; notfalls geht derselbe Inhalt als JSON-Datei, die man auf das andere Gerät kopiert.
 - **QR-Code scannen mit der Handy-Kamera:** Die Android-App liest den Code selbst, ohne zusätzliche QR-App. Erkannt wird die Adresse des Angebots ebenso wie eine mehrteilige Bildfolge; fremde Codes werden nur angezeigt, nicht übernommen.
 - **Netzwerkordner wandert mit:** Rechner, Freigabe, Unterordner und – falls hinterlegt – die Zugangsdaten einer Windows-Freigabe werden bei der Übertragung mitgegeben. Ein als Laufwerksbuchstabe gemapptes Netzlaufwerk wird dabei automatisch in die echte Freigabe übersetzt.
 - **JSON in beide Richtungen:** Derselbe Inhalt als Datei – auch zurück zum PC oder auf ein zweites Handy.
@@ -120,12 +122,13 @@ Die Oberfläche läuft auch auf Android (ab Version 8.0) – als eigene App mit 
 - Schriften, Chatbreite, Hintergrundbild, Acrylic/Mica unter Windows 11
 
 <p align="center">
-  <img src="docs/screenshots/06-dunkel.png" alt="LLM Box im dunklen Design" width="100%">
+  <img src="llm-box/docs/screenshots/06-dunkel.png" alt="LLM Box im dunklen Design" width="100%">
 </p>
 
 ## Neu seit Version 1.0.50
 
-Die wichtigsten Änderungen seit 1.0.50 – gruppiert, damit du siehst, was sich für dich ändert:
+Die wichtigsten Änderungen seit 1.0.50 – gruppiert, damit du siehst, was sich für dich ändert.
+Der vollständige Verlauf **einzelner Versionen ab 1.0.36** steht in [`llm-box/UPDATE.md`](llm-box/UPDATE.md):
 
 ### Chatten und Oberfläche
 - **Antwort anhalten und fortsetzen** – die KI macht auf „Fortsetzen" genau dort weiter (ab 1.0.50)
@@ -142,7 +145,7 @@ Die wichtigsten Änderungen seit 1.0.50 – gruppiert, damit du siehst, was sich
 
 ### Dateien, Workspace und Netzwerkordner
 - **Windows-Freigabe als Arbeitsordner:** ein Netzlaufwerk direkt nutzen, nichts wird kopiert; mit Verbindungstest und Übernahme der Zugangsdaten (ab 1.0.61 am PC, auf dem Handy schon früher)
-- **Gemapptes Netzlaufwerk wird erkannt:** ein als Laufwerksbuchstabe eingebundenes Netzlaufwerk wird bei der Übertragung automatisch in die dahinterliegende Freigabe übersetzt – vorher ging auf diesem Weg kein Netzwerkordner mit (ab 1.0.63/1.0.64)
+- **Gemapptes Netzlaufwerk wird erkannt:** ein als Laufwerksbuchstabe eingebundenes Netzlaufwerk wird bei der Übertragung automatisch in die dahinterliegende Freigabe übersetzt – vorher ging auf diesem Weg kein Netzwerkordner mit (am PC ab 1.0.63, auf dem Handy ab 1.0.63-/1.0.64-android)
 - Große Dateien über 20 MB werden mit klarer Meldung abgelehnt statt die App abstürzen zu lassen; fehlgeschlagene Speichervorgänge hinterlassen keine Restdateien (bis 1.0.54)
 
 ### Übertragung zwischen PC und Handy
@@ -165,7 +168,7 @@ Die wichtigsten Änderungen seit 1.0.50 – gruppiert, damit du siehst, was sich
 ### Oberfläche und Bedienung auf dem Handy
 - Obere Leiste passt wieder in eine Reihe; Modellname wird nicht mehr abgeschnitten (bis 1.0.54)
 - Chat-Aktionen (Umbenennen, Löschen) sind dauerhaft sichtbar und gut treffbar – kein Maus-Hover nötig (bis 1.0.54)
-- Kein weißer Block mehr beim Start der Handy-App (ab 1.0.57)
+- Kein weißer Block mehr beim Start der Handy-App – behoben schon vor der ersten Handy-Version mit richtiger Nummer (die App trug lange eine veraltete Versionsnummer, erst ab 1.0.59-android stimmen Nummern und Inhalt überein)
 - Einheitliche Kopfzeile ohne den Knopf „Modelle neu laden" – Modelle werden beim Start, bei Verbindungswechsel und beim Schließen der Einstellungen ohnehin neu geladen (ab 1.0.65-android)
 
 ### Fehlerbehebungen (Auswahl)
@@ -205,7 +208,7 @@ npm start
 | Ollama | Ollama | `http://localhost:11434` |
 | OpenAI-kompatibel | LM Studio, llama.cpp, vLLM, OpenAI, OpenRouter, Groq | z. B. `http://localhost:1234/v1` |
 
-Die ausführliche Anleitung zu allen Funktionen steht im [Handbuch](docs/HANDBUCH.md).
+Die ausführliche Anleitung zu allen Funktionen steht im [Handbuch](llm-box/docs/HANDBUCH.md).
 
 ## Sicherheit
 
@@ -225,18 +228,25 @@ Die ausführliche Anleitung zu allen Funktionen steht im [Handbuch](docs/HANDBUC
 ## Projektstruktur
 
 ```
-main.js            Hauptprozess: Netzwerk, Dateien, Programme, Fenster
-preload.js         Sichere Brücke zwischen Hauptprozess und Oberfläche
-renderer/          Oberfläche (HTML, CSS, JavaScript ohne Framework)
-  js/app.js        Chat, Senden, Agenten-Schleife
-  js/livetools.js  Live-Karten und Mitscrollen
-  js/subagents.js  Unteragenten
-  js/server.js     Server und Monitor
-  js/llm.js        Anbindung an Ollama und OpenAI-kompatible APIs
-  js/transfer.js   Übertragung auf Android: QR-Bildfolge und JSON-Export
-  vendor/qrcode.js QR-Code-Erzeugung (qrcode-generator 1.4.4, MIT)
-docs/HANDBUCH.md   Ausführliche Dokumentation
-docs/TRANSFER-FORMAT.md  Format der Übertragung (für die Android-Seite)
+README.md                diese Beschreibung
+llm-box/                 Windows-App (Electron)
+  main.js                  Hauptprozess: Netzwerk, Dateien, Programme, Fenster
+  preload.js               Sichere Brücke zwischen Hauptprozess und Oberfläche
+  renderer/                Oberfläche (HTML, CSS, JavaScript ohne Framework)
+    js/app.js              Chat, Senden, Agenten-Schleife
+    js/livetools.js        Live-Karten und Mitscrollen
+    js/subagents.js        Unteragenten
+    js/server.js           Server und Monitor
+    js/llm.js              Anbindung an Ollama und OpenAI-kompatible APIs
+    js/transfer.js         Übertragung zwischen PC und Handy
+    vendor/qrcode.js       QR-Code-Erzeugung (qrcode-generator 1.4.4, MIT)
+  docs/HANDBUCH.md         Ausführliche Dokumentation
+  docs/TRANSFER-FORMAT.md  Format der Übertragung (für die Android-Seite)
+  UPDATE.md                Änderungen pro Version (ab 1.0.36)
+android/                 Android-App (Java, WebView) – gebaut mit build-android.ps1
+tools-android/           Portierungshelfer und Prüfläufe
+webdeps/                 Web-Bausteine für die Android-Oberfläche
+download/                fertige Programmdateien (Setup, portable EXE, APK)
 ```
 
 ## Lizenz
