@@ -67,11 +67,36 @@ const localChatsDir = () => path.join(dataDir(), 'chats');
 const chatsDir = () => { const c = loadSyncCfg(); return c.dir ? path.join(c.dir, 'LLM-Box-Chats') : localChatsDir(); };
 const deviceName = () => os.hostname() || 'Gerät';
 
-async function writeJsonAtomic(file, data) {
+// Schreibvorgänge pro Datei strikt nacheinander (sonst überschreiben/entfernen sich parallele Saves gegenseitig die .tmp-Datei)
+const writeQueues = new Map();
+function writeJsonAtomic(file, data) {
+  const prev = writeQueues.get(file) || Promise.resolve();
+  const run = prev.catch(() => {}).then(() => writeJsonAtomicNow(file, data));
+  const tail = run.catch(() => {});
+  writeQueues.set(file, tail);
+  tail.then(() => { if (writeQueues.get(file) === tail) writeQueues.delete(file); });
+  return run;
+}
+async function writeJsonAtomicNow(file, data) {
   await fsp.mkdir(path.dirname(file), { recursive: true });
-  const tmp = file + '.tmp';
-  await fsp.writeFile(tmp, JSON.stringify(data), 'utf8');
-  await fsp.rename(tmp, file);
+  const json = JSON.stringify(data);
+  const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
+  let lastErr;
+  for (let i = 0; i < 5; i++) {
+    try {
+      await fsp.writeFile(tmp, json, 'utf8');
+      await fsp.rename(tmp, file);
+      return;
+    } catch (e) {
+      lastErr = e;
+      // Netzlaufwerk/Virenscanner/Sync-Client kann die Datei kurz sperren oder entfernen -> kurz warten und neu versuchen
+      await new Promise(r => setTimeout(r, 80 * (i + 1)));
+    }
+  }
+  // Letzter Ausweg: direkt in die Zieldatei schreiben
+  try { await fsp.rm(tmp, { force: true }); } catch {}
+  try { await fsp.writeFile(file, json, 'utf8'); return; } catch {}
+  throw lastErr;
 }
 async function readJson(file, fallback) {
   try {
@@ -116,20 +141,51 @@ async function ensureMetas(dir) {
   }
   metaChecked = dir;
 }
-// Liest alle Meta-Dateien. null = Ordner gerade nicht lesbar (Netzlaufwerk getrennt): dann NICHTS als gelöscht behandeln
+/* Liest alle Meta-Dateien. Rueckgabe: { metas, blockiert } oder null, wenn der Ordner selbst
+   nicht lesbar ist (Netzlaufwerk getrennt) - dann darf NICHTS als gelöscht gelten.
+
+   Der Zusatz "blockiert" ist wichtig: auf einer Netzfreigabe kann eine Meta-Datei in dem
+   Moment gesperrt sein, in dem wir sie lesen (EPERM/EBUSY - gemessen 14.11.: 6 von 15 Dateien
+   waehrend des laufenden Betriebs gesperrt). Frueher fiel so ein Chat einfach aus der Liste:
+   der Abgleich hielt ihn fuer GELoSCHT, in der naechsten Runde galt er wieder als GEANDERT,
+   und die Oberflaeche baute bei jedem dieser Blinker Chatliste und Nachrichtenliste neu auf -
+   mitten in der Tastatureingabe. Das ist die Hauptursache fuer das gemeldete Zogern. */
+const META_SUFFIX = '.meta.json';
+/* Zuletzt erfolgreich gelesene Meta-Dateien. Ist eine Datei in diesem Moment gesperrt, wird der
+   bekannte Stand weiterverwendet: der Chat bleibt in der Liste und sein Abgleich vergleicht mit
+   dem richtigen Stand, statt ihn als geloescht/geaendert zu melden. */
+const metaCache = new Map();   // "Ordner|Chat-ID" -> Meta. Nach Ordnerwechsel (lokal <-> Freigabe)
+                               // duerfen keine Staende aus dem anderen Ordner verwendet werden.
 async function listMetas(dir) {
   let files;
-  try { files = await fsp.readdir(dir); } catch (e) { return e.code === 'ENOENT' && dir === localChatsDir() ? [] : null; }
-  const out = await Promise.all(files.filter((f) => f.endsWith('.meta.json')).map((f) => readJson(path.join(dir, f), null)));
-  return out.filter((m) => m && m.id);
+  try { files = await fsp.readdir(dir); } catch (e) { return e.code === 'ENOENT' && dir === localChatsDir() ? { metas: [], blockiert: [] } : null; }
+  const names = files.filter((f) => f.endsWith(META_SUFFIX));
+  const read = await Promise.all(names.map(async (f) => {
+    try { return JSON.parse(await fsp.readFile(path.join(dir, f), 'utf8')); }
+    catch (e) { return { __fehler: e.code || '' }; }
+  }));
+  const metas = [];
+  const blockiert = [];
+  names.forEach((f, i) => {
+    const m = read[i];
+    const key = dir + '|' + f.slice(0, -META_SUFFIX.length);
+    if (m && m.id) { metaCache.set(key, m); metas.push(m); return; }
+    // Verschwunden (ENOENT) ist echt weg; eine Sperre ist nur ein Moment und haelt den Chat offen.
+    const id = f.slice(0, -META_SUFFIX.length);
+    if (!m || m.__fehler === 'ENOENT') return;
+    const alt = metaCache.get(key);
+    if (alt) metas.push(alt); else blockiert.push(id);
+  });
+  return { metas, blockiert };
 }
 function resetSyncState() { known.clear(); seen.clear(); metaChecked = ''; baseline = false; }
 
 ipcMain.handle('chats:list', async () => {
   const dir = chatsDir();
   await ensureMetas(dir);
-  const metas = await listMetas(dir);
-  if (!metas) return [];
+  const fund = await listMetas(dir);
+  if (!fund) return [];
+  const metas = fund.metas;
   for (const m of metas) seen.set(m.id, m.rev || 0);
   baseline = true;
   return metas.sort((a, b) => (b.updated || 0) - (a.updated || 0));
@@ -178,8 +234,34 @@ ipcMain.handle('chats:deleteAll', async () => {
   return true;
 });
 
-// Gemeinsamer Ordner: Einstellung, Umzug der lokalen Chats und Änderungserkennung (alle 3 s, nur wenn aktiv)
-ipcMain.handle('sync:get', () => { const c = loadSyncCfg(); return { dir: c.dir || '', deviceId: c.deviceId, deviceName: deviceName(), localDir: localChatsDir(), folder: chatsDir() }; });
+/* ───── Abgleich-Rhythmus ─────
+   Frueher fest verdrahtet (Windows alle 3 s, Android alle 5 s). Jetzt wählbar – von
+   "Echtzeit" bis 30 Minuten – und liegt in sync.json, weil dort schon die übrige
+   Sync-Konfiguration steht (Geräte-ID, Ordner). Die Oberfläche kennt nur api.sync.get()
+   und api.sync.setEvery(), dadurch gilt dieselbe Einstellung in Windows- und Android-App. */
+const SYNC_MIN_MS = 1000;                 // unter 1 s bringt nichts und belastet die Freigabe nur
+const SYNC_MAX_MS = 30 * 60 * 1000;       // 30 Minuten, die langsamste Stufe
+const SYNC_DEFAULT_MS = 2000;             // "Echtzeit": beide Geräte reagieren praktisch sofort
+function syncEveryMs() {
+  const v = +loadSyncCfg().everyMs;
+  return (v >= SYNC_MIN_MS && v <= SYNC_MAX_MS) ? v : SYNC_DEFAULT_MS;
+}
+
+// Gemeinsamer Ordner: Einstellung, Umzug der lokalen Chats und Änderungserkennung
+ipcMain.handle('sync:get', () => { const c = loadSyncCfg(); return { dir: c.dir || '', deviceId: c.deviceId, deviceName: deviceName(), localDir: localChatsDir(), folder: chatsDir(), everyMs: syncEveryMs() }; });
+ipcMain.handle('sync:setEvery', (_e, ms) => {
+  const v = Math.round(+ms);
+  if (!(v >= SYNC_MIN_MS && v <= SYNC_MAX_MS)) return { ok: false, error: `Abstand zwischen ${SYNC_MIN_MS / 1000} Sekunden und ${SYNC_MAX_MS / 60000} Minuten erlaubt` };
+  const c = loadSyncCfg();
+  c.everyMs = v;
+  saveSyncCfg();
+  // Der Stand des anderen Rechners ist nach einer Tempo-Aenderung nicht neu bewertet worden:
+  // Zustand zuruecksetzen, damit der naechste Abgleich erneut vergleicht statt Luecken zu sehen.
+  resetSyncState();
+  schedulePoll(v);       // neue Geschwindigkeit wirkt sofort, nicht erst beim naechsten Tick
+  return { ok: true, everyMs: v };
+});
+
 ipcMain.handle('sync:setDir', async (_e, dir) => {
   const c = loadSyncCfg();
   if (dir) {
@@ -204,7 +286,7 @@ ipcMain.handle('sync:migrate', async () => {
   await ensureMetas(src);
   let n = 0;
   let skipped = 0;
-  const metas = (await listMetas(src)) || [];
+  const metas = ((await listMetas(src)) || {}).metas || [];
   for (const m of metas) {
     if (fs.existsSync(metaFileIn(dst, m.id))) { skipped++; continue; }
     try {
@@ -218,14 +300,15 @@ ipcMain.handle('sync:migrate', async () => {
   return { ok: true, copied: n, skipped };
 });
 let pollBusy = false;
-setInterval(async () => {
+async function pollChats() {
   const c = loadSyncCfg();
   if (!c.dir || !win || win.isDestroyed() || pollBusy) return;
   pollBusy = true;
   try {
     const dir = chatsDir();
-    const metas = await listMetas(dir);
-    if (!metas) return; // Ordner nicht lesbar (z. B. Netzlaufwerk getrennt): nichts ableiten
+    const fund = await listMetas(dir);
+    if (!fund) return; // Ordner nicht lesbar (z. B. Netzlaufwerk getrennt): nichts ableiten
+    const metas = fund.metas;
     if (!baseline) { metas.forEach((m) => seen.set(m.id, m.rev || 0)); baseline = true; return; }
     const changed = [];
     const ids = new Set();
@@ -234,12 +317,230 @@ setInterval(async () => {
       if (seen.get(m.id) !== (m.rev || 0) && m.dev !== c.deviceId) changed.push(m);
       seen.set(m.id, m.rev || 0);
     }
-    const removed = [...seen.keys()].filter((id) => !ids.has(id));
+    /* Gesperrte Meta-Dateien (EPERM/EBUSY auf der Freigabe) gelten NICHT als entfernt: ohne
+       diese Ausnahme verschwand derselbe Chat im Sekundentakt aus der Liste und tauchte wieder
+       auf - die Oberflaeche baute Chatliste und Nachrichtenliste neu auf, waehrend der Nutzer
+       tippte. Ein Chat gilt erst dann als geloescht, wenn seine Meta-Datei wirklich weg ist. */
+    const blockiert = new Set(fund.blockiert);
+    const removed = [...seen.keys()].filter((id) => !ids.has(id) && !blockiert.has(id));
     removed.forEach((id) => { seen.delete(id); known.delete(id); });
     if (changed.length || removed.length) win.webContents.send('chats:changed', { metas: changed, removed });
   } catch {} finally { pollBusy = false; }
-}, 3000);
+}
 
+/* Ein nachlaufender Timer statt setInterval: bei langen Abständen (bis 30 Minuten) darf ein
+   einziger Timer nicht weiterlaufen, nachdem der Nutzer das Tempo geändert hat – sonst galt
+   die neue Einstellung erst nach Stunden. Der nächste Lauf wird immer neu geplant. */
+let pollTimer = null;
+/* Die Generationen-Marke (pollGen) verhindert eine zweite Abgleich-Kette: aendert der Nutzer das
+   Tempo, waehrend ein Durchlauf gerade laeuft, darf genau dieser alte Durchlauf KEINEN weiteren
+   Timer mehr setzen. Ohne diese Marke plant der ueberholte Lauf zusätzlich neu ein und die
+   Abstaende stimmen nicht mehr (auf der Android-Seite am 14.11. im Test als Wechsel von ~0,5 s
+   und ~5 s bei eingestellter Sekunde sichtbar). Dasselbe Muster wie in native-main.js:619. */
+let pollGen = 0;
+function schedulePoll(delayMs) {
+  if (pollTimer) clearTimeout(pollTimer);
+  const wait = Math.max(SYNC_MIN_MS, Math.round(+delayMs || syncEveryMs()));
+  const gen = ++pollGen;
+  /* Ein Fehler im Abgleich darf die Kette nicht beenden: ohne catch waere der naechste Lauf nie
+     geplant worden und der Abgleich ware still stehen geblieben. */
+  pollTimer = setTimeout(() => {
+    Promise.resolve().then(pollChats).catch(() => {}).then(() => { if (gen === pollGen) schedulePoll(); });
+  }, wait);
+}
+
+/* Sofortiger Abgleich beim Zurückkehren ins Fenster: ohne diesen Anstoss wartete die
+   Oberflaeche bis zum naechsten Tick und wirkte veraltet. Bewusst KEIN resetSyncState() –
+   das wuerde den gerade gesehenen Stand vergessen und genau die Aenderung verschlucken,
+   die man sofort sehen will. */
+function syncNow() { return pollChats(); }
+schedulePoll();
+
+ipcMain.on('sync:now', () => { syncNow(); });
+
+
+/* ───── Windows-Freigabe (SMB) als Workspace ─────
+   Bislang kannte nur die Android-App Netzwerkfreigaben mit Benutzer/Passwort (dort
+   files/data/smb.json, MainActivity.java:1673/1690). Damit BEIDE Geraete dieselbe Freigabe
+   nutzen koennen und die Zugangsdaten bei "Im WLAN anbieten" mitwandern, gibt es sie jetzt
+   auch hier – in derselben Dateistruktur { "rechner": { user, domain, pass } }, damit beide
+   Apps austauschbare Uebertragungsdateien erzeugen.
+
+   Das Passwort liegt in %APPDATA%\LLM Box\smb.json (Nutzerprofil, nicht im Workspace) und wird
+   von smb:getCreds bewusst NIE zurueckgegeben – die Oberflaeche erfahrt nur, dass eines
+   hinterlegt ist (hasPass). Ein eigenes Export-Kommando (smb:credsForExport) holt es nur dann,
+   wenn der Nutzer ausdruecklich eine Uebertragung startet; diese enthaelt ohnehin API-Keys im
+   Klartext, vor denen die Oberflaeche warnt. */
+const smbFile = () => path.join(dataDir(), 'smb.json');
+function loadSmb() {
+  try { const c = JSON.parse(fs.readFileSync(smbFile(), 'utf8')); return (c && typeof c === 'object' && !Array.isArray(c)) ? c : {}; } catch { return {}; }
+}
+function saveSmb(obj) {
+  try { fs.writeFileSync(smbFile(), JSON.stringify(obj)); return true; } catch { return false; }
+}
+/* Rechnername aus einer Windows-Freigabe-Adresse. Zugelassen sind die ueblichen Schreibweisen:
+   \\rechner\freigabe\ordner , \\192.0.2.30\daten , //rechner/freigabe und die interne Form
+   der Android-App /smb/rechner/freigabe/ordner. Ein gemapptes Laufwerk (Y:\...) hat keinen
+   Rechner – dann gibt es auch keine Zugangsdaten zu uebertragen, was korrekt ist. */
+function smbHostOf(p) {
+  const roh = String(p || '').trim();
+  /* Ein Laufwerksbuchstabe ist kein Rechner (siehe smbPartsAufgeloest unten). */
+  if (/^[A-Za-z]:[\\/]/.test(roh)) return '';
+  const s = roh.replace(/\\/g, '/');
+  let m = /^\/+smb\/([^/]+)/i.exec(s); if (m) return m[1];
+  m = /^\/{2}([^/]+)/.exec(s);        if (m) return m[1];   // UNC: //rechner/freigabe
+  return '';
+}
+/* Rechner, Freigabe und Unterordner einer Freigabe-Adresse – fuer beide Schreibweisen. */
+function smbPartsOf(p) {
+  const roh = String(p || '').trim();
+  /* FEHLERBEHEBUNG (durch Test belegt): die Fallback-Regel unten hielt "Y:" fuer einen Rechner –
+     aus D:\MeinProjekt wurde host='Y:', share='MeinProjekt'. Ein Laufwerksbuchstabe ist aber
+     NIE ein Rechnername. Ohne diese Weiche haette smbPartsAufgeloest() nie nachgeschaut und der
+     Nutzerbericht "Laufwerk Y ist trotzdem eine SMB-Freigabe" waere weiter unbearbeitet geblieben. */
+  if (/^[A-Za-z]:[\\/]/.test(roh)) return null;
+  const s = roh.replace(/\\/g, '/').replace(/^\/+/, '');
+  let m = /^smb\/([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(s); if (!m) m = /^([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(s);
+  if (!m) return null;
+  const sub = (m[3] || '').replace(/\/+$/, '');
+  return { host: m[1], share: m[2], sub, unc: `\\\\${m[1]}\\${m[2]}` + (sub ? '\\' + sub.replace(/\//g, '\\') : '') };
+}
+
+/* ── Gemapptes Laufwerk aufloesen (der eigentliche Grund fuer "keine SMB-Uebergabe") ──
+   Nutzerbefund 14.11.: Der Workspace des PCs ist D:\MeinProjekt. smbHostOf/smbPartsOf kennen nur
+   die UNC-Schreibweise \\rechner\freigabe – ein Laufwerksbuchstabe liefert bisher '' bzw. null,
+   collectSmb() fand damit keinen Rechner und es wanderte NICHTS mit (in der Uebertragung stand
+   "smb (kein Netzwerkordner …)"). Tatsaechlich IST Y: eine SMB-Freigabe: net use zeigt
+   Y: -> \\192.0.2.10\daten. Also wird der Buchstabe jetzt beim Windows-Handler aufgeloeset.
+
+   Get-SmbMapping ist bewusst gewaehlt: Cmdlet- und Eigenschaftsnamen sind in jeder Windows-Sprache
+   englisch, die Ausgabe von "net use" waere es nicht (hier: "Remotename"). Der Notfallpfad laesst
+   deshalb nur den UNC-Anteil selbst aus der net-use-Ausgabe holen – dessen Form ist sprachunabhaengig. */
+const laufwerkCache = new Map();
+function uncOfLaufwerk(laufwerksbuchstabe) {
+  const lit = String(laufwerksbuchstabe || '').toUpperCase();
+  if (!/^[A-Z]$/.test(lit)) return Promise.resolve('');
+  if (laufwerkCache.has(lit)) return Promise.resolve(laufwerkCache.get(lit));
+  const execFile = require('child_process').execFile;
+  const ps = new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `(Get-SmbMapping -LocalPath '${lit}:').RemotePath`], { timeout: 8000, windowsHide: true },
+    (err, stdout) => resolve(!err && stdout ? String(stdout).trim() : ''));
+  });
+  return ps.then((unc) => {
+    if (/^\\\\[^\\]+\\[^\\\s]+/.test(unc)) { laufwerkCache.set(lit, unc); return unc; }
+    /* Notfall: "net use Y:" – der UNC wird aus dem Text herausgesucht, nicht ueber eine
+       (uebersetzte) Spaltenueberschrift. */
+    return new Promise((resolve) => {
+      execFile('net', ['use', `${lit}:`], { timeout: 8000, windowsHide: true }, (e2, out) => {
+        const m = /\\\\[^\\]+\\[^\s\r\n"]+/.exec(String(out || ''));
+        const fallback = !e2 && m ? m[0] : '';
+        laufwerkCache.set(lit, fallback);
+        resolve(fallback);
+      });
+    });
+  });
+}
+
+/* Wandelt jeden Workspace-Pfad in Freigabe-Teile um: UNC direkt, Laufwerksbuchstabe nach
+   Nachschlagen der Zuordnung. Gibt null zurueck, wenn wirklich keine Freigabe dahintersteckt
+   (z. B. ein lokaler Ordner auf C:). */
+async function smbPartsAufgeloest(p) {
+  const direkt = smbPartsOf(p);
+  if (direkt) return direkt;
+  const s = String(p || '').trim();
+  const m = /^([A-Za-z]):[\\/]*(.*)$/.exec(s);
+  if (!m) return null;
+  const unc = await uncOfLaufwerk(m[1]);
+  if (!unc) return null;
+  const rest = (m[2] || '').replace(/[\\/]+$/, '');
+  const u = /^\\\\([^\\]+)\\([^\\]+)(?:\\(.+))?$/.exec(unc);
+  if (!u) return null;
+  const share = u[2];
+  /* Unterordner innerhalb der Freigabe. Zwei Stuecke, die beide dazugehoeren:
+     - der Ast, AUF DEN das Laufwerk zeigt (aus der UNC-Zuordnung, z. B. \\host\share\daten -> "daten")
+     - der Rest des Workspace-Pfads RELATIV ZUM LAUFWERKBUCHSTABEN (D:\MeinProjekt -> "MeinProjekt")
+     Beispiel Nutzer-PC: Y: -> \\192.0.2.10\daten, Workspace D:\MeinProjekt
+       -> host 192.0.2.10, share daten, sub "MeinProjekt", unc \\192.0.2.10\daten\MeinProjekt.
+     Zeigt das Laufwerk tiefer (\\host\share\daten), ist der Ast nicht leer und es folgt
+       sub = "daten/MeinProjekt" – genau der Pfad, den die Android-App als /smb/host/share/daten/... braucht. */
+  const ast = (u[3] || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const relativ = rest.replace(/\\/g, '/').replace(/^\/+/g, '');
+  const sub = [ast, relativ].filter(Boolean).join('/');
+  return { host: u[1], share, sub, unc: `\\\\${u[1]}\\${share}` + (sub ? '\\' + sub.replace(/\//g, '\\') : ''), aufGelaufen: true };
+}
+
+/* Eigener Handler: die Oberflaeche braucht die Aufloesung, weil sie den Laufwerksbuchstaben
+   selbst nicht kennen kann (dafuer ist net use/Get-SmbMapping noetig). */
+ipcMain.handle('smb:resolve', async (_e, p) => {
+  const teile = await smbPartsAufgeloest(p);
+  if (!teile) return { ok: false, error: 'Hinter diesem Pfad steckt keine SMB-Freigabe' };
+  return { ok: true, host: teile.host, share: teile.share, sub: teile.sub, unc: teile.unc, aufGelaufen: !!teile.aufGelaufen };
+});
+
+ipcMain.handle('smb:getCreds', (_e, host) => {
+  const h = String(host || '').toLowerCase();
+  if (!h) return { ok: false, error: 'Kein Rechner angegeben' };
+  const c = loadSmb()[h];
+  return { ok: true, user: (c && c.user) || '', domain: (c && c.domain) || '', hasPass: !!(c && c.pass) };
+});
+
+/* Speichert pro Rechner. Leere Felder ueberschreiben keinen gespeicherten Wert – sonst loescht
+   ein erneutes Bestaetigen mit leerem Eingabefeld die Zugangsdaten (auf Android genauso geloest,
+   MainActivity.java:1690; dort folgte der naechste Versuch anonym und scheiterte). */
+ipcMain.handle('smb:saveCreds', (_e, o = {}) => {
+  const h = String(o.host || '').toLowerCase();
+  if (!h) return { ok: false, error: 'Kein Rechner angegeben' };
+  const alle = loadSmb();
+  const alt = alle[h] || {};
+  const neu = {
+    user: String(o.user ?? '') .trim() || alt.user || '',
+    domain: (o.domain == null ? alt.domain : String(o.domain)).trim(),
+    pass: (o.pass == null || o.pass === '') ? (alt.pass || '') : String(o.pass),
+  };
+  if (!neu.user && !neu.pass) { delete alle[h]; return saveSmb(alle) ? { ok: true, geleert: true } : { ok: false, error: 'smb.json konnte nicht geschrieben werden' }; }
+  alle[h] = neu;
+  return saveSmb(alle) ? { ok: true } : { ok: false, error: 'smb.json konnte nicht geschrieben werden' };
+});
+
+/* Nur fuer die ausdruecklich gestartete Uebertragung: liefert auch das Passwort. */
+ipcMain.handle('smb:credsForExport', (_e, host) => {
+  const h = String(host || '').toLowerCase();
+  if (!h) return { ok: false, error: 'Kein Rechner angegeben' };
+  const c = loadSmb()[h];
+  if (!c) return { ok: true, user: '', domain: '', pass: '' };
+  return { ok: true, user: c.user || '', domain: c.domain || '', pass: c.pass || '' };
+});
+
+/* Alle Rechner, fuer die auf diesem Geraet Zugangsdaten hinterlegt sind. Noetig, weil der
+   Workspace hier oft ein gemapptes Laufwerk ist (Y:\…) – daraus laesst sich kein Rechner
+   ablesen, die Freigabe desselben Rechners soll aber trotzdem mitwandern duerfen. */
+ipcMain.handle('smb:listHosts', () => {
+  const alle = loadSmb();
+  return { ok: true, hosts: Object.keys(alle).filter((h) => alle[h] && (alle[h].user || alle[h].pass)) };
+});
+
+/* Verbindungstest einer Freigabe. Antwortet in derselben Form wie die Android-Seite
+   (host/share/entries/sample), damit die Oberflaeche denselben Text bauen kann. */
+ipcMain.handle('smb:test', async (_e, p) => {
+  /* Aufgeloest statt nur smbPartsOf: der Workspace des PCs ist oft ein gemapptes Laufwerk
+     (Y:\…). Wer dort "Pruefen" drueckt, erwartet eine Antwort auf die dahinterliegende Freigabe. */
+  const parts = await smbPartsAufgeloest(p);
+  if (!parts) return { ok: false, error: 'Das ist keine Freigabe-Adresse (erwartet \\\\rechner\\freigabe\\ordner oder ein gemapptes Laufwerk)' };
+  const unc = parts.unc;
+  try {
+    const st = await fsp.stat(unc);
+    if (!st.isDirectory()) return { ok: false, error: 'Der Pfad ist kein Ordner' };
+    const names = await fsp.readdir(unc);
+    return { ok: true, host: parts.host, share: parts.share, entries: names.length, sample: names.slice(0, 3).join(', ') };
+  } catch (e) {
+    const grund = e.code === 'EPERM' || e.code === 'EACCES' ? 'Zugriff verweigert – Benutzername und Passwort der Freigabe pruefen'
+      : e.code === 'ENOENT' ? 'Freigabe oder Ordner nicht gefunden (Netzwerk und Schreibweise des Pfads pruefen)'
+      : e.code === 'ENOTDIR' ? 'Ein Teil des Pfads ist keine Ordnerstruktur'
+      : (e.message || 'Unbekannter Fehler');
+    return { ok: false, error: `${grund} (${e.code || 'ohne Fehlercode'})`, host: parts.host, share: parts.share };
+  }
+});
 
 /* ───────────────────────── Dateien ───────────────────────── */
 
@@ -394,6 +695,140 @@ ipcMain.handle('file:saveAs', async (_e, { defaultName, content, base64, default
   if (base64) await fsp.writeFile(r.filePath, Buffer.from(base64, 'base64'));
   else await fsp.writeFile(r.filePath, content, 'utf8');
   return r.filePath;
+});
+
+/* ───────────────────────── Übertragung (QR-Code / JSON-Export) ─────────────────────────
+   Format siehe docs/TRANSFER-FORMAT.md. Der Hauptprozess komprimiert (zlib), bildet die Prüfsumme und liest auf Wunsch Textdateien des Workspace. */
+ipcMain.handle('transfer:info', () => ({ version: app.getVersion(), platform: process.platform, device: deviceName() }));
+
+ipcMain.handle('transfer:pack', async (_e, json) => {
+  const zlib = require('zlib');
+  const raw = Buffer.from(String(json), 'utf8');
+  const z = zlib.deflateSync(raw, { level: 9 }); // zlib-Format (RFC 1950), z. B. in Java mit java.util.zip.Inflater lesbar
+  return { b64: z.toString('base64'), sha16: crypto.createHash('sha256').update(z).digest('hex').slice(0, 16), rawBytes: raw.length, zBytes: z.length };
+});
+
+/* ───────────── Übertragung im WLAN anbieten (Alternative zur QR-Bildfolge) ─────────────
+   Statt vieler QR-Bilder die man abfotografieren muss: die Windows-App startet einen kleinen,
+   nur kurz laufenden HTTP-Dienst im lokalen Netz und beantwortet ein UDP-Rufsignal im selben
+   Netz. Die Android-App sucht daraufhin ("Im WLAN suchen"), holt die Datei über http und kann
+   sie übernehmen. Kein Kamera-Decoder nötig, keine 6 bis 12 Codes, nichts wird ins Internet
+   gesendet. Der Inhalt ist derselbe wie bei QR/JSON (docs/TRANSFER-FORMAT.md).
+
+   Sicherheit: Token als Query-Parameter (muss in der Anfrage ankommen - ein URL-Fragment
+   wird von HTTP nie uebertragen), Bindung an alle LAN-Interfaces, Ablauf nach Ablaufzeit und
+   Abschalten nach dem ersten erfolgreichen Abruf. */
+let transferServe = null;
+
+/* Schliesst den Uebertragungs-Dienst vollstaendig: HTTP-Server, Ablauf-Timer UND das
+   UDP-Rufsignal. Beides getrennt zu schliessen war der Fehler – ein Rechner meldete sich
+   weiter im WLAN, obwohl die Adresse langsto abgelaufen war. */
+function stopTransferServe(onlyForServer) {
+  if (!transferServe) return;
+  if (onlyForServer && transferServe.server !== onlyForServer) return;
+  try { transferServe.server.close(); } catch {}
+  try { clearTimeout(transferServe.timer); } catch {}
+  try { transferServe.sock.close(); } catch {}
+  transferServe = null;
+}
+
+ipcMain.handle('transfer:serveStart', async (_e, { json, ttlSeconds }) => {
+  const http = require('http');
+  const os = require('os');
+  stopTransferServe();   // ein bereits laufendes Angebot sauber beenden (auch UDP)
+
+  const token = crypto.randomBytes(9).toString('base64url');
+  // Pruefsumme nur fuer die Anzeige; uebertragen wird der JSON-Text selbst (siehe Handler).
+  const sha16 = crypto.createHash('sha256').update(Buffer.from(String(json || ''), 'utf8')).digest('hex').slice(0, 16);
+
+  const server = http.createServer((req, res) => {
+    // Bewusst ein Query-Parameter und kein URL-Fragment: Fragmente werden von HTTP gar nicht
+    // uebertragen (bleiben im Browser), der Server haette den Token nie gesehen.
+    const u = new URL(req.url || '/', 'http://localhost');
+    if (u.pathname !== '/llmbox-transfer') { res.writeHead(404); res.end(); return; }
+    if (u.searchParams.get('t') !== token) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Token passt nicht'); return; }
+    // Als Text ausgeliefert, nicht als komprimierte Bytes: die Android-Bridge liest HTTP-Antworten
+    // als String (body.string()), dabei wuerden rohe deflate-Bytes zerstoert.
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(String(json || ''));
+    // Nach dem Abruf ist die Übertragung erledigt: der Dienst geht sofort wieder zu.
+    // Wichtig: AUCH das Rufsignal (UDP) abschalten. Wurde nur der HTTP-Server geschlossen,
+    // antwortete der Rechner weiter auf "LLMBOX?" mit einer Adresse, die niemand mehr bedient –
+    // die Android-App rief sie ab und bekam "HTTP 0" (Verbindung abgelehnt) statt einer Datei.
+    setTimeout(() => stopTransferServe(server), 300);
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '0.0.0.0', resolve);
+  });
+  const port = server.address().port;
+
+  // Alle gebrauchbaren IPv4-Adressen dieses Rechners (loopback weglassen).
+  const ips = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const ni of list || []) if (ni.family === 'IPv4' && !ni.internal) ips.push(ni.address);
+  }
+
+  const ttl = Math.max(30, +ttlSeconds || 600);
+  const timer = setTimeout(() => stopTransferServe(server), ttl * 1000);
+
+  // Rufsignal im LAN: die Android-App schickt "LLMBOX?" an einen Broadcast-Port und
+  // bekommt hier URL + Token zurück. So muss auf dem Handy nichts abgetippt werden.
+  const dgram = require('dgram');
+  const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  sock.on('message', (msg, rinfo) => {
+    if (!String(msg).startsWith('LLMBOX?')) return;
+    const answer = Buffer.from(`LLMBOX|${port}|${token}|${sha16}`);
+    try { sock.send(answer, rinfo.port, rinfo.address); } catch {}
+  });
+  try { sock.bind(45455, '0.0.0.0'); } catch {}
+
+  transferServe = { server, timer, sock };
+  // Die Adresse enthaelt den Token als Query-Parameter (?t=...), damit der Server ihn sieht.
+  // Frueher stand hier "#token" - Fragmente werden von HTTP nicht uebertragen, der Abruf waere
+  // mit "Token passt nicht" (403) abgelehnt worden.
+  const mkUrl = (ip) => `http://${ip}:${port}/llmbox-transfer?t=${encodeURIComponent(token)}`;
+  return { ok: true, port, token, sha16, ttl, ips, urls: ips.map(mkUrl), bytes: Buffer.byteLength(String(json || ''), 'utf8') };
+});
+
+ipcMain.handle('transfer:serveStop', () => {
+  stopTransferServe();
+  return { ok: true };
+});
+
+ipcMain.handle('transfer:wsFiles', async (_e, { root, ignore, maxFileKB, maxTotalKB, maxFiles }) => {
+  const out = { files: [], skipped: 0, truncated: false, totalBytes: 0 };
+  if (!root) return { ...out, error: 'Kein Workspace-Ordner gewählt' };
+  const ig = ignoreSet(ignore);
+  const perFile = (+maxFileKB || 512) * 1024;
+  const cap = (+maxTotalKB || 5120) * 1024;
+  const maxN = +maxFiles || 2000;
+  const base = path.resolve(root);
+  async function walk(dir) {
+    if (out.truncated) return;
+    let entries;
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const en of entries) {
+      if (out.truncated) return;
+      if (ig.has(en.name)) continue;
+      const abs = path.join(dir, en.name);
+      if (en.isDirectory()) { await walk(abs); continue; }
+      if (!en.isFile()) continue;
+      try {
+        const st = await fsp.stat(abs);
+        if (st.size > perFile) { out.skipped++; continue; }
+        const buf = await fsp.readFile(abs);
+        if (buf.subarray(0, 4000).includes(0)) { out.skipped++; continue; } // Binärdatei
+        if (out.files.length >= maxN || out.totalBytes + buf.length > cap) { out.truncated = true; return; }
+        out.files.push({ path: path.relative(base, abs).replace(/\\/g, '/'), size: buf.length, text: buf.toString('utf8') });
+        out.totalBytes += buf.length;
+      } catch { out.skipped++; }
+    }
+  }
+  await walk(base);
+  return out;
 });
 
 /* ───────────────────────── Workspace (Werkzeuge für die KI) ───────────────────────── */
@@ -1182,6 +1617,8 @@ async function createWindow() {
     if (devtools) win.webContents.toggleDevTools();
     if (input.control && input.key.toLowerCase() === 'r') win.webContents.reload();
   });
+  // Zurück ins Fenster -> Chats sofort abgleichen (statt bis zum naechsten Tick zu warten).
+  win.on('focus', () => { syncNow(); });
   win.on('close', () => {
     try {
       const bb = win.getNormalBounds();

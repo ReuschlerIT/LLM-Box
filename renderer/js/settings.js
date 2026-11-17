@@ -5,6 +5,11 @@ const DEFAULTS = {
     { id: 'strata_api', name: 'Strata_API', type: 'openai', baseUrl: 'http://localhost:8080/v1', apiKey: '', extraParams: true, thinkMode: 'template' },
   ],
   activeConnection: 'strata_api',
+  // Sprache der gesamten Oberflaeche und der KI-Antworten: de | en | fr.
+  // Absichtlich HIER (nicht in appearance): der Android-Build patcht Zeilen aus
+  // appearance (enterToSend, theme) mit exaktem Suchtext - neue Felder daneben
+  // liessen diese Patches ins Leere laufen.
+  uiLang: 'de',
   spell: { enabled: true, lang: 'de-en' },
   model: '',
   thinking: 'auto',
@@ -62,6 +67,119 @@ kein Mittel für Zugriff auf fremde, nicht dir gehörende Konten/Server.`,
   pricing: { enabled: true, eur: true, preset: 'avg', priceIn: 1.8, priceOut: 9.6, usdToEur: 0.9 },
   workspace: { path: '', toolsEnabled: false, askUser: true, askUserAlways: false, subagents: true, subagentSteps: 12, handoff: true, handoffMode: 'clear', handoffPct: 70, handoffAutoSend: true, approval: 'write', execEnabled: true, execTimeout: 120, maxSteps: 25, readKB: 40, autoCompact: true, ctxBudgetPct: 80, keepToolResults: 3, maxFileKB: 512, maxFiles: 60, maxTotalKB: 1024, ignore: 'node_modules,.git,.venv,__pycache__,dist,build,.next,.idea,.vscode' },
 };
+
+/* ───── Modellprofile (V65) ─────
+   „iq3“: Voreinstellung fuer kleine bzw. stark quantisierte Modelle (IQ3/Q3, z. B. qwen3.x-flash-iq3_s) im Werkzeugbetrieb.
+   Solche Modelle werden schon weit unter ihrem Kontextfenster unzuverlaessig (vergessene Werkzeugaufrufe, erfundene Namen, vorzeitiges Ende).
+   Deshalb: ruhigeres Sampling, keine Wiederholungsstrafe (stoert Code/JSON), begrenzte Antwortlaenge, fruehere Kontext-Verschlankung. */
+const PROFILES = {
+  iq3: {
+    params: { temperature: 0.3, topP: 0.9, topK: 20, minP: 0.05, repeatPenalty: 1.0, presencePenalty: null, maxTokens: 12288 },
+    workspace: { ctxSoftCap: 64000, ctxBudgetPct: 80, keepToolResults: 4, handoffPct: 60, maxSteps: 40, subagentSteps: 8 },
+  },
+  std: {
+    params: { temperature: 0.7, topP: 0.9, topK: 40, minP: null, repeatPenalty: 1.1, presencePenalty: null, maxTokens: null },
+    workspace: { ctxSoftCap: 0, ctxBudgetPct: 80, keepToolResults: 3, handoffPct: 70, maxSteps: 25, subagentSteps: 12 },
+  },
+};
+Object.assign(DEFAULTS.params, PROFILES.iq3.params);
+Object.assign(DEFAULTS.workspace, PROFILES.iq3.workspace);
+DEFAULTS.modelProfile = 'iq3';
+
+/* Steht im Feld „System-Prompt“ noch ein unveraenderter Standard (egal in welcher Sprache/Laenge), wird er durch die Fassung der gewaehlten Sprache
+   und des Profils ersetzt - damit das Feld zeigt, was tatsaechlich gesendet wird. Eigene Texte bleiben unberuehrt. */
+function syncDefaultPrompt() {
+  const cur = S.settings.systemPrompt;
+  if (!isDefaultPrompt(cur)) return false;
+  const next = defaultPromptFor(S.settings.uiLang || 'de', promptCompact());
+  if (String(cur).replace(/\r\n/g, '\n').trim() === next.trim()) return false;
+  S.settings.systemPrompt = next;
+  return true;
+}
+
+function applyProfile(key) {
+  const p = PROFILES[key];
+  if (!p) return false;
+  Object.assign(S.settings.params, p.params);
+  Object.assign(S.settings.workspace, p.workspace);
+  S.settings.modelProfile = key;
+  syncDefaultPrompt();                                   // kurz (iq3) bzw. ausfuehrlich (std)
+  if (typeof applyToolLanguage === 'function') applyToolLanguage();   // Werkzeugbeschreibungen passend zum Profil
+  return true;
+}
+// Einmalig (V65): bestehende Installationen bekommen das IQ3-Profil genau einmal; danach gilt, was der Nutzer einstellt.
+function applyProfileOnce(silent) {
+  if (!S.settings.profileIq3V65) {
+    S.settings.profileIq3V65 = true;
+    S.settings.promptSyncV66 = true;
+    applyProfile('iq3');
+    api.store.set('settings', S.settings);
+    if (!silent) setTimeout(() => toast(T('Modellprofil „Kleines / stark quantisiertes Modell“ angewendet. Änderbar unter Einstellungen → Modell & Parameter.'), 7000), 1500);
+    return;
+  }
+  // Einmalig (V66): Wer das Profil schon hat, bekommt den Standard-Prompt jetzt in Sprache und Profil-Laenge (nur wenn unveraendert).
+  if (!S.settings.promptSyncV66) {
+    S.settings.promptSyncV66 = true;
+    syncDefaultPrompt();
+    api.store.set('settings', S.settings);
+  }
+}
+
+/* ───── Erster Start: Sprachauswahl ─────
+   Erscheint nur, wenn es noch gar keine gespeicherten Einstellungen gab (neue Installation). Bestehende Installationen behalten ihre Sprache.
+   Der Dialog ist dreisprachig und wird nie uebersetzt (data-i18n-off); er laesst sich nicht wegklicken, damit die Wahl nicht uebersprungen wird. */
+function showLanguageChooser() {
+  const root = document.querySelector('#modal-root');
+  if (!root || root.querySelector('.lang-pick')) return;
+  const loc = String(navigator.language || 'de').toLowerCase();
+  const suggested = loc.startsWith('de') ? 'de' : loc.startsWith('fr') ? 'fr' : 'en';   // Vorschlag nach Systemsprache (andere Sprachen: Englisch)
+  const back = el('div', { class: 'modal-back lang-pick', 'data-i18n-off': '' });
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); return; }       // nicht wegklickbar
+    if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    const bs = [...back.querySelectorAll('.lang-opt')];
+    let i = bs.indexOf(document.activeElement);
+    if (i < 0) i = Math.max(0, bs.findIndex((b) => b.classList.contains('suggested')));   // Fokus verloren: vom Vorschlag aus weiter
+    const next = bs[(i + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + bs.length) % bs.length];
+    if (next) { next.focus(); e.preventDefault(); }
+  };
+  // Fokus-Sperre: andere Teile des Starts (Eingabefeld) holen sich den Fokus; solange der Dialog offen ist, gehoert er dem Dialog
+  const guard = (e) => {
+    if (back.contains(e.target)) return;
+    const f = back.querySelector('.lang-opt.suggested') || back.querySelector('.lang-opt');
+    if (f) f.focus();
+  };
+  const choose = (lang) => {
+    S.settings.uiLang = lang;
+    S.settings.langChosen = true;
+    syncDefaultPrompt();                         // Standard-Prompt in der gewaehlten Sprache
+    applyLanguage(lang);
+    api.store.set('settings', S.settings);       // sofort sichern (nicht erst nach der Verzoegerung von saveSettings)
+    document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('focusin', guard, true);
+    back.remove();
+    const ta = document.querySelector('#input, #composer textarea');
+    if (ta) ta.focus();                          // Fokus zurueck ins Eingabefeld
+  };
+  const opts = LANGS.map((l) => el('button', { class: 'lang-opt' + (l.value === suggested ? ' suggested' : ''), type: 'button', onclick: () => choose(l.value) },
+    el('span', { text: l.label }), el('span', { class: 'code', text: l.value.toUpperCase() })));
+  const card = el('div', { class: 'modal lang-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Sprache / Language / Langue' },
+    typeof brandMark === 'function' ? el('div', { class: 'lang-mark', html: brandMark('brand-mark') }) : null,
+    el('h2', { text: 'Sprache wählen' }),
+    el('div', { class: 'lang-sub', text: 'Choose your language · Choisissez votre langue' }),
+    el('div', { class: 'lang-opts' }, opts),
+    el('div', { class: 'lang-note' },
+      el('div', { text: 'Später änderbar unter Einstellungen → Darstellung.' }),
+      el('div', { text: 'You can change this later under Settings → Appearance.' }),
+      el('div', { text: 'Modifiable plus tard sous Réglages → Apparence.' })));
+  back.append(card);
+  back.addEventListener('mousedown', (e) => { if (e.target === back) e.preventDefault(); });   // Klick daneben: Fokus bleibt im Dialog
+  root.append(back);
+  document.addEventListener('keydown', onKey, true);
+  document.addEventListener('focusin', guard, true);
+  const first = back.querySelector('.lang-opt.suggested') || back.querySelector('.lang-opt');
+  if (first) first.focus();
+}
 
 const PRESETS = [
   { name: 'Ollama', type: 'ollama', baseUrl: 'http://localhost:11434' },
@@ -357,8 +475,31 @@ function tabModel() {
   const [tr, tn] = bindSlider(p + 'temperature', 0, 2, 0.05);
   const [pr, pn] = bindSlider(p + 'topP', 0, 1, 0.05);
   const [rr, rn] = bindSlider(p + 'repeatPenalty', 0.5, 2, 0.05);
+  const profileRow = frow('Modellprofil', 'Setzt Temperatur, Top-K, Wiederholungsstrafe, Antwortlänge, Kontext-Obergrenze und Schrittlimit auf erprobte Werte. „Kleines / stark quantisiertes Modell“ ist für IQ3/Q3-Modelle mit Werkzeugen gedacht und verhindert vor allem Abbrüche. Es nutzt außerdem einen kurzen System-Prompt mit kurzen Werkzeugbeschreibungen (spart rund 1.400 Tokens je Anfrage). Bei Verbindungen mit „Sampling dem Server überlassen“ wirken nur die Kontext- und Schritt-Werte.', (() => {
+    const sel = el('select', {}, [
+      el('option', { value: 'iq3', text: 'Kleines / stark quantisiertes Modell (IQ3/Q3)' }),
+      el('option', { value: 'std', text: 'Standard (große oder Cloud-Modelle)' }),
+    ]);
+    sel.value = S.settings.modelProfile === 'std' ? 'std' : 'iq3';
+    const btn = el('button', { class: 'btn sm', text: 'Profil anwenden', onclick: () => {
+      applyProfile(sel.value);
+      saveSettings();
+      toast(T('Profil angewendet.'), 3000);
+      const pane = document.querySelector('.settings .pane');
+      if (pane) { pane.innerHTML = ''; pane.append(tabModel()); }
+    } });
+    return [sel, btn];
+  })());
   return el('div', {},
+    profileRow,
     frow('System-Prompt', 'Wird jeder Unterhaltung vorangestellt.', bindTextarea('systemPrompt', 6), true),
+    frow('Standard-System-Prompt', 'Ein unveränderter Standard-Prompt folgt automatisch der Sprache und dem Modellprofil (kurz für IQ3/Q3, ausführlich für „Standard“). Der Knopf stellt ihn für die aktuelle Sprache und das Profil wieder her; eigene Änderungen gehen dabei verloren.', el('button', { class: 'btn sm', text: 'Standard-Prompt wiederherstellen', onclick: () => {
+      S.settings.systemPrompt = defaultPromptFor(S.settings.uiLang || 'de', promptCompact());
+      saveSettings();
+      toast(T('System-Prompt zurückgesetzt.'), 3000);
+      const pane = document.querySelector('.settings .pane');
+      if (pane) { pane.innerHTML = ''; pane.append(tabModel()); }
+    } })),
     frow('Temperatur', 'Niedrig = sachlich und stabil, hoch = kreativ.', [tr, tn]),
     frow('Top-P', 'Nucleus-Sampling.', [pr, pn]),
     frow('Top-K', 'Nur Ollama und „Erweiterte Parameter“.', bindNumber(p + 'topK', { min: 0, max: 500 })),
@@ -443,8 +584,24 @@ function tabAppearance() {
     a.custom = a.custom || { dark: {}, light: {} };
     const cust = (a.custom[th] = a.custom[th] || {});
 
-    /* Farbschemata */
+    /* Sprache: gilt fuer die gesamte Oberflaeche (Knopfe, Bezeichnungen, Dialoge,
+       Statuszeile) und bestimmt ueber den Systemprompt auch die Antwortsprache der KI. */
     wrap.append(
+      el('h3', { text: 'Sprache' }),
+      frow('Sprache der App', 'Bestimmt Beschriftungen, Buttons, Hinweise und Dialoge. Die KI antwortet ebenfalls in dieser Sprache; deine eigenen Chat-Texte bleiben unveraendert.', (() => {
+        const s = el('select', { 'data-i18n-off': '' }, LANGS.map((l) => el('option', { value: l.value, text: l.label }))); // Sprachnamen bleiben in der eigenen Sprache
+        s.value = S.settings.uiLang || 'de';
+        s.addEventListener('change', () => {
+          S.settings.uiLang = s.value;
+          syncDefaultPrompt();                    // unveraenderter Standard-Prompt folgt der Sprache
+          saveSettings();
+          applyLanguage(S.settings.uiLang);
+          // Der Dialog wird neu aufgebaut, damit alle Beschriftungen sofort in der
+          // neuen Sprache stehen (einzelne Knoten uebersetzt sonst nur der Observer).
+          render();
+        });
+        return s;
+      })()),
       el('h3', { text: 'Farbschema' }),
       el('div', { class: 'preset-grid' }, THEME_PRESETS.map((p) => {
         const d = DEFAULT_COLORS[p.theme];
@@ -666,6 +823,81 @@ function tabCosts() {
   return wrap;
 }
 
+/* ───── Windows-Freigabe (SMB) als Workspace ─────
+   Dieselben vier Angaben wie auf Android (android-adapter.js smbRow): Pfad, Benutzer, Domain,
+   Passwort. Gespeichert werden die Zugangsdaten pro Rechner in %APPDATA%\LLM Box\smb.json durch
+   den Hauptprozess (main.js, smb:saveCreds). Das Passwort kommt von dort nie zurueck – es wird
+   nur gemeldet, dass eines hinterlegt ist, und ein leer gelassenes Feld ueberschreibt es nicht. */
+function smbRowWin(w, changed, render) {
+  const cur = String(w.path || '');
+  const parts = smbParseWin(cur);
+
+  const pathIn = el('input', { type: 'text', placeholder: '\\\\192.0.2.30\\daten\\MeinProjekt', value: parts ? parts.unc : '', style: { flex: '1', minWidth: '180px' } });
+  const userIn = el('input', { type: 'text', placeholder: 'Benutzername (Windows-Konto)', autocomplete: 'off', spellcheck: false, style: { width: '190px' } });
+  const domIn = el('input', { type: 'text', placeholder: 'Arbeitsgruppe/Domain (meist leer lassbar)', style: { width: '170px' } });
+  const passIn = el('input', { type: 'password', placeholder: 'Passwort (leer lassen = gespeichertes behalten)', autocomplete: 'off', style: { width: '190px' } });
+
+  const status = el('div', { class: 'fhint', text: parts
+    ? `Gesetzt: Freigabe „${parts.share}“ auf ${parts.host}. Die LLM Box liest und schreibt dort direkt.`
+    : 'Windows-Freigabe im LAN direkt als Workspace nutzen. Ein gemapptes Laufwerk (Y:\\…) funktioniert ebenfalls – für es braucht der Rechner keine eigenen Zugangsdaten in dieser App.' });
+
+  const host = parts ? parts.host : '';
+  if (host) {
+    api.smb.getCreds(host).then((r) => {
+      if (!r || !r.ok) return;
+      if (r.user && !userIn.value) userIn.value = r.user;
+      if (r.domain && !domIn.value) domIn.value = r.domain;
+      if (r.hasPass) {
+        passIn.placeholder = 'Passwort gespeichert – leer lassen zum Beibehalten';
+        passIn.title = 'Ein Passwort ist auf diesem Rechner hinterlegt. Leer lassen behaelt es; nur zum Aendern neu tippen.';
+      }
+    }).catch(() => {});
+  }
+
+  async function anwenden() {
+    const p = pathIn.value.trim();
+    if (!p) { toast('Bitte den Pfad der Freigabe angeben.', 5000); return; }
+    const pr = smbParseWin(p);
+    busy(true); status.textContent = 'Pruefe die Freigabe …';
+    /* Zugangsdaten zuerst speichern: ohne sie schlaegt der Zugriff meist anonym fehl. */
+    if (pr) {
+      const r = await api.smb.saveCreds({ host: pr.host, user: userIn.value.trim(), domain: domIn.value.trim(), pass: passIn.value });
+      if (!r || !r.ok) { status.textContent = 'Zugangsdaten konnten nicht gespeichert werden: ' + ((r && r.error) || 'unbekannt'); busy(false); return; }
+    }
+    const t = await api.smb.test(p);
+    if (t && t.ok) {
+      w.path = p; changed();
+      status.textContent = `Verbunden: ${pr ? pr.unc : p}` + (t.entries != null ? ` – ${t.entries} Einträge` + (t.sample ? `, z. B. ${t.sample}` : '') : '');
+      passIn.value = '';
+      toast('Netzwerkordner gesetzt.', 4000);
+      render();
+    } else {
+      status.textContent = 'Zugriff fehlgeschlagen: ' + ((t && t.error) || 'unbekannter Fehler') +
+        (pr ? '\nTipp: \\rechner\\freigabe muss im Windows-Explorer funktionieren; Benutzername und Passwort muessen zum Zielrechner passen.' : '');
+    }
+    busy(false);
+  }
+
+  const btnTest = el('button', { class: 'btn sm', text: 'Verbinden & übernehmen', onclick: anwenden });
+  function busy(on) { btnTest.disabled = on; btnTest.textContent = on ? 'Prüfe …' : 'Verbinden & übernehmen'; }
+
+  /* frow kapselt die Steuerung selbst in ein .fctrl – das Array direkt uebergeben, sonst
+     entstünde eine verschachtelte Doppelkapselung und die Felder rutschten untereinander. */
+  return frow('Netzwerkordner (SMB)', 'Eine Windows-Freigabe direkt als Workspace nutzen – es wird nichts kopiert. Die Zugangsdaten bleiben in der App-Datei smb.json im Benutzerprofil und werden nur mitgenommen, wenn du unter „Übertragung“ den Netzwerkordner anhakst.',
+    [pathIn, userIn, domIn, passIn, btnTest, status], true);
+}
+
+/* Zerlegt eine Freigabe-Adresse. Akzeptiert \\rechner\freigabe\ordner und //rechner/freigabe/…;
+   ein Laufwerksbuchstabe (Y:\) ist keine Freigabe-Adresse im Sinne dieser Eingabe. */
+function smbParseWin(p) {
+  const s = String(p || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  if (/^[a-zA-Z]:\//.test(s)) return null;
+  const m = /^([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(s);
+  if (!m) return null;
+  const sub = (m[3] || '').replace(/\/+$/, '');
+  return { host: m[1], share: m[2], sub, unc: `\\\\${m[1]}\\${m[2]}` + (sub ? '\\' + sub.replace(/\//g, '\\') : '') };
+}
+
 function tabWorkspace() {
   const wrap = el('div');
   function render() {
@@ -678,6 +910,7 @@ function tabWorkspace() {
         el('button', { class: 'btn sm', text: 'Wählen …', onclick: async () => { const p = await api.files.pickFolder('Workspace-Ordner wählen'); if (p) { w.path = p; changed(); render(); } } }),
         w.path ? el('button', { class: 'btn sm', text: 'Entfernen', onclick: () => { w.path = ''; w.toolsEnabled = false; changed(); render(); } }) : null,
       ]),
+      smbRowWin(w, changed, render),
       frow('KI-Dateizugriff', 'Die KI darf Dateien im Workspace auflisten, lesen, durchsuchen und schreiben. Das Modell muss Werkzeuge (Tool Calling) unterstützen.', bindSwitch('workspace.toolsEnabled')),
       frow('Freigabe für KI-Werkzeuge', 'Standard für neue Chats. Gilt für Datei-Werkzeuge und für Befehle (run_command). „Nichts bestätigen“ lässt auch Befehle ohne Rückfrage laufen; Installationen fragen weiterhin nach. Im Chat lässt sich das live pro Chat über „Freigabe“ unter dem Eingabefeld ändern.', (() => {
         const s = el('select', {}, [['all', 'Alles bestätigen (Lesen und Schreiben)'], ['write', 'Nur Schreiben und Befehle bestätigen (empfohlen)'], ['none', 'Nichts bestätigen']].map(([v, l]) => el('option', { value: v, text: l })));
@@ -690,6 +923,7 @@ function tabWorkspace() {
       frow('Max. Werkzeug-Schritte am Stück', 'Danach hält die KI an und du kannst mit „Weitermachen“ fortfahren.', bindNumber('workspace.maxSteps', { min: 1, max: 200, placeholder: '25' })),
       el('h3', { text: 'Kontext-Verwaltung für KI-Werkzeuge' }),
       frow('Alte Werkzeug-Ausgaben automatisch entfernen', 'Wird der Kontext knapp, ersetzt die App alte Datei-Inhalte im Verlauf durch eine Kurznotiz. Der Chat selbst bleibt unverändert.', bindSwitch('workspace.autoCompact')),
+      frow('Arbeitskontext-Obergrenze (Tokens)', 'Obergrenze für Komprimierung und Übergabe-Hinweis, unabhängig vom Server-Fenster. Lokale Modelle, besonders stark quantisierte (z. B. IQ3), werden schon weit unter ihrem Fenster unzuverlässig: Sie kündigen Schritte an, ohne Werkzeuge aufzurufen, und erfinden Details. Standard 64000. 0 = nur das Server-Fenster zählt.', bindNumber('workspace.ctxSoftCap', { min: 0, step: 1000, placeholder: '64000' })),
       frow('Kontext-Budget (%)', 'Ab diesem Anteil des Fensters (abzüglich Platz für die Antwort) wird verschlankt.', bindNumber('workspace.ctxBudgetPct', { min: 30, max: 95, placeholder: '80' })),
       frow('Letzte Werkzeug-Ergebnisse behalten', 'So viele der neuesten Ergebnisse bleiben immer vollständig erhalten.', bindNumber('workspace.keepToolResults', { min: 0, max: 20, placeholder: '3' })),
       frow('Max. Größe pro Datei-Lesen (KB)', 'Größere Dateien liefert die KI nur abschnittsweise (start_line/end_line). 40 KB ≈ 10.000 Tokens.', bindNumber('workspace.readKB', { min: 4, placeholder: '40' })),
@@ -713,11 +947,53 @@ function tabWorkspace() {
 }
 
 /* Chats auf mehreren Rechnern: gemeinsamer Ordner (NAS, Netzlaufwerk, OneDrive …) */
+/* Abgleich-Rhythmus: wie oft die App bei den anderen Rechnern nachschaut. Der Wert liegt in
+   sync.json (dort stehen auch Geräte-ID und gemeinsamer Ordner), NICHT in settings.json.
+   Deshalb bewusst kein bindSelect() – das schreibt immer in S.settings. Gespeichert wird über
+   api.sync.setEvery(); beide Apps (Windows und Android) lesen denselben Wert. */
+const SYNC_STEPS = [
+  { ms: 2000, label: 'Echtzeit (alle 2 Sekunden)' },
+  { ms: 5000, label: 'Alle 5 Sekunden' },
+  { ms: 10000, label: 'Alle 10 Sekunden' },
+  { ms: 30000, label: 'Alle 30 Sekunden' },
+  { ms: 60000, label: 'Alle 1 Minute' },
+  { ms: 5 * 60000, label: 'Alle 5 Minuten' },
+  { ms: 10 * 60000, label: 'Alle 10 Minuten' },
+  { ms: 30 * 60000, label: 'Alle 30 Minuten' },
+];
+const syncStepLabel = (ms) => (SYNC_STEPS.find((s) => s.ms === +ms) || SYNC_STEPS[0]).label;
+function syncEveryRow(sy, refresh) {
+  const sel = el('select', {}, SYNC_STEPS.map((s) => el('option', { value: String(s.ms), text: s.label })));
+  const cur = Math.round(+sy.everyMs || 0);
+  // Ein alter oder importierter Wert ohne exakte Stufe (z. B. 3000): die nächstpassende Stufe
+  // zeigen, damit das Feld nicht stumm auf „Echtzeit“ zurückspringt und ein anderer Wert
+  // angezeigt wird als tatsächlich gesetzt ist.
+  let shown = SYNC_STEPS.some((s) => s.ms === cur) ? cur : SYNC_STEPS.reduce(
+    (best, s) => (Math.abs(s.ms - cur) < Math.abs(best.ms - cur) ? s : best), SYNC_STEPS[0]).ms; // Objekt-Akkumulator (vorher Zahl -> TypeError bei Werten ohne exakte Stufe)
+  sel.value = String(shown);
+  const hintEl = el('div', { class: 'fhint' });
+  const setHint = () => {
+    hintEl.textContent = `Änderungen von anderen Rechnern werden ${syncStepLabel(shown).toLowerCase()} geholt, sobald dieser Rechner selbst nichts ändert. Kurze Abstände reagieren sofort, lange Abstände schonen Akku und Netzfreigabe. Wirksam nur, wenn Chats gemeinsam gespeichert sind.`;
+  };
+  setHint();
+  sel.addEventListener('change', async () => {
+    const r = await api.sync.setEvery(+sel.value);
+    if (!r || !r.ok) { toast((r && r.error) || 'Der Abstand konnte nicht gespeichert werden.', 6000); refresh(); return; }
+    shown = r.everyMs;
+    S.sync = { ...(S.sync || {}), everyMs: shown };
+    setHint();
+    toast(`Chats werden ab jetzt ${syncStepLabel(shown).toLowerCase()} abgeglichen.`, 4000);
+  });
+  return el('div', { class: 'frow sync-every' },
+    el('div', { class: 'flabel' }, el('div', { text: 'Chats abgleichen alle …' }), hintEl),
+    el('div', { class: 'fctrl' }, sel));
+}
+
 function syncRowHolder() {
   const holder = el('div');
   const build = async () => {
     const sy = await api.sync.get();
-    S.sync = { dir: sy.dir, deviceId: sy.deviceId, deviceName: sy.deviceName };
+    S.sync = { dir: sy.dir, deviceId: sy.deviceId, deviceName: sy.deviceName, everyMs: sy.everyMs };
     const reload = async () => {
       S.sync = await api.sync.get();
       S.chat = null;
@@ -749,9 +1025,13 @@ function syncRowHolder() {
         await reload();
       } }));
     }
-    const row = frow('Chats auf mehreren Rechnern', (sy.dir ? `Aktiv: ${sy.folder}` : 'Aus: Chats liegen nur auf diesem Rechner.') + ` Wähle einen Ordner, den alle Rechner erreichen (NAS, Netzlaufwerk, OneDrive …). Einstellungen und Verbindungen bleiben je Rechner getrennt. Änderungen von anderen Rechnern erscheinen nach wenigen Sekunden. Dieser Rechner: ${sy.deviceName}.`, btns);
+    const row = frow('Chats auf mehreren Rechnern', (sy.dir ? `Aktiv: ${sy.folder}` : 'Aus: Chats liegen nur auf diesem Rechner.') + ` Wähle einen Ordner, den alle Rechner erreichen (NAS, Netzlaufwerk, OneDrive …). Einstellungen und Verbindungen bleiben je Rechner getrennt. Änderungen von anderen Rechnern erscheinen ${syncStepLabel(sy.everyMs).toLowerCase()}. Dieser Rechner: ${sy.deviceName}.`, btns);
     holder.innerHTML = '';
     holder.append(row);
+    /* Der Rhythmus gehört sichtbar direkt zur Sync-Einstellung – deshalb hier und nicht in
+       einem anderen Tab. Sie wird auch ohne gemeinsamen Ordner gezeigt, damit das Tempo schon
+       vor der Einrichtung passend gestellt werden kann. */
+    holder.append(syncEveryRow(sy, build));
   };
   build();
   return holder;
@@ -806,6 +1086,7 @@ function openSettings(tab = 'conn') {
     { id: 'cost', label: 'Kosten', ic: 'euro', fn: tabCosts },
     { id: 'ws', label: 'Workspace & Dateien', ic: 'folder', fn: tabWorkspace },
     { id: 'data', label: 'Daten', ic: 'db', fn: tabData },
+    { id: 'transfer', label: 'Übertragung', ic: 'upload', fn: tabTransfer },
     { id: 'about', label: 'Über', ic: 'box', fn: tabAbout },
   ];
   const pane = el('div', { class: 'pane' });

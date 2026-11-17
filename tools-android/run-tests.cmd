@@ -31,4 +31,7 @@ echo.
 echo === 10) Uebernahme- und Scan-Fehler vom 14.11. (Laufwerk Y, offener Dialog, ausgegrauter Knopf) ===
 node tools-android\test-uebernahme-fixes.js || exit /b 1
 echo.
+echo === 11) Uebersetzung: Woerterbuch-Schluessel, Abdeckung und die 1.0.67-Fixes ===
+node tools-android\test-i18n.js || exit /b 1
+echo.
 echo Alle Pruefungen bestanden.

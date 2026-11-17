@@ -70,6 +70,7 @@ const execOn = () => S.settings.workspace.execEnabled !== false;
 /* ═════════════ Start ═════════════ */
 async function init() {
   const stored = await api.store.get('settings');
+  const firstRun = !stored || (typeof stored === 'object' && !Object.keys(stored).length);   // allererster Start: noch nie Einstellungen gespeichert
   S.settings = deepMerge(DEFAULTS, stored || {});
   // Einmalig (V43): Standard-Design ist Hell. Ein früher gespeichertes „Dunkel“ würde den neuen Standard sonst überschreiben.
   if (!S.settings.appearance.lightDefaultApplied) {
@@ -112,6 +113,7 @@ async function init() {
   }
   if (!S.settings.connections.some((c) => c.id === S.settings.activeConnection)) S.settings.activeConnection = S.settings.connections[0] ? S.settings.connections[0].id : '';
 
+  applyProfileOnce(firstRun);
   buildChrome();
   api.appInfo().then((i) => {
     const t = `Reuschler-IT - LLM Box v${i.version}`;
@@ -119,6 +121,9 @@ async function init() {
     document.title = t;
   });
   applyAppearance();
+  applyLanguage(S.settings.uiLang);
+  if (syncDefaultPrompt()) saveSettings();   // unveraenderter Standard-Prompt immer in Sprache/Profil-Laenge (auch wenn die Sprache schon gespeichert war)
+  if (firstRun) showLanguageChooser();       // allererster Start: Sprache waehlen lassen (nicht blockierend)
   applySpell();
   wireEvents();
   try { S.sync = await api.sync.get(); } catch { S.sync = { dir: '', deviceId: 'lokal', deviceName: 'Dieser Rechner' }; }
@@ -131,6 +136,54 @@ async function init() {
   renderConnSelect();
   renderFilePanel();
   refreshModels();
+}
+
+/* ═════════════ Uebernahme: Einstellungen neu in die Oberflaeche laden ═════════════
+   Eine Uebertragung (WLAN oder JSON-Datei) schreibt die Einstellungen nur in den
+   Datenspeicher. Die hier schon laufende Oberflaeche arbeitet jedoch mit dem S.settings
+   vom Programmstart - ohne erneutes Laden bleiben Verbindung, Modell, Parameter und
+   Workspace auf dem alten Stand, bis die App neu gestartet wird. Genau das wurde als
+   "nicht die richtigen Einstellungen uebertragen" gemeldet.
+   Schlimmer noch: der Debounce saveSettings() (app.js:36) schrieb kurz danach den alten
+   Speicherstand zurueck und ueberschrieb damit die gerade uebernommene Datei - u. a.
+   weil refreshModelInfo() bei fremdem Modell numCtx uebernimmt und speichert.
+   Diese Funktion wartet offene Schreiblaeufe ab, liest neu, fuehrt dieselben
+   Einmal-Korrekturen wie init() aus und holt dann Modelle und Chats neu. */
+async function applyIncomingSettings() {
+  await new Promise((r) => setTimeout(r, 700));            // laufenden saveSettings()-Debounce abwarten
+  const stored = await api.store.get('settings');
+  S.settings = deepMerge(DEFAULTS, stored || {});
+  if (!Array.isArray(S.settings.connections)) S.settings.connections = [];
+
+  // Dieselben Einmal-Korrekturen wie beim Start (init), damit eine uebernommene Datei nicht
+  // auf halber Migration stehen bleibt. Die V46-Bereinigung (alte Standard-Verbindungen
+  // loeschen) wird bewusst NICHT angewendet: sie wuerde frisch uebertragene Verbindungen
+  // mit denselben Standard-Adressen loeschen, obwohl der Nutzer sie gerade erst gewaehlt hat.
+  if (!S.settings.appearance.lightDefaultApplied) { S.settings.appearance.theme = 'light'; S.settings.appearance.lightDefaultApplied = true; }
+  if (stored && stored.pricing && !stored.pricing.eur) S.settings.pricing.eur = true;
+  // Bewusst anders formuliert als in init(): der Android-Build patcht die Zeile aus init()
+  // und verlangt dort einen eindeutigen Suchtext.
+  const wsIn = stored ? stored.workspace : null;
+  if (wsIn && wsIn.confirmWrites === false && !wsIn.approval) S.settings.workspace.approval = 'none';
+  if (!S.settings.promptDefaultV47) S.settings.promptDefaultV47 = true;
+  S.settings.connDefaultsV46 = true;
+  if (!S.settings.connections.some((c) => c.id === S.settings.activeConnection)) {
+    S.settings.activeConnection = S.settings.connections[0] ? S.settings.connections[0].id : '';
+  }
+
+  applyAppearance();
+  applySpell();
+  renderConnSelect();
+  updateToolsBtn();
+  renderFilePanel();
+  await refreshModels();          // Verbindungstest + Modelliste + Statuszeile
+  await loadChatList();
+  if (S.chatList.length) await openChat(S.chatList[0].id); else newChat();
+  renderStatus();
+  updateCtxMeter();
+
+  const c = activeConn();
+  return { verbindungen: S.settings.connections.length, verbindung: c.name, erreichbar: !S.modelsErr, modelle: S.models.length, modell: currentModel(), fehler: S.modelsErr || '' };
 }
 
 const THINK_LEVELS = [
@@ -618,11 +671,22 @@ function renderAll() {
   updatePermBtn();
 }
 
+/* Nach dem Sprachwechsel neu aufbauen, was aus Vorlagen entsteht. */
+function refreshLanguageUi() {
+  try { renderChatList(); } catch {}
+  try { renderStatus(); } catch {}
+  try { updateCtxMeter(); } catch {}
+  try { updateToolsBtn(); } catch {}
+  try { updateThinkBtn(); } catch {}
+  try { updatePermBtn(); } catch {}
+}
+
 function renderStatus() {
   const conn = activeConn();
   if (S.modelsErr) setConnStatus('err', `${conn.name}: nicht erreichbar`);
   else setConnStatus('ok', `${conn.name} · ${S.models.length} Modell${S.models.length === 1 ? '' : 'e'}${S.srvState ? ' · ' + S.srvState : ''}`);
-  $('#st-left').textContent = S.modelsErr ? S.modelsErr.split('\n')[0] : currentModel() ? 'Modell: ' + currentModel() : 'Kein Modell gewählt';
+  const trBusy = typeof TR !== 'undefined' && TR.busy.size ? ' · Gedankengang wird im Hintergrund übersetzt (belegt den Server)' : '';
+  $('#st-left').textContent = (S.modelsErr ? S.modelsErr.split('\n')[0] : currentModel() ? 'Modell: ' + currentModel() : 'Kein Modell gewählt') + trBusy;
   const t = S.chat ? chatTotals(S.chat) : { total: 0, prompt: 0, comp: 0, avgTps: null, tokSum: 0, secSum: 0, duration: 0, runs: 0 };
   const lv = S.live; // laufende Anfrage: Werte in Echtzeit dazurechnen
   let tokSum = t.tokSum;
@@ -697,15 +761,40 @@ function renderMessages() {
   msgs.forEach((m, i) => { if (m.role === 'assistant') lastAssistant = i; });
   const atRun = !!(S.generating && S.runChat && S.runChat === S.chat);
   const cs = ctxStart(S.chat);
-  msgs.forEach((m, i) => {
+
+  /* Fenster berechnen. Chat-Wechsel oder neu eingehende/entfernte Nachrichten setzen das Fenster
+     neu; sonst bleibt die vom Nutzer gewaehlte Ausdehnung erhalten. */
+  const key = (S.chat && S.chat.id) || '';
+  if (key !== vollKey) { vollKey = key; resetMsgFenster(); }
+  else if (vollAb >= msgs.length) resetMsgFenster();   // Nachrichten entfernt -> Fenster neu setzen
+  /* Waehrend die KI antwortet, kommen laufend Nachrichten dazu. Wanderndes Fenster: bleibt das
+     volle Fenster zu gross, rutscht seine Unterkante nach. Sonst waere nach einer langen Antwort
+     wieder der ganze Chat voll aufgebaut - genau der Fall, der beim Uebergeben an die KI hakte. */
+  else if (msgs.length - vollAb > MSG_VOLL + MSG_SCHRITT) vollAb = msgs.length - MSG_VOLL;
+  vollBis = msgs.length;
+  const von = Math.max(0, vollAb - MSG_KOMPAKT);     // darunter nur noch eine Sammelzeile
+  for (const i of [...aufgefaltet]) if (i < von || i >= msgs.length) aufgefaltet.delete(i);
+
+  if (von > 0) {
+    box.append(el('div', { class: 'msg-steps' },
+      el('button', { class: 'hint-btn', text: `‹ ${MSG_SCHRITT} ältere anzeigen`, onclick: () => { vollAb = Math.max(0, vollAb - MSG_SCHRITT); renderMessages(); } }),
+      el('span', { class: 'msg-steps-info', text: `${von} ältere Nachrichten sind ausgeblendet.` })));
+  }
+
+  for (let i = von; i < msgs.length; i++) {
+    const m = msgs[i];
     if (cs && i === cs) box.append(el('div', { class: 'ctx-divider' }, el('span', { html: icon('eraser', 14) + '<span>Kontext geleert – ab hier sieht die KI nur die Übergabe und was danach kommt</span>' })));
     if (atRun && S.runNode && S.runAm === m) box.append(S.runNode); // gerade streamende Antwort: derselbe Knoten läuft weiter
-    else {
+    else if (i < vollAb && !aufgefaltet.has(i)) {
+      const n = compactEl(m, i);                       // weiter zurueck: nur eine kompakte Zeile
+      if (cs && i < cs) n.classList.add('ctx-old');
+      box.append(n);
+    } else {
       const n = messageEl(m, i, i === lastAssistant);
       if (cs && i < cs && n.classList) n.classList.add('ctx-old');
       box.append(n);
     }
-  });
+  }
   if (atRun) {
     if (typeof TL !== 'undefined') for (const c of TL.cards.values()) box.append(c.node); // noch laufende Programme
     if (S.pendingApproval && S.pendingApproval.card) box.append(S.pendingApproval.card); // offene Rückfrage / Freigabe
@@ -769,6 +858,58 @@ function previewFile(f) {
     body = el('pre', { class: 'preview', text: t.length > 200000 ? t.slice(0, 200000) + '\n\n[… gekürzt]' : t });
   }
   openModal({ title: f.name, body, wide: true });
+}
+
+/* ───── Fensterweise Darstellung alter Nachrichten ─────
+   Ein grosser Chat kostet sonst alles: gemessen 2966 ms und 110.243 DOM-Knoten fuer 3402
+   Nachrichten (tools-android\perf-messages.js, 14.11.). Der Grund ist renderMessages(): es wirft
+   die ganze Liste weg (#messages-inner.innerHTML = '') und baut jede Nachricht einzeln wieder auf.
+   Deshalb werden weiter zurueck liegende Nachrichten nur als kompakte Zeile aufgebaut - der Inhalt
+   bleibt unveraendert gespeichert, es wird lediglich nichts angezeigt, bis der Nutzer ausklappt.
+   Voll aufgebaut wird ein Fenster um das Ende der Unterhaltung; neu eingehende Nachrichten sind
+   immer voll. Der Zustand haengt an der Chat-ID und betrifft ausschliesslich die Anzeige. */
+const MSG_VOLL = 60;          // so viele neueste Nachrichten stehen voll da
+const MSG_KOMPAKT = 200;      // darunter noch so viele als kompakte Zeile, dann eine Sammelzeile
+const MSG_SCHRITT = 100;      // pro "aeltere anzeigen" kommen diese dazu
+let vollKey = '';             // Chat, fuer den der Zustand gilt
+let vollAb = 0;               // ab diesem Index wird voll aufgebaut
+let vollBis = 0;              // Laenge des Chats beim letzten Aufbau (erkennt Anhaengen/Entfernen)
+const aufgefaltet = new Set();   // einzeln aufgeklappte Indizes
+
+function resetMsgFenster() {
+  const n = S.chat && S.chat.messages ? S.chat.messages.length : 0;
+  vollAb = Math.max(0, n - MSG_VOLL);
+  vollBis = n;
+  aufgefaltet.clear();
+}
+
+/* Kurzfassung fuer die kompakte Zeile: erste Zeile des Texts bzw. Werkzeugname. */
+function compactHint(m) {
+  let t = String(m.content || '').replace(/\s+/g, ' ').trim();
+  if (!t && m.role === 'tool') t = (m.name || '') + (m.args ? ' ' + JSON.stringify(m.args) : '');
+  if (!t) t = m.role === 'assistant' ? '(Antwort)' : m.role === 'tool' ? '(Werkzeug)' : '(leer)';
+  return t.length > 150 ? t.slice(0, 150) + '…' : t;
+}
+
+function compactEl(m, i) {
+  const rolle = m.role === 'user' ? 'Du' : m.role === 'tool' ? (m.name || 'Werkzeug') : (m.model || 'Assistent');
+  const node = el('div', { class: 'msg compact', role: 'button', tabindex: '0' },
+    el('span', { class: 'compact-role', text: rolle }),
+    el('span', { class: 'compact-hint', text: compactHint(m) }),
+    el('span', { class: 'compact-open', text: 'ausklappen' }));
+  /* Position halten: styles.css setzt overflow-anchor:none am Chat-Container, der Browser halt
+     die Position also nicht selbst. Ohne diesen Ausgleich wuerde das Aufklappen den Viewport um
+     die neue Hohe nach oben springen - der Nutzer faende sich woanders wieder. */
+  const auf = () => {
+    const sc = $('#messages');
+    const vomEnde = sc ? sc.scrollHeight - sc.scrollTop : 0;
+    aufgefaltet.add(i);
+    renderMessages();
+    if (sc && !S.stick) sc.scrollTop = Math.max(0, sc.scrollHeight - vomEnde);
+  };
+  node.addEventListener('click', auf);
+  node.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); auf(); } });
+  return node;
 }
 
 function messageEl(m, i, isLast) {
@@ -849,8 +990,10 @@ function renderAssistantParts(node, m, mode) {
   } else r.err.classList.add('hidden');
 
   const cut = !live && !m.error && m.finish === 'length';
-  r.note.classList.toggle('hidden', !cut);
+  const auto = !live && !m.error && !cut && !!m.autoContinued;
+  r.note.classList.toggle('hidden', !(cut || auto));
   if (cut) r.note.textContent = 'Die Antwort wurde abgeschnitten, weil ein Längenlimit erreicht wurde. Erhöhe „Max. Antwortlänge“ oder die Kontextlänge unter Einstellungen → Modell & Parameter.';
+  else if (auto) r.note.textContent = 'Die KI hat einen nächsten Schritt angekündigt, aber nichts ausgeführt. Die LLM Box hat sie automatisch zum Weitermachen aufgefordert.';
 
   if (!live) r.stats.innerHTML = statsHtml(m);
 }
@@ -1103,19 +1246,37 @@ function stopGeneration() {
   if (S.stopResolve) S.stopResolve(); // die Schleife wartet nicht mehr auf ein hängendes Werkzeug
 }
 
+/* Sprachschicht anwenden: Oberflaeche, Spracheingabe des Eingabefelds und
+   damit auch die Rechtschreibpruefung. Laeuft beim Start und nach jeder Aenderung
+   der Sprachauswahl in den Einstellungen. */
+function applyLanguage(lang) {
+  const l = (typeof LANGS !== 'undefined' && LANGS.some((x) => x.value === lang)) ? lang : 'de';
+  setLang(l);                                   // uebersetzt Oberflaeche und Werkzeugtexte
+  document.documentElement.setAttribute('lang', l);
+  applySpell();                                 // Wortbuecher folgen der Sprache
+  refreshLanguageUi();                          // Vorlagen (Statuszeile, Listen) neu aufbauen
+}
+
 function buildSystem() {
+  const lang = S.settings.uiLang || 'de';
   let s = S.settings.systemPrompt || '';
-  if (S.settings.appearance.thinkInGerman) s += (s ? '\n\n' : '') + 'Denke und überlege auf Deutsch (auch im Gedankengang).';
-  if (useTools()) {
-    s += `\n\nDu hast über Werkzeuge Zugriff auf einen Workspace-Ordner (${S.settings.workspace.path}). Verfügbar: list_files, search_text, read_file, edit_file, write_file${subOn() ? ', delegate_task' : ''}. Alle Pfade sind relativ zum Workspace. Der Kontext ist begrenzt: Lies große Dateien nie komplett, sondern finde die Stelle mit search_text und lies dann gezielt mit start_line/end_line. Lies eine Datei nicht erneut, wenn sie sich nicht geändert hat. Ändere vorhandene Dateien mit edit_file (kleine Ersetzungen) statt sie mit write_file komplett neu zu schreiben. Lies Dateien, bevor du Aussagen über ihren Inhalt machst. Schreibe oder ändere Dateien nur, wenn der Nutzer das wünscht. Erfinde keine Funktionen, Dateien oder Zeilen: Was du nicht gelesen hast, kennst du nicht.${askOn() ? ASK_HINT : ''}${hoOn() ? ' Wird die Arbeit sehr lang oder weist dich die App auf einen vollen Kontext hin, rufe propose_new_session auf (mit vollständiger Übergabe in summary und next_steps) und beende dann deine Antwort. Schreibe das nicht nur als Text.' : ''}${subOn() ? ' Für umfangreiche Erkundung oder getrennte Teilfragen nutze delegate_task: Der Unteragent arbeitet mit eigenem Kontext, darf nur lesen und liefert dir eine Zusammenfassung. Mehrere Unteragenten kannst du in einer Antwort gleichzeitig starten.' : ''}`;
-    if (execOn()) {
-      const win = /Win/i.test(navigator.platform || navigator.userAgent);
-      s += `\n\nDu kannst außerdem Programme auf dem Rechner des Nutzers (${win ? 'Windows' : 'Desktop'}) nutzen: check_tool (Programm vorhanden?), run_command (Befehl ausführen${win ? ', Standard cmd, optional shell="powershell"' : ''}), install_tool (fehlendes Programm nach Rückfrage installieren). Das sind echte Werkzeuge: Du kannst sie selbst aufrufen und darfst nie behaupten, du hättest keinen Zugriff auf Programme. Vorgehen: 1) Mit check_tool prüfen, ob das Programm da ist (auch Namen wie apktool, jadx, java, python). 2) Fehlt es und wird es gebraucht, rufe install_tool auf: Der Nutzer bekommt eine Rückfrage mit dem genauen Befehl. Installiere nie ungefragt und nie etwas, das die Aufgabe nicht braucht. 3) Mit run_command ausführen. Befehle müssen nicht-interaktiv laufen. Lange Ausgaben werden gekürzt: filtere sie oder schreibe sie in eine Datei im Workspace und lies sie gezielt. Lege Ergebnisse (z. B. entpackte APKs) in einem Unterordner des Workspace ab, damit du sie mit read_file und search_text untersuchen kannst. Führe keine zerstörerischen Befehle aus (Löschen, Formatieren, Systemeinstellungen), außer der Nutzer verlangt es ausdrücklich. Du bist für Analyse und Entwicklung zuständig. Lies Ausgaben genau und berichte ehrlich, wenn ein Befehl fehlschlägt.`;
-    }
+  /* Sprachregel fuer die KI: Steht noch der unveraenderte Standardprompt drin, wird er
+     durch seine englische bzw. franzoesische Fassung ersetzt. Hat der Nutzer seinen
+     Prompt selbst bearbeitet, bleibt er erhalten und bekommt nur die Sprachregel. */
+  if (isDefaultPrompt(s)) {
+    s = defaultPromptFor(lang, promptCompact());   // unveraendertes Standardprompt: Fassung fuer Sprache und Profil (kurz oder ausfuehrlich)
+  } else if (lang !== 'de') {
+    s += (s ? '\n\n' : '') + LANG_RULE[lang];
   }
-  else if (askAlone()) s += `\n\n${ASK_HINT.trim()}`;
+  if (S.settings.appearance.thinkInGerman) s += (s ? '\n\n' : '') + T('Denke und überlege auf Deutsch (auch im Gedankengang).');
+  if (useTools()) {
+    const list = `list_files, search_text, read_file, edit_file, write_file${subOn() ? ', delegate_task' : ''}`;
+    s += part('toolsHint', lang, S.settings.workspace.path, list) + part('actHint', lang) + (askOn() ? part('askHint', lang) : '') + (hoOn() ? part('handoffHint', lang) : '') + (subOn() ? part('subHint', lang) : '');
+    if (execOn()) s += part('execHint', lang, /Win/i.test(navigator.platform || navigator.userAgent));
+  } else if (askAlone()) s += `\n\n${part('askHint', lang).trim()}`;
   return s.trim();
 }
+
 const ASK_HINT = ' Wenn dir Angaben fehlen, die Aufgabe mehrdeutig ist oder es mehrere sinnvolle Wege gibt, stelle dem Nutzer mit ask_user eine Rückfrage mit 2 bis 5 konkreten Antwortvorschlägen, statt zu raten, und warte auf die Antwort.';
 
 
@@ -1162,7 +1323,7 @@ function applyDrops(messages) {
 
 function compactMessages(messages, system) {
   const ws = S.settings.workspace;
-  const ctx = +S.settings.params.numCtx || 0;
+  const ctx = effCtx();
   const info = { newly: 0, before: 0, after: 0, limit: 0, over: false };
   let out = applyDrops(messages);
   info.before = info.after = estimateWire(out, system);
@@ -1484,6 +1645,39 @@ function stopLivePoll() {
   livePoll = null;
 }
 
+// Endet die Antwort ohne Werkzeugaufruf mit einer Ankündigung („Jetzt der Korrekturlauf am Gerät:“), hat das Modell den nächsten Schritt nur angekündigt
+function looksUnfinished(text) {
+  const s = LLM.splitThink(text || '').answer.trim();
+  if (!s) return false;
+  const last = s.split('\n').filter((l) => l.trim()).pop().trim();
+  if (/(:|…|\.\.\.)$/.test(last)) return true; // klassische Ankündigung („Jetzt der Korrekturlauf:“)
+  // Ankündigung mit Punkt am Ende („Ich baue jetzt den Test.“): Das war in der Praxis der häufigste Abbruch lokaler Modelle.
+  if (s.length > 700 || /\?\s*$/.test(last)) return false; // lange Antworten und Rückfragen an den Nutzer sind keine Ankündigung
+  const body = last.replace(/[*_`]/g, '').replace(/[.!\s]+$/, '');
+  const sentences = body.split(/(?<=[.!?])\s+/);
+  const lastSentence = (sentences[sentences.length - 1] || '').trim();
+  const DONE = /\b(habe|hab|haben|bin|wurde|wurden|fertig|erledigt|abgeschlossen|have|has|had|done|finished|completed|ready|j['’]ai|ai\s+terminé|suis|terminé|fini|achevé)\b/i;
+  const START = /^(ich|jetzt|nun|als\s+n[äa]chstes|zuerst|zun[äa]chst|dann|danach|lass\s+mich|i['’]ll|i\s+will|i\s+am|i['’]m|i\s+(?:now|first|then|check|build|write|read|fix|replace|add|create|search|run|start|look|test)|let\s+me|now|next|first|then|je\s|j['’]|maintenant|ensuite|d['’]abord|puis|voyons)/i;
+  return START.test(lastSentence) && !DONE.test(lastSentence);
+}
+
+// Textbausteine für die automatische Aufforderung, in der Sprache der Oberfläche (sie gehen an die KI)
+const NUDGE_TEXT = {
+  de: 'Du hast einen nächsten Schritt angekündigt, aber keinen Werkzeugaufruf ausgeführt. Rufe jetzt in DIESER Antwort das passende Werkzeug auf. Schreibe nur dann Text ohne Werkzeugaufruf, wenn die Aufgabe vollständig erledigt ist (dann mit abschließender Zusammenfassung).',
+  en: 'You announced a next step but did not make a tool call. Call the appropriate tool now, in THIS reply. Only write text without a tool call if the task is completely finished (then with a final summary).',
+  fr: 'Vous avez annoncé une prochaine étape sans appeler d’outil. Appelez maintenant l’outil approprié, dans CETTE réponse. N’écrivez du texte sans appel d’outil que si la tâche est entièrement terminée (avec une synthèse finale).',
+};
+
+/* Wirksames Kontextfenster: Viele lokale Modelle (besonders stark quantisierte) werden weit unter dem Server-Fenster unzuverlässig:
+   Werkzeugaufrufe fehlen, Schlüssel werden erfunden, Antworten enden nach einer Ankündigung. Deshalb gelten Komprimierung und
+   Übergabe-Hinweis für min(Server-Fenster, Obergrenze). Standard 64.000 Tokens; 0 = nur das Server-Fenster. */
+function effCtx() {
+  const max = +S.settings.params.numCtx || 0;
+  const raw = S.settings.workspace.ctxSoftCap;
+  const cap = raw === undefined || raw === null || raw === '' ? 64000 : +raw;
+  return cap > 0 && max ? Math.min(max, cap) : max;
+}
+
 async function generate() {
   trAbortAll(); // laufende Übersetzungen nicht mit dem Agenten konkurrieren lassen
   const chat = S.chat;
@@ -1513,6 +1707,8 @@ async function generate() {
   let finished = false;
   let nudged = false;
   let nudgeNext = false;
+  let nudgeText = '';
+  let autoNudges = 0; // automatische Aufforderungen in Folge (nach einem Werkzeugaufruf wieder 0)
   const heartbeat = setInterval(() => saveChatNow(chat), 45000); // Lebenszeichen für andere Rechner (und Zwischenstand)
 
   try {
@@ -1563,10 +1759,12 @@ async function generate() {
       };
 
       const nudgeNow = nudgeNext;
+      const nudgeMsg = nudgeText || 'Fahre mit der Aufgabe fort. Nutze bei Bedarf weitere Werkzeuge oder fasse das Ergebnis für mich zusammen.';
       nudgeNext = false;
+      nudgeText = '';
       const sysText = buildSystem();
       const cs = ctxStart(chat);
-      const rawMsgs = nudgeNow ? [...chat.messages.slice(cs, -1), { role: 'user', content: 'Fahre mit der Aufgabe fort. Nutze bei Bedarf weitere Werkzeuge oder fasse das Ergebnis für mich zusammen.' }] : chat.messages.slice(cs, -1);
+      const rawMsgs = nudgeNow ? [...chat.messages.slice(cs, -1), { role: 'user', content: nudgeMsg }] : chat.messages.slice(cs, -1);
       const cmp = compactMessages(rawMsgs, sysText);
       if (cmp.info.newly) { am.compacted = { n: cmp.info.newly, before: cmp.info.before, after: cmp.info.after }; saveChatSoon(chat); }
       if (cmp.info.over && S.warnedOver !== chat.id) {
@@ -1692,10 +1890,21 @@ async function generate() {
       renderAssistantParts(node, am, 'final');
       saveChatSoon(chat); // andere Rechner sehen jeden Schritt
 
+      // Nur angekündigt, nichts ausgeführt: höchstens dreimal in Folge automatisch zum Weitermachen auffordern, statt still zu enden
+      if (!am.error && !am.aborted && !S.stopRequested && !am.toolCalls.length && useTools() && autoNudges < 3 && am.finish !== 'length' && looksUnfinished(am.content)) {
+        autoNudges++;
+        nudgeNext = true;
+        nudgeText = NUDGE_TEXT[S.settings.uiLang] || NUDGE_TEXT.de;
+        am.autoContinued = true;
+        renderAssistantParts(node, am, 'final');
+        saveChatSoon(chat);
+        continue;
+      }
       if (am.error || am.aborted || S.stopRequested || !am.toolCalls.length) {
         finished = true;
         break;
       }
+      autoNudges = 0;
 
       // Unteragenten starten sofort und laufen gleichzeitig; die übrigen Werkzeuge laufen der Reihe nach
       // Für jeden Werkzeugaufruf sofort eine Live-Karte (Status + Ausgabe), damit man sieht, worauf die KI gerade wartet
@@ -2002,10 +2211,32 @@ function readImageFile(file) {
   });
 }
 
+// Höhe des Eingabefelds über ein unsichtbares Spiegel-Feld messen. Das echte Feld wird NICHT kurz auf "auto" zusammengeklappt:
+// Sonst schrumpft/wächst der Nachrichtenbereich bei jedem Zeichen, der Browser klemmt scrollTop und die Antwort springt hoch und runter.
+let _asMirror = null;
 function autosize() {
   const ta = $('#input');
-  ta.style.height = 'auto';
-  ta.style.height = Math.min(ta.scrollHeight, 240) + 'px';
+  if (!_asMirror) {
+    _asMirror = document.createElement('textarea');
+    _asMirror.setAttribute('aria-hidden', 'true');
+    _asMirror.tabIndex = -1;
+    document.body.appendChild(_asMirror);
+  }
+  const cs = getComputedStyle(ta);
+  const m = _asMirror;
+  m.style.cssText = 'position:fixed;left:-9999px;top:0;visibility:hidden;pointer-events:none;height:0;min-height:0;max-height:none;overflow:hidden;resize:none;' +
+    ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'textIndent', 'whiteSpace', 'wordBreak', 'overflowWrap', 'tabSize',
+      'paddingTop', 'paddingBottom', 'paddingLeft', 'paddingRight', 'borderTopWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderRightWidth', 'boxSizing']
+      .map((k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()) + ':' + cs[k]).join(';') + ';width:' + ta.clientWidth + 'px;' +
+    'border-left-width:0;border-right-width:0;border-style:solid';
+  m.value = ta.value || ' ';
+  const h = Math.min(m.scrollHeight, 240);
+  m.value = '';
+  if (ta.style.height === h + 'px') return;
+  const msgs = $('#messages');
+  const top = msgs ? msgs.scrollTop : 0;
+  ta.style.height = h + 'px';
+  if (msgs && Math.abs(msgs.scrollTop - top) > 1 && !S.stick) msgs.scrollTop = top; // Leseposition halten, wenn der Nutzer nicht am Ende klebt
 }
 
 /* ═════════════ Workspace-Panel ═════════════ */

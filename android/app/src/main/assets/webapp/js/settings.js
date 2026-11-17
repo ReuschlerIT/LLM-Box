@@ -5,6 +5,11 @@ const DEFAULTS = {
     { id: 'strata_api', name: 'Strata_API', type: 'openai', baseUrl: 'http://localhost:8080/v1', apiKey: '', extraParams: true, thinkMode: 'template' },
   ],
   activeConnection: 'strata_api',
+  // Sprache der gesamten Oberflaeche und der KI-Antworten: de | en | fr.
+  // Absichtlich HIER (nicht in appearance): der Android-Build patcht Zeilen aus
+  // appearance (enterToSend, theme) mit exaktem Suchtext - neue Felder daneben
+  // liessen diese Patches ins Leere laufen.
+  uiLang: 'de',
   spell: { enabled: true, lang: 'de-en' },
   model: '',
   thinking: 'auto',
@@ -62,6 +67,119 @@ kein Mittel für Zugriff auf fremde, nicht dir gehörende Konten/Server.`,
   pricing: { enabled: true, eur: true, preset: 'avg', priceIn: 1.8, priceOut: 9.6, usdToEur: 0.9 },
   workspace: { path: '', toolsEnabled: false, askUser: true, askUserAlways: false, subagents: true, subagentSteps: 12, handoff: true, handoffMode: 'clear', handoffPct: 70, handoffAutoSend: true, approval: 'write', execEnabled: false, execTimeout: 120, maxSteps: 25, readKB: 40, autoCompact: true, ctxBudgetPct: 80, keepToolResults: 3, maxFileKB: 512, maxFiles: 60, maxTotalKB: 1024, ignore: 'node_modules,.git,.venv,__pycache__,dist,build,.next,.idea,.vscode' },
 };
+
+/* ───── Modellprofile (V65) ─────
+   „iq3“: Voreinstellung fuer kleine bzw. stark quantisierte Modelle (IQ3/Q3, z. B. qwen3.x-flash-iq3_s) im Werkzeugbetrieb.
+   Solche Modelle werden schon weit unter ihrem Kontextfenster unzuverlaessig (vergessene Werkzeugaufrufe, erfundene Namen, vorzeitiges Ende).
+   Deshalb: ruhigeres Sampling, keine Wiederholungsstrafe (stoert Code/JSON), begrenzte Antwortlaenge, fruehere Kontext-Verschlankung. */
+const PROFILES = {
+  iq3: {
+    params: { temperature: 0.3, topP: 0.9, topK: 20, minP: 0.05, repeatPenalty: 1.0, presencePenalty: null, maxTokens: 12288 },
+    workspace: { ctxSoftCap: 64000, ctxBudgetPct: 80, keepToolResults: 4, handoffPct: 60, maxSteps: 40, subagentSteps: 8 },
+  },
+  std: {
+    params: { temperature: 0.7, topP: 0.9, topK: 40, minP: null, repeatPenalty: 1.1, presencePenalty: null, maxTokens: null },
+    workspace: { ctxSoftCap: 0, ctxBudgetPct: 80, keepToolResults: 3, handoffPct: 70, maxSteps: 25, subagentSteps: 12 },
+  },
+};
+Object.assign(DEFAULTS.params, PROFILES.iq3.params);
+Object.assign(DEFAULTS.workspace, PROFILES.iq3.workspace);
+DEFAULTS.modelProfile = 'iq3';
+
+/* Steht im Feld „System-Prompt“ noch ein unveraenderter Standard (egal in welcher Sprache/Laenge), wird er durch die Fassung der gewaehlten Sprache
+   und des Profils ersetzt - damit das Feld zeigt, was tatsaechlich gesendet wird. Eigene Texte bleiben unberuehrt. */
+function syncDefaultPrompt() {
+  const cur = S.settings.systemPrompt;
+  if (!isDefaultPrompt(cur)) return false;
+  const next = defaultPromptFor(S.settings.uiLang || 'de', promptCompact());
+  if (String(cur).replace(/\r\n/g, '\n').trim() === next.trim()) return false;
+  S.settings.systemPrompt = next;
+  return true;
+}
+
+function applyProfile(key) {
+  const p = PROFILES[key];
+  if (!p) return false;
+  Object.assign(S.settings.params, p.params);
+  Object.assign(S.settings.workspace, p.workspace);
+  S.settings.modelProfile = key;
+  syncDefaultPrompt();                                   // kurz (iq3) bzw. ausfuehrlich (std)
+  if (typeof applyToolLanguage === 'function') applyToolLanguage();   // Werkzeugbeschreibungen passend zum Profil
+  return true;
+}
+// Einmalig (V65): bestehende Installationen bekommen das IQ3-Profil genau einmal; danach gilt, was der Nutzer einstellt.
+function applyProfileOnce(silent) {
+  if (!S.settings.profileIq3V65) {
+    S.settings.profileIq3V65 = true;
+    S.settings.promptSyncV66 = true;
+    applyProfile('iq3');
+    api.store.set('settings', S.settings);
+    if (!silent) setTimeout(() => toast(T('Modellprofil „Kleines / stark quantisiertes Modell“ angewendet. Änderbar unter Einstellungen → Modell & Parameter.'), 7000), 1500);
+    return;
+  }
+  // Einmalig (V66): Wer das Profil schon hat, bekommt den Standard-Prompt jetzt in Sprache und Profil-Laenge (nur wenn unveraendert).
+  if (!S.settings.promptSyncV66) {
+    S.settings.promptSyncV66 = true;
+    syncDefaultPrompt();
+    api.store.set('settings', S.settings);
+  }
+}
+
+/* ───── Erster Start: Sprachauswahl ─────
+   Erscheint nur, wenn es noch gar keine gespeicherten Einstellungen gab (neue Installation). Bestehende Installationen behalten ihre Sprache.
+   Der Dialog ist dreisprachig und wird nie uebersetzt (data-i18n-off); er laesst sich nicht wegklicken, damit die Wahl nicht uebersprungen wird. */
+function showLanguageChooser() {
+  const root = document.querySelector('#modal-root');
+  if (!root || root.querySelector('.lang-pick')) return;
+  const loc = String(navigator.language || 'de').toLowerCase();
+  const suggested = loc.startsWith('de') ? 'de' : loc.startsWith('fr') ? 'fr' : 'en';   // Vorschlag nach Systemsprache (andere Sprachen: Englisch)
+  const back = el('div', { class: 'modal-back lang-pick', 'data-i18n-off': '' });
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); return; }       // nicht wegklickbar
+    if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    const bs = [...back.querySelectorAll('.lang-opt')];
+    let i = bs.indexOf(document.activeElement);
+    if (i < 0) i = Math.max(0, bs.findIndex((b) => b.classList.contains('suggested')));   // Fokus verloren: vom Vorschlag aus weiter
+    const next = bs[(i + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + bs.length) % bs.length];
+    if (next) { next.focus(); e.preventDefault(); }
+  };
+  // Fokus-Sperre: andere Teile des Starts (Eingabefeld) holen sich den Fokus; solange der Dialog offen ist, gehoert er dem Dialog
+  const guard = (e) => {
+    if (back.contains(e.target)) return;
+    const f = back.querySelector('.lang-opt.suggested') || back.querySelector('.lang-opt');
+    if (f) f.focus();
+  };
+  const choose = (lang) => {
+    S.settings.uiLang = lang;
+    S.settings.langChosen = true;
+    syncDefaultPrompt();                         // Standard-Prompt in der gewaehlten Sprache
+    applyLanguage(lang);
+    api.store.set('settings', S.settings);       // sofort sichern (nicht erst nach der Verzoegerung von saveSettings)
+    document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('focusin', guard, true);
+    back.remove();
+    const ta = document.querySelector('#input, #composer textarea');
+    if (ta) ta.focus();                          // Fokus zurueck ins Eingabefeld
+  };
+  const opts = LANGS.map((l) => el('button', { class: 'lang-opt' + (l.value === suggested ? ' suggested' : ''), type: 'button', onclick: () => choose(l.value) },
+    el('span', { text: l.label }), el('span', { class: 'code', text: l.value.toUpperCase() })));
+  const card = el('div', { class: 'modal lang-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Sprache / Language / Langue' },
+    typeof brandMark === 'function' ? el('div', { class: 'lang-mark', html: brandMark('brand-mark') }) : null,
+    el('h2', { text: 'Sprache wählen' }),
+    el('div', { class: 'lang-sub', text: 'Choose your language · Choisissez votre langue' }),
+    el('div', { class: 'lang-opts' }, opts),
+    el('div', { class: 'lang-note' },
+      el('div', { text: 'Später änderbar unter Einstellungen → Darstellung.' }),
+      el('div', { text: 'You can change this later under Settings → Appearance.' }),
+      el('div', { text: 'Modifiable plus tard sous Réglages → Apparence.' })));
+  back.append(card);
+  back.addEventListener('mousedown', (e) => { if (e.target === back) e.preventDefault(); });   // Klick daneben: Fokus bleibt im Dialog
+  root.append(back);
+  document.addEventListener('keydown', onKey, true);
+  document.addEventListener('focusin', guard, true);
+  const first = back.querySelector('.lang-opt.suggested') || back.querySelector('.lang-opt');
+  if (first) first.focus();
+}
 
 const PRESETS = [
   { name: 'Ollama', type: 'ollama', baseUrl: 'http://localhost:11434' },
@@ -357,8 +475,31 @@ function tabModel() {
   const [tr, tn] = bindSlider(p + 'temperature', 0, 2, 0.05);
   const [pr, pn] = bindSlider(p + 'topP', 0, 1, 0.05);
   const [rr, rn] = bindSlider(p + 'repeatPenalty', 0.5, 2, 0.05);
+  const profileRow = frow('Modellprofil', 'Setzt Temperatur, Top-K, Wiederholungsstrafe, Antwortlänge, Kontext-Obergrenze und Schrittlimit auf erprobte Werte. „Kleines / stark quantisiertes Modell“ ist für IQ3/Q3-Modelle mit Werkzeugen gedacht und verhindert vor allem Abbrüche. Es nutzt außerdem einen kurzen System-Prompt mit kurzen Werkzeugbeschreibungen (spart rund 1.400 Tokens je Anfrage). Bei Verbindungen mit „Sampling dem Server überlassen“ wirken nur die Kontext- und Schritt-Werte.', (() => {
+    const sel = el('select', {}, [
+      el('option', { value: 'iq3', text: 'Kleines / stark quantisiertes Modell (IQ3/Q3)' }),
+      el('option', { value: 'std', text: 'Standard (große oder Cloud-Modelle)' }),
+    ]);
+    sel.value = S.settings.modelProfile === 'std' ? 'std' : 'iq3';
+    const btn = el('button', { class: 'btn sm', text: 'Profil anwenden', onclick: () => {
+      applyProfile(sel.value);
+      saveSettings();
+      toast(T('Profil angewendet.'), 3000);
+      const pane = document.querySelector('.settings .pane');
+      if (pane) { pane.innerHTML = ''; pane.append(tabModel()); }
+    } });
+    return [sel, btn];
+  })());
   return el('div', {},
+    profileRow,
     frow('System-Prompt', 'Wird jeder Unterhaltung vorangestellt.', bindTextarea('systemPrompt', 6), true),
+    frow('Standard-System-Prompt', 'Ein unveränderter Standard-Prompt folgt automatisch der Sprache und dem Modellprofil (kurz für IQ3/Q3, ausführlich für „Standard“). Der Knopf stellt ihn für die aktuelle Sprache und das Profil wieder her; eigene Änderungen gehen dabei verloren.', el('button', { class: 'btn sm', text: 'Standard-Prompt wiederherstellen', onclick: () => {
+      S.settings.systemPrompt = defaultPromptFor(S.settings.uiLang || 'de', promptCompact());
+      saveSettings();
+      toast(T('System-Prompt zurückgesetzt.'), 3000);
+      const pane = document.querySelector('.settings .pane');
+      if (pane) { pane.innerHTML = ''; pane.append(tabModel()); }
+    } })),
     frow('Temperatur', 'Niedrig = sachlich und stabil, hoch = kreativ.', [tr, tn]),
     frow('Top-P', 'Nucleus-Sampling.', [pr, pn]),
     frow('Top-K', 'Nur Ollama und „Erweiterte Parameter“.', bindNumber(p + 'topK', { min: 0, max: 500 })),
@@ -443,8 +584,24 @@ function tabAppearance() {
     a.custom = a.custom || { dark: {}, light: {} };
     const cust = (a.custom[th] = a.custom[th] || {});
 
-    /* Farbschemata */
+    /* Sprache: gilt fuer die gesamte Oberflaeche (Knopfe, Bezeichnungen, Dialoge,
+       Statuszeile) und bestimmt ueber den Systemprompt auch die Antwortsprache der KI. */
     wrap.append(
+      el('h3', { text: 'Sprache' }),
+      frow('Sprache der App', 'Bestimmt Beschriftungen, Buttons, Hinweise und Dialoge. Die KI antwortet ebenfalls in dieser Sprache; deine eigenen Chat-Texte bleiben unveraendert.', (() => {
+        const s = el('select', { 'data-i18n-off': '' }, LANGS.map((l) => el('option', { value: l.value, text: l.label }))); // Sprachnamen bleiben in der eigenen Sprache
+        s.value = S.settings.uiLang || 'de';
+        s.addEventListener('change', () => {
+          S.settings.uiLang = s.value;
+          syncDefaultPrompt();                    // unveraenderter Standard-Prompt folgt der Sprache
+          saveSettings();
+          applyLanguage(S.settings.uiLang);
+          // Der Dialog wird neu aufgebaut, damit alle Beschriftungen sofort in der
+          // neuen Sprache stehen (einzelne Knoten uebersetzt sonst nur der Observer).
+          render();
+        });
+        return s;
+      })()),
       el('h3', { text: 'Farbschema' }),
       el('div', { class: 'preset-grid' }, THEME_PRESETS.map((p) => {
         const d = DEFAULT_COLORS[p.theme];
@@ -766,6 +923,7 @@ function tabWorkspace() {
       frow('Max. Werkzeug-Schritte am Stück', 'Danach hält die KI an und du kannst mit „Weitermachen“ fortfahren.', bindNumber('workspace.maxSteps', { min: 1, max: 200, placeholder: '25' })),
       el('h3', { text: 'Kontext-Verwaltung für KI-Werkzeuge' }),
       frow('Alte Werkzeug-Ausgaben automatisch entfernen', 'Wird der Kontext knapp, ersetzt die App alte Datei-Inhalte im Verlauf durch eine Kurznotiz. Der Chat selbst bleibt unverändert.', bindSwitch('workspace.autoCompact')),
+      frow('Arbeitskontext-Obergrenze (Tokens)', 'Obergrenze für Komprimierung und Übergabe-Hinweis, unabhängig vom Server-Fenster. Lokale Modelle, besonders stark quantisierte (z. B. IQ3), werden schon weit unter ihrem Fenster unzuverlässig: Sie kündigen Schritte an, ohne Werkzeuge aufzurufen, und erfinden Details. Standard 64000. 0 = nur das Server-Fenster zählt.', bindNumber('workspace.ctxSoftCap', { min: 0, step: 1000, placeholder: '64000' })),
       frow('Kontext-Budget (%)', 'Ab diesem Anteil des Fensters (abzüglich Platz für die Antwort) wird verschlankt.', bindNumber('workspace.ctxBudgetPct', { min: 30, max: 95, placeholder: '80' })),
       frow('Letzte Werkzeug-Ergebnisse behalten', 'So viele der neuesten Ergebnisse bleiben immer vollständig erhalten.', bindNumber('workspace.keepToolResults', { min: 0, max: 20, placeholder: '3' })),
       frow('Max. Größe pro Datei-Lesen (KB)', 'Größere Dateien liefert die KI nur abschnittsweise (start_line/end_line). 40 KB ≈ 10.000 Tokens.', bindNumber('workspace.readKB', { min: 4, placeholder: '40' })),
@@ -811,7 +969,7 @@ function syncEveryRow(sy, refresh) {
   // zeigen, damit das Feld nicht stumm auf „Echtzeit“ zurückspringt und ein anderer Wert
   // angezeigt wird als tatsächlich gesetzt ist.
   let shown = SYNC_STEPS.some((s) => s.ms === cur) ? cur : SYNC_STEPS.reduce(
-    (best, s) => Math.abs(s.ms - cur) < Math.abs(best.ms - cur) ? s.ms : best.ms, SYNC_STEPS[0].ms);
+    (best, s) => (Math.abs(s.ms - cur) < Math.abs(best.ms - cur) ? s : best), SYNC_STEPS[0]).ms; // Objekt-Akkumulator (vorher Zahl -> TypeError bei Werten ohne exakte Stufe)
   sel.value = String(shown);
   const hintEl = el('div', { class: 'fhint' });
   const setHint = () => {

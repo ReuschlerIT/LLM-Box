@@ -732,3 +732,118 @@ body.gen *, body.gen *::before, body.gen *::after { animation: none !important; 
 .tr-qr-ctl { display: flex; gap: 8px; align-items: center; }
 .tr-qr-info { text-align: center; max-width: 440px; }
 .tr-note p { margin: 0 0 8px; line-height: 1.5; }
+
+
+/* ═════════════ Einstellungen V65: einheitliches Raster ═════════════
+   Absichtlich als eigener Block am Dateiende: Die vorhandenen Regeln bleiben unveraendert (der Android-Build sucht in dieser Datei
+   feste Textstellen), die Regeln hier ueberschreiben sie ueber die Reihenfolge.
+   Prinzip: Jede Zeile hat zwei Spalten. Links Beschriftung + Hilfetext (nimmt den Rest der Breite, bricht erst bei Zeilenende um),
+   rechts eine Steuerungsspalte fester Breite. Alle Felder darin sind gleich breit und gleich hoch. */
+:root { --set-ctrl-w: 380px; --set-ctrl-h: 36px; }
+
+.modal.wide { width: min(1120px, 96vw); height: min(800px, 94vh); }
+
+.settings nav { width: 268px; padding: 12px 10px; gap: 3px; }
+.settings nav button { white-space: nowrap; padding: 9px 12px; font-size: 14px; }
+.settings nav button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.settings .pane { container-type: inline-size; padding: 4px 32px 32px; }
+.pane h3 { margin: 28px 0 4px; font-size: 12.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); font-weight: 700; }
+.pane h3:first-child { margin-top: 18px; }
+
+.frow { grid-template-columns: minmax(0, 1fr) clamp(300px, 46cqw, var(--set-ctrl-w)); gap: 36px; align-items: center; padding: 15px 0; }
+.frow.stack { grid-template-columns: minmax(0, 1fr); gap: 10px; align-items: stretch; }
+.flabel { min-width: 0; }
+.flabel > div:first-child { font-size: 14px; font-weight: 550; line-height: 1.35; }
+.flabel .fhint { font-size: 12.5px; line-height: 1.55; margin-top: 3px; max-width: 70ch; }
+
+/* Steuerungsspalte */
+.frow:not(.stack) > .fctrl { width: 100%; max-width: none; gap: 10px; align-items: center; }
+.pane input[type="text"], .pane input[type="password"], .pane input[type="number"], .pane input[type="search"], .pane input[type="url"],
+.pane select, .pane .fctrl > .btn, .pane .fctrl > button {
+  box-sizing: border-box; height: var(--set-ctrl-h); font-size: 13.5px; border-radius: 9px;
+}
+.pane input[type="text"], .pane input[type="password"], .pane input[type="number"], .pane input[type="search"], .pane input[type="url"] { padding: 0 12px; }
+.pane select { width: 100%; max-width: none; padding: 0 34px 0 12px; text-overflow: ellipsis; }
+.fctrl > input[type="text"], .fctrl > input[type="password"], .fctrl > input[type="number"]:only-child, .fctrl > select { flex: 1 1 100%; width: 100%; min-width: 0; }
+.fctrl > input[type="range"] { flex: 1 1 140px; min-width: 100px; }
+.fctrl > input[type="range"] + input[type="number"] { width: 84px; flex: 0 0 84px; text-align: center; }
+.fctrl:has(> input[type="range"]) > input[type="number"] { width: 84px; flex: 0 0 84px; text-align: center; }
+.fctrl:not(:has(> input[type="range"])) > input[type="number"] { flex: 1 1 0; width: auto; min-width: 0; }
+.pane .fctrl > .btn, .pane .fctrl > button:not(.icon-btn):not(.preset):not(.swatch) { padding: 0 16px; font-size: 13.5px; white-space: nowrap; flex: 1 1 auto; }
+.fctrl > .btn:only-child, .fctrl > button.btn.sm:only-child { flex: 1 1 100%; }
+.fctrl input[type="color"] { height: var(--set-ctrl-h); width: 48px; min-width: 48px; border-radius: 9px; }
+.pane textarea { box-sizing: border-box; font-size: 13.5px; border-radius: 9px; padding: 10px 12px; }
+.frow.stack .fctrl textarea { width: 100%; min-height: 220px; }
+
+/* Zeilen mit mehreren Eingabefeldern ueber die volle Breite (z. B. Netzwerkordner): gleichmaessiges Raster */
+.frow.stack > .fctrl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: stretch; width: 100%; }
+.frow.stack > .fctrl > :is(input, select, textarea) { width: 100% !important; max-width: none !important; min-width: 0 !important; margin: 0; }
+.frow.stack > .fctrl > :is(.btn, button) { margin: 0; }
+.frow.stack > .fctrl > input:first-child { grid-column: 1 / -1; }
+.frow.stack > .fctrl > div, .frow.stack > .fctrl > p, .frow.stack > .fctrl > pre { grid-column: 1 / -1; font-size: 12.5px; line-height: 1.55; color: var(--text-dim); }
+.frow.stack > .fctrl > textarea { grid-column: 1 / -1; }
+
+.frow.stack > .fctrl > .btn, .frow.stack > .fctrl > button.btn { grid-column: 1 / -1; justify-self: start; width: auto; min-width: 240px; }
+/* Zeilen mit Beschriftung/Pfad links und Knoepfen daneben (z. B. Workspace-Ordner): Knoepfe behalten ihre natuerliche Breite */
+.pane .fctrl > div ~ .btn, .pane .fctrl > div ~ button { flex: 0 0 auto !important; }
+.pane .fctrl > div[style*="flex"] { flex: 1 1 0; min-width: 0; }
+
+/* Farbzeilen: ein festes Raster statt fuenf lose nebeneinander stehender Elemente */
+.pane .fctrl:has(> input[type="color"]) { display: grid; gap: 10px 10px; align-items: center; }
+.pane .fctrl:has(> input[type="color"]) > input[type="range"] { width: 100% !important; min-width: 0; margin: 0; }
+.pane .fctrl:has(> input[type="color"]) > .hex { width: auto !important; min-width: 0 !important; }
+/* mit "Standard"-Knopf: [Farbe][Hex ........][Standard] / [Regler ............][100 %] */
+.pane .fctrl:has(> input[type="color"]):has(> .btn) { grid-template-columns: 48px minmax(0, 1fr) 64px 96px; }
+.pane .fctrl:has(> input[type="color"]):has(> .btn) > :nth-child(1) { grid-column: 1; grid-row: 1; }
+.pane .fctrl:has(> input[type="color"]):has(> .btn) > :nth-child(2) { grid-column: 2 / 4; grid-row: 1; }
+.pane .fctrl:has(> input[type="color"]):has(> .btn) > :nth-child(5) { grid-column: 4; grid-row: 1; width: 100%; }
+.pane .fctrl:has(> input[type="color"]):has(> .btn) > :nth-child(3) { grid-column: 1 / 4; grid-row: 2; }
+.pane .fctrl:has(> input[type="color"]):has(> .btn) > :nth-child(4) { grid-column: 4; grid-row: 2; text-align: right; }
+/* Akzentfarbe: [Farbe ....][Regler ......][100 %] / sechs Farbpunkte in einer Reihe */
+.pane .fctrl:has(> input[type="color"]):not(:has(> .btn)) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.pane .fctrl:has(> input[type="color"]):not(:has(> .btn)) > :nth-child(1) { grid-column: span 1; width: 48px; }
+.pane .fctrl:has(> input[type="color"]):not(:has(> .btn)) > :nth-child(2) { grid-column: span 4; }
+.pane .fctrl:has(> input[type="color"]):not(:has(> .btn)) > :nth-child(3) { text-align: right; }
+.pane .fctrl:has(> input[type="color"]):not(:has(> .btn)) > .icon-btn { justify-self: center; }
+
+/* Reiter "Verbindungen": Liste als Chip-Leiste ueber dem Formular, damit das Formular die volle Breite hat (vorher nur eine schmale Restspalte) */
+.conn-layout { grid-template-columns: minmax(0, 1fr); gap: 6px; padding-top: 16px; }
+.conn-list { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.conn-list button { border: 1px solid var(--line); background: var(--bg-raised); height: var(--set-ctrl-h); padding: 0 16px; border-radius: 9px; max-width: 260px; font-size: 13.5px; }
+.conn-list button.active { border-color: var(--accent-line); font-weight: 600; }
+.conn-list select { width: auto; min-width: 240px; flex: 0 0 auto; }
+
+/* Schalter: linksbuendig in der Steuerungsspalte, gleiche Zeilenhoehe wie Eingabefelder */
+.fctrl .switch { margin: 7px 0; }
+
+.pane .preset-grid { gap: 10px; }
+.pane .font-sample { padding: 10px 14px; border-radius: 9px; }
+
+/* Schmale Fenster (und Android): eine Spalte, Steuerung volle Breite */
+@container (max-width: 640px) {
+  .frow.stack > .fctrl { grid-template-columns: minmax(0, 1fr); }
+  .frow { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .frow:not(.stack) > .fctrl { max-width: none; }
+  .flabel .fhint { max-width: none; }
+}
+@media (max-width: 760px) {
+  .modal.wide { width: 100vw; height: 100vh; border-radius: 0; }
+  .settings nav { width: 64px; }
+  .settings nav button > span { display: none; }
+  .settings .pane { padding: 4px 16px 24px; }
+}
+
+/* ═════════════ Erster Start: Sprachauswahl (V67) ═════════════ */
+.lang-pick { z-index: 300; background: rgba(0, 0, 0, 0.55); }
+.lang-card { width: min(500px, 94vw); padding: 30px 30px 24px; text-align: center; align-items: stretch; }
+.lang-card .lang-mark { display: flex; justify-content: center; margin-bottom: 6px; }
+.lang-card .lang-mark > *, .lang-card .lang-mark svg, .lang-card .lang-mark img { width: 56px; height: 56px; max-width: 56px; }
+.lang-card h2 { margin: 8px 0 2px; font-size: 21px; }
+.lang-card .lang-sub { color: var(--text-dim); font-size: 14px; line-height: 1.5; margin-bottom: 20px; }
+.lang-opts { display: grid; gap: 10px; margin: 0 0 20px; }
+.lang-opt { display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 20px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg-raised); font-size: 17px; font-weight: 600; cursor: pointer; text-align: left; }
+.lang-opt:hover, .lang-opt:focus-visible { border-color: var(--accent-line); background: var(--bg-hover); outline: none; }
+.lang-opt.suggested { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.lang-opt .code { font: 12px var(--font-code); color: var(--text-faint); font-weight: 500; letter-spacing: 0.06em; }
+.lang-card .lang-note { color: var(--text-faint); font-size: 12px; line-height: 1.7; }

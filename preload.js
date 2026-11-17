@@ -81,7 +81,21 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (u) => inv('shell:openExternal', u),
   openPath: (p) => inv('shell:openPath', p),
   appInfo: () => inv('app:info'),
-  sync: { get: () => inv('sync:get'), setDir: (d) => inv('sync:setDir', d), migrate: () => inv('sync:migrate') },
+  transfer: { info: () => inv('transfer:info'), pack: (json) => inv('transfer:pack', json), wsFiles: (o) => inv('transfer:wsFiles', o), serveStart: (o) => inv('transfer:serveStart', o), serveStop: () => inv('transfer:serveStop') },
+  sync: { get: () => inv('sync:get'), setDir: (d) => inv('sync:setDir', d), migrate: () => inv('sync:migrate'), setEvery: (ms) => inv('sync:setEvery', ms) },
+  /* Windows-Freigabe als Workspace. getCreds liefert bewusst KEIN Passwort zurueck, nur hasPass –
+     genau wie auf Android. credsForExport holt es ausschliesslich fuer eine ausdruecklich
+     gestartete Uebertragung (main.js). */
+  smb: {
+    getCreds: (host) => inv('smb:getCreds', host),
+    saveCreds: (o) => inv('smb:saveCreds', o),
+    test: (p) => inv('smb:test', p),
+    credsForExport: (host) => inv('smb:credsForExport', host),
+    listHosts: () => inv('smb:listHosts'),
+    resolve: (p) => inv('smb:resolve', p),
+  },
+  // Sofort abgleichen (Fensterfokus): main.js hoert auf 'sync:now' und antwortet mit chats:changed.
+  syncNow: () => ipcRenderer.send('sync:now'),
   onChatsChanged: (cb) => ipcRenderer.on('chats:changed', (_e, m) => cb(m)),
   spellSet: (o) => inv('app:spellSet', o),
   gpuGet: () => inv('app:gpuGet'),

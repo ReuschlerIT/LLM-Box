@@ -25,7 +25,27 @@
 
   /* ───────────────────────── Speicher ───────────────────────── */
 
-  async function writeJsonAtomic(file, data) {
+  /* Schreibvorgaenge pro Datei strikt nacheinander (wie main.js der Desktop-Version,
+     Zeilen 70-79). Ohne diese Queue koennen parallele Saves derselben Datei in
+     beliebiger Reihenfolge umbenennen - dieaeltere Fassung gewinnt dann.
+     Fall 1.0.67 (Android): Beim allerersten Start schreibt init() viermal
+     unabgewartet (Design-Standard, Prompt-Migration V47, Verbindungs-Migration V46,
+     Modellprofil V65). Waehlt der Nutzer in diesem Moment die Sprache im Startdialog,
+     laeuft seine Schreibung (uiLang + langChosen) zwischen diesen Migrationen ein und
+     wird von einer spaeter fertig werdenden Migration mit altem Stand ueberschrieben:
+     die Wahl war weg. Mit der Queue gilt die Aufrufreihenfolge - die letzte Schreibung
+     gewinnt. */
+  const writeQueues = new Map();
+  function writeJsonAtomic(file, data) {
+    const prev = writeQueues.get(file) || Promise.resolve();
+    const run = prev.catch(() => {}).then(() => writeJsonAtomicNow(file, data));
+    const tail = run.catch(() => {});
+    writeQueues.set(file, tail);
+    tail.then(() => { if (writeQueues.get(file) === tail) writeQueues.delete(file); });
+    return run;
+  }
+
+  async function writeJsonAtomicNow(file, data) {
     await fsp.mkdir(path.dirname(file), { recursive: true });
     // Eigener Name pro Vorgang: beim automatischen Speichern laufen mehrere Schreibvorgaenge
     // fuer dieselbe Datei parallel. Wuerden sie sich eine .tmp-Datei teilen, wuerde der zweite

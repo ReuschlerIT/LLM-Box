@@ -70,6 +70,7 @@ const execOn = () => !window.IS_ANDROID && S.settings.workspace.execEnabled !== 
 /* ═════════════ Start ═════════════ */
 async function init() {
   const stored = await api.store.get('settings');
+  const firstRun = !stored || (typeof stored === 'object' && !Object.keys(stored).length);   // allererster Start: noch nie Einstellungen gespeichert
   S.settings = deepMerge(DEFAULTS, stored || {});
   // Einmalig (V43): Standard-Design ist Hell. Ein früher gespeichertes „Dunkel“ würde den neuen Standard sonst überschreiben.
   if (!S.settings.appearance.lightDefaultApplied) {
@@ -120,6 +121,7 @@ async function init() {
   }
   if (!S.settings.connections.some((c) => c.id === S.settings.activeConnection)) S.settings.activeConnection = S.settings.connections[0] ? S.settings.connections[0].id : '';
 
+  applyProfileOnce(firstRun);
   buildChrome();
   api.appInfo().then((i) => {
     const t = `Reuschler-IT - LLM Box v${i.version}`;
@@ -127,6 +129,9 @@ async function init() {
     document.title = t;
   });
   applyAppearance();
+  applyLanguage(S.settings.uiLang);
+  if (syncDefaultPrompt()) saveSettings();   // unveraenderter Standard-Prompt immer in Sprache/Profil-Laenge (auch wenn die Sprache schon gespeichert war)
+  if (firstRun) showLanguageChooser();       // allererster Start: Sprache waehlen lassen (nicht blockierend)
   applySpell();
   wireEvents();
   try { S.sync = await api.sync.get(); } catch { S.sync = { dir: '', deviceId: 'lokal', deviceName: 'Dieser Rechner' }; }
@@ -672,6 +677,16 @@ function renderAll() {
   updateCtxMeter();
   updateSendBtn();
   updatePermBtn();
+}
+
+/* Nach dem Sprachwechsel neu aufbauen, was aus Vorlagen entsteht. */
+function refreshLanguageUi() {
+  try { renderChatList(); } catch {}
+  try { renderStatus(); } catch {}
+  try { updateCtxMeter(); } catch {}
+  try { updateToolsBtn(); } catch {}
+  try { updateThinkBtn(); } catch {}
+  try { updatePermBtn(); } catch {}
 }
 
 function renderStatus() {
@@ -1239,19 +1254,37 @@ function stopGeneration() {
   if (S.stopResolve) S.stopResolve(); // die Schleife wartet nicht mehr auf ein hängendes Werkzeug
 }
 
+/* Sprachschicht anwenden: Oberflaeche, Spracheingabe des Eingabefelds und
+   damit auch die Rechtschreibpruefung. Laeuft beim Start und nach jeder Aenderung
+   der Sprachauswahl in den Einstellungen. */
+function applyLanguage(lang) {
+  const l = (typeof LANGS !== 'undefined' && LANGS.some((x) => x.value === lang)) ? lang : 'de';
+  setLang(l);                                   // uebersetzt Oberflaeche und Werkzeugtexte
+  document.documentElement.setAttribute('lang', l);
+  applySpell();                                 // Wortbuecher folgen der Sprache
+  refreshLanguageUi();                          // Vorlagen (Statuszeile, Listen) neu aufbauen
+}
+
 function buildSystem() {
+  const lang = S.settings.uiLang || 'de';
   let s = S.settings.systemPrompt || '';
-  if (S.settings.appearance.thinkInGerman) s += (s ? '\n\n' : '') + 'Denke und überlege auf Deutsch (auch im Gedankengang).';
-  if (useTools()) {
-    s += `\n\nDu hast über Werkzeuge Zugriff auf einen Workspace-Ordner (${S.settings.workspace.path}). Verfügbar: list_files, search_text, read_file, edit_file, write_file${subOn() ? ', delegate_task' : ''}. Alle Pfade sind relativ zum Workspace. Der Kontext ist begrenzt: Lies große Dateien nie komplett, sondern finde die Stelle mit search_text und lies dann gezielt mit start_line/end_line. Lies eine Datei nicht erneut, wenn sie sich nicht geändert hat. Ändere vorhandene Dateien mit edit_file (kleine Ersetzungen) statt sie mit write_file komplett neu zu schreiben. Lies Dateien, bevor du Aussagen über ihren Inhalt machst. Schreibe oder ändere Dateien nur, wenn der Nutzer das wünscht. Erfinde keine Funktionen, Dateien oder Zeilen: Was du nicht gelesen hast, kennst du nicht.${askOn() ? ASK_HINT : ''}${hoOn() ? ' Wird die Arbeit sehr lang oder weist dich die App auf einen vollen Kontext hin, rufe propose_new_session auf (mit vollständiger Übergabe in summary und next_steps) und beende dann deine Antwort. Schreibe das nicht nur als Text.' : ''}${subOn() ? ' Für umfangreiche Erkundung oder getrennte Teilfragen nutze delegate_task: Der Unteragent arbeitet mit eigenem Kontext, darf nur lesen und liefert dir eine Zusammenfassung. Mehrere Unteragenten kannst du in einer Antwort gleichzeitig starten.' : ''}`;
-    if (execOn()) {
-      const win = /Win/i.test(navigator.platform || navigator.userAgent);
-      s += `\n\nDu kannst außerdem Programme auf dem Rechner des Nutzers (${win ? 'Windows' : 'Desktop'}) nutzen: check_tool (Programm vorhanden?), run_command (Befehl ausführen${win ? ', Standard cmd, optional shell="powershell"' : ''}), install_tool (fehlendes Programm nach Rückfrage installieren). Das sind echte Werkzeuge: Du kannst sie selbst aufrufen und darfst nie behaupten, du hättest keinen Zugriff auf Programme. Vorgehen: 1) Mit check_tool prüfen, ob das Programm da ist (auch Namen wie apktool, jadx, java, python). 2) Fehlt es und wird es gebraucht, rufe install_tool auf: Der Nutzer bekommt eine Rückfrage mit dem genauen Befehl. Installiere nie ungefragt und nie etwas, das die Aufgabe nicht braucht. 3) Mit run_command ausführen. Befehle müssen nicht-interaktiv laufen. Lange Ausgaben werden gekürzt: filtere sie oder schreibe sie in eine Datei im Workspace und lies sie gezielt. Lege Ergebnisse (z. B. entpackte APKs) in einem Unterordner des Workspace ab, damit du sie mit read_file und search_text untersuchen kannst. Führe keine zerstörerischen Befehle aus (Löschen, Formatieren, Systemeinstellungen), außer der Nutzer verlangt es ausdrücklich. Du bist für Analyse und Entwicklung zuständig. Lies Ausgaben genau und berichte ehrlich, wenn ein Befehl fehlschlägt.`;
-    }
+  /* Sprachregel fuer die KI: Steht noch der unveraenderte Standardprompt drin, wird er
+     durch seine englische bzw. franzoesische Fassung ersetzt. Hat der Nutzer seinen
+     Prompt selbst bearbeitet, bleibt er erhalten und bekommt nur die Sprachregel. */
+  if (isDefaultPrompt(s)) {
+    s = defaultPromptFor(lang, promptCompact());   // unveraendertes Standardprompt: Fassung fuer Sprache und Profil (kurz oder ausfuehrlich)
+  } else if (lang !== 'de') {
+    s += (s ? '\n\n' : '') + LANG_RULE[lang];
   }
-  else if (askAlone()) s += `\n\n${ASK_HINT.trim()}`;
+  if (S.settings.appearance.thinkInGerman) s += (s ? '\n\n' : '') + T('Denke und überlege auf Deutsch (auch im Gedankengang).');
+  if (useTools()) {
+    const list = `list_files, search_text, read_file, edit_file, write_file${subOn() ? ', delegate_task' : ''}`;
+    s += part('toolsHint', lang, S.settings.workspace.path, list) + part('actHint', lang) + (askOn() ? part('askHint', lang) : '') + (hoOn() ? part('handoffHint', lang) : '') + (subOn() ? part('subHint', lang) : '');
+    if (execOn()) s += part('execHint', lang, /Win/i.test(navigator.platform || navigator.userAgent));
+  } else if (askAlone()) s += `\n\n${part('askHint', lang).trim()}`;
   return s.trim();
 }
+
 const ASK_HINT = ' Wenn dir Angaben fehlen, die Aufgabe mehrdeutig ist oder es mehrere sinnvolle Wege gibt, stelle dem Nutzer mit ask_user eine Rückfrage mit 2 bis 5 konkreten Antwortvorschlägen, statt zu raten, und warte auf die Antwort.';
 
 
@@ -1298,7 +1331,7 @@ function applyDrops(messages) {
 
 function compactMessages(messages, system) {
   const ws = S.settings.workspace;
-  const ctx = +S.settings.params.numCtx || 0;
+  const ctx = effCtx();
   const info = { newly: 0, before: 0, after: 0, limit: 0, over: false };
   let out = applyDrops(messages);
   info.before = info.after = estimateWire(out, system);
@@ -1625,7 +1658,32 @@ function looksUnfinished(text) {
   const s = LLM.splitThink(text || '').answer.trim();
   if (!s) return false;
   const last = s.split('\n').filter((l) => l.trim()).pop().trim();
-  return /(:|…|\.\.\.)$/.test(last);
+  if (/(:|…|\.\.\.)$/.test(last)) return true; // klassische Ankündigung („Jetzt der Korrekturlauf:“)
+  // Ankündigung mit Punkt am Ende („Ich baue jetzt den Test.“): Das war in der Praxis der häufigste Abbruch lokaler Modelle.
+  if (s.length > 700 || /\?\s*$/.test(last)) return false; // lange Antworten und Rückfragen an den Nutzer sind keine Ankündigung
+  const body = last.replace(/[*_`]/g, '').replace(/[.!\s]+$/, '');
+  const sentences = body.split(/(?<=[.!?])\s+/);
+  const lastSentence = (sentences[sentences.length - 1] || '').trim();
+  const DONE = /\b(habe|hab|haben|bin|wurde|wurden|fertig|erledigt|abgeschlossen|have|has|had|done|finished|completed|ready|j['’]ai|ai\s+terminé|suis|terminé|fini|achevé)\b/i;
+  const START = /^(ich|jetzt|nun|als\s+n[äa]chstes|zuerst|zun[äa]chst|dann|danach|lass\s+mich|i['’]ll|i\s+will|i\s+am|i['’]m|i\s+(?:now|first|then|check|build|write|read|fix|replace|add|create|search|run|start|look|test)|let\s+me|now|next|first|then|je\s|j['’]|maintenant|ensuite|d['’]abord|puis|voyons)/i;
+  return START.test(lastSentence) && !DONE.test(lastSentence);
+}
+
+// Textbausteine für die automatische Aufforderung, in der Sprache der Oberfläche (sie gehen an die KI)
+const NUDGE_TEXT = {
+  de: 'Du hast einen nächsten Schritt angekündigt, aber keinen Werkzeugaufruf ausgeführt. Rufe jetzt in DIESER Antwort das passende Werkzeug auf. Schreibe nur dann Text ohne Werkzeugaufruf, wenn die Aufgabe vollständig erledigt ist (dann mit abschließender Zusammenfassung).',
+  en: 'You announced a next step but did not make a tool call. Call the appropriate tool now, in THIS reply. Only write text without a tool call if the task is completely finished (then with a final summary).',
+  fr: 'Vous avez annoncé une prochaine étape sans appeler d’outil. Appelez maintenant l’outil approprié, dans CETTE réponse. N’écrivez du texte sans appel d’outil que si la tâche est entièrement terminée (avec une synthèse finale).',
+};
+
+/* Wirksames Kontextfenster: Viele lokale Modelle (besonders stark quantisierte) werden weit unter dem Server-Fenster unzuverlässig:
+   Werkzeugaufrufe fehlen, Schlüssel werden erfunden, Antworten enden nach einer Ankündigung. Deshalb gelten Komprimierung und
+   Übergabe-Hinweis für min(Server-Fenster, Obergrenze). Standard 64.000 Tokens; 0 = nur das Server-Fenster. */
+function effCtx() {
+  const max = +S.settings.params.numCtx || 0;
+  const raw = S.settings.workspace.ctxSoftCap;
+  const cap = raw === undefined || raw === null || raw === '' ? 64000 : +raw;
+  return cap > 0 && max ? Math.min(max, cap) : max;
 }
 
 async function generate() {
@@ -1840,11 +1898,11 @@ async function generate() {
       renderAssistantParts(node, am, 'final');
       saveChatSoon(chat); // andere Rechner sehen jeden Schritt
 
-      // Nur angekündigt, nichts ausgeführt: höchstens zweimal in Folge automatisch zum Weitermachen auffordern, statt still zu enden
-      if (!am.error && !am.aborted && !S.stopRequested && !am.toolCalls.length && useTools() && autoNudges < 2 && am.finish !== 'length' && looksUnfinished(am.content)) {
+      // Nur angekündigt, nichts ausgeführt: höchstens dreimal in Folge automatisch zum Weitermachen auffordern, statt still zu enden
+      if (!am.error && !am.aborted && !S.stopRequested && !am.toolCalls.length && useTools() && autoNudges < 3 && am.finish !== 'length' && looksUnfinished(am.content)) {
         autoNudges++;
         nudgeNext = true;
-        nudgeText = 'Du hast einen nächsten Schritt angekündigt, aber keinen Werkzeugaufruf ausgeführt. Rufe jetzt das passende Werkzeug auf, oder schreibe die abschließende Zusammenfassung, falls die Aufgabe erledigt ist.';
+        nudgeText = NUDGE_TEXT[S.settings.uiLang] || NUDGE_TEXT.de;
         am.autoContinued = true;
         renderAssistantParts(node, am, 'final');
         saveChatSoon(chat);

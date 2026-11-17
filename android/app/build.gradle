@@ -13,8 +13,8 @@ android {
         /* Versionsnummer bewusst gleich wie die Desktop-App (llm-box\package.json).
            Bislang stand hier fest 1.0.32 - dadurch war auf dem Gerat nicht erkennbar,
            ob eine neu gebaute APK wirklich installiert ist (gleicher Name trotz aenderungen). */
-        versionCode 65
-        versionName "1.0.65-android"
+        versionCode 69
+        versionName "1.0.67-android"
     }
 
     buildTypes {

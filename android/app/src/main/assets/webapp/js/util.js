@@ -60,37 +60,43 @@ function icon(name, size = 18, sw = 1.8) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
 }
 
-/* Formatierung */
+/* Formatierung. Die Zahlenschreibweise folgt der eingestellten Sprache
+   (i18n.js liefert numLocale()); ohne i18n.js bleibt Deutsch wie bisher. */
+const locale = () => (typeof numLocale === 'function' ? numLocale() : 'de-DE');
+// Punkt -> Dezimaltrennzeichen der Sprache (Quellwerte kommen immer mit Punkt).
+// Deutsch und Franzoesisch verwenden ein Komma, Englisch den Punkt.
+const dec = (s) => (locale() === 'en-US' ? String(s) : String(s).replace('.', ','));
+
 const fmt = {
-  num: (n) => (n === null || n === undefined || Number.isNaN(n) ? '–' : Math.round(n).toLocaleString('de-DE')),
+  num: (n) => (n === null || n === undefined || Number.isNaN(n) ? '–' : Math.round(n).toLocaleString(locale())),
   tok: (n) => {
     if (n === null || n === undefined || Number.isNaN(n)) return '–';
     const a = Math.abs(n);
-    if (a < 10000) return Math.round(n).toLocaleString('de-DE');
+    if (a < 10000) return Math.round(n).toLocaleString(locale());
     // [Schwelle, Teiler, Einheit] – Schwelle knapp unter dem Teiler, damit 999.999 nicht als „1000k“ erscheint
     for (const [min, div, unit] of [[9.995e11, 1e12, 'T'], [9.995e8, 1e9, 'B'], [9.995e5, 1e6, 'M'], [1e4, 1e3, 'k']]) {
       if (a >= min) {
         const v = n / div;
-        return v.toFixed(1).replace('.', ',').replace(/,0$/, '') + unit;
+        return dec(v.toFixed(1)).replace(/(,|\.)0$/, '') + unit;
       }
     }
     return String(n);
   },
-  sec: (s) => (s === null || s === undefined ? '–' : s < 10 ? s.toFixed(2).replace('.', ',') + ' s' : s < 100 ? s.toFixed(1).replace('.', ',') + ' s' : Math.floor(s / 60) + ' min ' + Math.round(s % 60) + ' s'),
-  tps: (v) => (v === null || v === undefined || !isFinite(v) ? '–' : v >= 100 ? Math.round(v).toString() : v.toFixed(1).replace('.', ',')),
-  size: (b) => (b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1).replace('.', ',') + ' KB' : (b / 1048576).toFixed(1).replace('.', ',') + ' MB'),
+  sec: (s) => (s === null || s === undefined ? '–' : s < 10 ? dec(s.toFixed(2)) + ' s' : s < 100 ? dec(s.toFixed(1)) + ' s' : Math.floor(s / 60) + ' min ' + Math.round(s % 60) + ' s'),
+  tps: (v) => (v === null || v === undefined || !isFinite(v) ? '–' : v >= 100 ? Math.round(v).toString() : dec(v.toFixed(1))),
+  size: (b) => (b < 1024 ? b + ' B' : b < 1048576 ? dec((b / 1024).toFixed(1)) + ' KB' : dec((b / 1048576).toFixed(1)) + ' MB'),
   dur: (s) => {
     if (s === null || s === undefined || Number.isNaN(s)) return '–';
-    if (s < 60) return s.toFixed(s < 10 ? 2 : 1).replace('.', ',') + ' s';
+    if (s < 60) return dec(s.toFixed(s < 10 ? 2 : 1)) + ' s';
     if (s < 3600) return Math.floor(s / 60) + ' min ' + String(Math.round(s % 60)).padStart(2, '0') + ' s';
     return Math.floor(s / 3600) + ' h ' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ' min';
   },
   money: (v, cur) => {
     if (v === null || v === undefined || Number.isNaN(v)) return '–';
     const d = v >= 1 ? 2 : v >= 0.01 ? 3 : v === 0 ? 2 : 4;
-    return new Intl.NumberFormat('de-DE', { style: 'currency', currency: cur === 'USD' ? 'USD' : 'EUR', minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+    return new Intl.NumberFormat(locale(), { style: 'currency', currency: cur === 'USD' ? 'USD' : 'EUR', minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
   },
-  gb: (b) => (b / 1073741824).toFixed(1).replace('.', ',') + ' GB',
+  gb: (b) => dec((b / 1073741824).toFixed(1)) + ' GB',
 };
 const estimateTokens = (s) => Math.ceil((s || '').length / 3.8);
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);

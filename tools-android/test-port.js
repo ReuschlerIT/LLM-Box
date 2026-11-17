@@ -141,6 +141,25 @@ function load(rel) {
   const st = await api.store.get('settings');
   ok('store:set/get rund', !!st && st.workspace.path === '/ws/projekt');
 
+  /* Regression 1.0.67 (Android): Beim allerersten Start schreibt init() viermal
+     unabgewartet in settings.json (Design-Standard, Prompt-, Verbindungs- und
+     Profil-Migration). Waehlt der Nutzer in diesem Moment die Sprache im Startdialog,
+     liefen diese Schreibvorgaenge ungeordnet gegeneinander an und eine spaet fertig
+     werdende Migration ueberschrieb die Wahl (uiLang + langChosen fehlten).
+     main.js der Desktop-Version serialisiert Schreibungen pro Datei (Queue);
+     native-main.js musste nachziehen. */
+  const natSrc = fs.readFileSync(path.join(WEBAPP, 'js', 'native-main.js'), 'utf8');
+  ok('native-main.js: Schreib-Queue pro Datei (writeQueues)', /const writeQueues = new Map\(\)/.test(natSrc) && /writeQueues\.set\(file, tail\)/.test(natSrc));
+  ok('native-main.js: writeJsonAtomic reiht sich ein (kein Direktaufruf der Schreibfunktion)',
+     /function writeJsonAtomic\(file, data\) \{[\s\S]{0,400}?prev\.catch\(\(\) => \{\}\)\.then\(\(\) => writeJsonAtomicNow\(file, data\)\)/.test(natSrc));
+  const pOld = api.store.set('settings', { appearance: { theme: 'dark' }, workspace: { path: '/ws/projekt' }, marker: 'migration' });
+  const pNew = api.store.set('settings', { appearance: { theme: 'dark' }, workspace: { path: '/ws/projekt' }, marker: 'sprache', langChosen: true });
+  await Promise.all([pOld, pNew]);
+  const stQ = await api.store.get('settings');
+  ok('store:set: letzte Schreibung gewinnt, Sprachwahl bleibt', !!stQ && stQ.marker === 'sprache' && stQ.langChosen === true, JSON.stringify(stQ));
+  const leftovers = fs.readdirSync(toReal('/data')).filter((f) => /\.tmp$/.test(f));
+  ok('store:set: keine .tmp-Reste nach parallelen Schreibungen', leftovers.length === 0, leftovers.join(', '));
+
   const chat = { id: 'c1', title: 'Test', created: 1, updated: 2, connectionId: 'x', model: 'm', messages: [{ role: 'user', content: 'hallo' }] };
   await api.chats.save(chat, { id: 'c1', title: 'Test', created: 1, updated: 2, model: 'm', tokens: 5 });
   const list = await api.chats.list();

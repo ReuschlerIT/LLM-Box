@@ -19,7 +19,7 @@ const hoCanClear = (chat) => !!chat && !remoteBusy(chat) && chat.messages.length
 const hoPct = () => Math.min(95, Math.max(30, +S.settings.workspace.handoffPct || 70));
 
 function hoRatio(chat) {
-  const max = +S.settings.params.numCtx || 0;
+  const max = effCtx(); // wirksames Fenster (Obergrenze), nicht das volle Server-Fenster
   const last = chat.messages.slice(ctxStart(chat)).reverse().find((m) => m.role === 'assistant' && m.stats);
   if (!max || !last) return 0;
   return ((last.stats.promptTokens || 0) + (last.stats.completionTokens || 0)) / max;

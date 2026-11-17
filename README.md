@@ -17,9 +17,9 @@ Die fertigen Programme liegen im Ordner `download/`:
 
 | Datei | Für |
 |---|---|
-| `LLM.Box.Setup.1.0.65.exe` | Windows 10/11 (Installer) |
-| `LLM.Box.1.0.65.portable.exe` | Windows 10/11 (portable, ohne Installation) |
-| `LLM-Box-1.0.65-android.apk` | Android 8.0 oder neuer |
+| `LLM.Box.Setup.1.0.67.exe` | Windows 10/11 (Installer) |
+| `LLM.Box.1.0.67.portable.exe` | Windows 10/11 (portable, ohne Installation) |
+| `LLM-Box-1.0.67-android.apk` | Android 8.0 oder neuer |
 
 Beide Versionen haben dieselbe Oberfläche und dasselbe Chat-Format, der Austausch zwischen PC und
 Handy funktioniert in beide Richtungen (QR-Code, WLAN oder JSON-Datei – siehe unten).
@@ -159,6 +159,16 @@ Der vollständige Verlauf **einzelner Versionen ab 1.0.36** steht in [`llm-box/U
 - **Gemeinsamer Chat-Ordner** inklusive Windows-Freigabe, mit Konflikt-Schutz: fremde Fassungen werden nie überschrieben, sondern als „(Konflikt …)"-Kopie angelegt (ab 1.0.50)
 - **Neue Einstellung „Chats abgleichen alle …"** von Echtzeit bis 30 Minuten, ohne Neustart wirksam (ab 1.0.57)
 - Beim Zurückkehren ins Fenster wird sofort abgeglichen; ein doppelter Unterordner beim Einrichten wird automatisch bereinigt (bis 1.0.54)
+
+### Sprache: Deutsch, English, Français (ab 1.0.66)
+- **Die ganze Oberfläche ist übersetzt** – Beschriftungen, Knöpfe, Hilfetexte, Dialoge, Statuszeile, Tooltips, Fehlermeldungen, Server-Fenster und Platzhalter (Wörterbuch mit 1.036 Einträgen und 150 Mustern). Die KI antwortet in derselben Sprache; Chat-Inhalt wird nie übersetzt
+- **Sprachabfrage beim allerersten Start** – dreisprachiger Dialog, der die Systemsprache vorschlägt und dessen Wahl sofort für Oberfläche, Antwortsprache und Standard-Prompt gilt (ab 1.0.67)
+- **Später umschaltbar** unter *Einstellungen → Darstellung → Sprache der App* (ab 1.0.67)
+
+### Modellprofil für kleine, stark quantisierte Modelle (ab 1.0.66)
+- **Neues Profil „Kleines / stark quantisiertes Modell (IQ3/Q3)"** – kurzer System-Prompt und kurze Werkzeugbeschreibungen, rund 2.500 statt 4.000 Tokens je Anfrage; Standard für neue Installationen
+- **Neue Einstellung „Arbeitskontext-Obergrenze (Tokens)"** und ein Knopf „Standard-Prompt wiederherstellen"
+- **Weniger vorzeitige Abbrüche im Werkzeugmodus** – der wirksame Arbeitskontext statt des großen Server-Fensters entscheidet über Komprimierung und Übergabe (ab 1.0.66)
 
 ### Werkzeuge der KI
 - **Laufende Workspace-Suchen wirklich abbrechen** – inklusive Meldung, wie viele Dateien geprüft wurden (ab 1.0.50)

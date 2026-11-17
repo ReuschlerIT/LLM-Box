@@ -37,6 +37,7 @@ async function trTranslate(m) {
   TR.busy.add(m.id);
   TR.errors.delete(m.id);
   trRefresh(m);
+  renderStatus();
   try {
     const parts = [];
     for (const chunk of trChunks(src)) {
@@ -61,6 +62,7 @@ async function trTranslate(m) {
   } finally {
     TR.busy.delete(m.id);
     trRefresh(m);
+    renderStatus();
   }
 }
 

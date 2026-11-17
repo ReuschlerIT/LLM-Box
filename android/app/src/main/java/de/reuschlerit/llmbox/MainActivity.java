@@ -96,7 +96,7 @@ public class MainActivity extends AppCompatActivity {
      * wirkte die App fehlerhaft ("startet von selbst mit Dialogen"). Anfordern mit
      *   adb shell am start -n de.reuschlerit.llmbox/.MainActivity --ez probe true
      */
-
+    private boolean uiProbeRequested = false;
 
     /**
      * Echte Chat-Nachrichten verschickt die Sonde nur mit einem zweiten, ausdruecklichen
@@ -104,7 +104,7 @@ public class MainActivity extends AppCompatActivity {
      *              --ez probe true --ez probechat true
      * Ohne diesen Schalter bleiben die Chats des Nutzers unangetastet.
      */
-
+    private boolean chatProbeRequested = false;
 
     /** True, sobald die Web-Oberflaeche geladen ist (danach darf JS angestossen werden). */
     private volatile boolean pageLoaded = false;
@@ -140,8 +140,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-
+        uiProbeRequested = getIntent() != null && getIntent().getBooleanExtra("probe", false);
+        chatProbeRequested = getIntent() != null && getIntent().getBooleanExtra("probechat", false);
 
         dataDir = new File(getFilesDir(), "data");
         if (!dataDir.exists() && !dataDir.mkdirs()) dataDir = getFilesDir();
@@ -247,27 +247,808 @@ public class MainActivity extends AppCompatActivity {
                 pageLoaded = true;
                 // Die Web-Oberfläche meldet ihre eigenen Messwerte (android-adapter.js -> Native.uiLog).
                 // Die Sonde klickt im Bildschirm sichtbar Dialoge an - das soll der Nutzer nicht
-
-
-
-
-
-
-
-
-
-
+                // sehen. Deshalb nur anfordern mit:
+                //   adb shell am start -n de.reuschlerit.llmbox/.MainActivity --ez probe true
+                if (BuildConfig.DEBUG && uiProbeRequested) probeUiAfterLoad();
+                // Reiner Nachweis fuer den eingebauten QR-Decoder, ohne die Oberflaeche anzufassen:
+                //   adb shell am start -n de.reuschlerit.llmbox/.MainActivity --ez qrprobe true
+                if (BuildConfig.DEBUG && getIntent() != null && getIntent().getBooleanExtra("qrprobe", false)) probeQrAfterLoad();
+                // Misst die Kamera-Kette der WebView (getUserMedia, play(), Bildgroesse):
+                //   adb shell am start -n de.reuschlerit.llmbox/.MainActivity --ez camprobe true
+                if (BuildConfig.DEBUG && getIntent() != null && getIntent().getBooleanExtra("camprobe", false)) probeCamAfterLoad();
+                /* Prueft eine Freigabe LESend, ohne irgendetwas zu schreiben:
+                     adb shell am start -n de.reuschlerit.llmbox/.MainActivity --ez smblesen true \
+                          --es pfad "/smb/192.0.2.10/daten/MeinProjekt"
+                   Bewusst eine eigene Sonde und nicht das bestehende "--ez smbprobe": das sitzt in
+                   probeUiAfterLoad() und wuerde zusaetzlich Chat-Dateien in die Freigabe des Nutzers
+                   kopieren (migrateProbe) – fuer eine reine Verbindungsklaerung unvertretbar. */
+                if (BuildConfig.DEBUG && getIntent() != null && getIntent().getBooleanExtra("smblesen", false)) {
+                    final String ziel = (getIntent().getStringExtra("pfad") == null)
+                            ? "/smb/192.0.2.10/daten" : getIntent().getStringExtra("pfad").trim();
+                    Log.i("LLMBOX-SMB", "smb_lesen_start pfad=" + ziel);
+                    fsPool.execute(() -> {
+                        try {
+                            /* smb.test statt smbTest(): der private Helfer gehoert zur inneren
+                               Bridge-Klasse und ist von hier nicht erreichbar. */
+                            JSONObject o = new JSONObject(smb.test(ziel));
+                            Log.i("LLMBOX-SMB", "smb_lesen ok=" + o.optBoolean("ok")
+                                    + (o.has("error") ? (" grund=" + shortText(o.optString("error")))
+                                                      : (" eintraege=" + o.optInt("entries") + " beispiel=" + shortText(o.optString("sample")))));
+                        } catch (Throwable e) {
+                            Log.i("LLMBOX-SMB", "smb_lesen FEHLER " + shortText(String.valueOf(e)));
+                        }
+                    });
+                }
             }
         });
 
         web.loadUrl(START_URL);
     }
 
+    /**
+     * Weist am Gerat nach, dass der EINGEBAUTE QR-Decoder wirklich funktioniert – und zwar mit
+     * dem Bild, das dieselbe App selbst erzeugt. Der Nutzer hatte zu Recht gefragt, wieso ihm ein
+     * QR-Code angezeigt wird, den die App selbst nicht lesen kann.
+     *
+     * Vorgehen (alles in der echten WebView, keine Nachbildung):
+     *   1) vendor/qrcode.js (der Encoder der Windows-Oberflaeche) baut einen Code fuer eine
+     *      typische LAN-Adresse und fuer ein LBX1-Stueck.
+     *   2) Die dunklen Module werden in ein Canvas gemalt, so wie die Kamera es spaeter liefert.
+     *   3) jsQR aus vendor/webdeps.js muss denselben Text exakt zurueckgeben.
+     * Damit sind Encoder und Decoder zusammen belegt, nicht nur "die Datei ist vorhanden".
+     */
+    private void probeQrAfterLoad() {
+        final String qrProbe = "(function(){try{"
+                + "var adr='http://192.0.2.50:45456/llmbox-transfer?t=3f9a1c77e0b2d4aa';"
+                + "var stueck='LBX1|ab12cd34|1|2|9f86d081884c7d65|'+new Array(401).join('A');"
+                + "function malen(text,vergroesserung){"
+                + "  var q=qrcode(0,'M');q.addData(text,'Byte');q.make();"
+                + "  var mc=q.getModuleCount(),rand=4*vergroesserung,seite=mc*vergroesserung+2*rand;"
+                + "  var c=document.createElement('canvas');c.width=seite;c.height=seite;"
+                + "  var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,seite,seite);"
+                + "  x.fillStyle='#000';"
+                + "  for(var r=0;r<mc;r++)for(var k=0;k<mc;k++){if(q.isDark(r,k))x.fillRect(rand+k*vergroesserung,rand+r*vergroesserung,vergroesserung,vergroesserung);}"
+                + "  return {c:c,seite:seite};"
+                + "}"
+                + "function lesen(text,v){var b=malen(text,v);"
+                + "  var d=b.c.getContext('2d').getImageData(0,0,b.seite,b.seite).data;"
+                + "  var f=(window.jsQR&&jsQR(d,b.seite,b.seite))||null;"
+                + "  return {seite:b.seite,erkannt:f?f.data:null,gleich:!!(f&&f.data===text)};}"
+                + "return JSON.stringify({"
+                + " encoder:typeof qrcode==='function', decoder:typeof window.jsQR,"
+                + " adresse:lesen(adr,3), stueck:lesen(stueck,2)"
+                + "});}catch(e){return 'Fehler: '+e.message}})()";
 
+        web.postDelayed(() -> web.evaluateJavascript(qrProbe, (v) -> Log.i("LLMBOX-QR", "qr_probe=" + v)), 1500);
+    }
 
+    /**
+     * Misst am Gerat, warum eine Kamera-Vorschau schwarz bleiben kann (Nutzerbericht S20).
+     * Fragt in der echten WebView nacheinander ab:
+     *   - gibt es navigator.mediaDevices.getUserMedia ueberhaupt?
+     *   - liefert getUserMedia einen Stream (und wie viele Video-Spuren)?
+     *   - erlaubt die WebView video.play() (mediaPlaybackRequiresUserGesture)?
+     *   - meldet das <video> schliesslich eine Bildgroesse (videoWidth > 0 heisst: Bilder laufen)?
+     * Die Kamera wird danach sofort wieder frei gegeben.
+     */
+    private void probeCamAfterLoad() {
+        /* WICHTIG (erster Messversuch 14.11., cam_probe={}): web.evaluateJavascript wartet NICHT auf
+           ein Promise – es serialisiert den Wert sofort, und ein noch laufendes Promise ergibt "{}".
+           Die Sonde meldet ihr Ergebnis deshalb selbst, ueber Native.uiLog ins Logcat (Tag LLMBOX-CAM). */
+        final String camProbe = "(function(){try{"
+                + "var sagen=function(o){ try{Native.uiLog('CAM ' + JSON.stringify(o));}catch(e){} };"
+                + "var out={ mediaDevices:!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia) };"
+                + "if(!out.mediaDevices){ sagen(out); return; }"
+                + "navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false}).then(function(st){"
+                + "  out.stream=true; out.spuren=st.getTracks().map(function(t){return t.kind+':'+t.label;});"
+                + "  var v=document.createElement('video');"
+                + "  v.playsinline=true; v.muted=true; v.setAttribute('playsinline',''); v.setAttribute('muted','');"
+                + "  document.body.appendChild(v);"
+                + "  v.srcObject=st;"
+                + "  v.addEventListener('loadedmetadata',function(){ out.metadaten=v.videoWidth+'x'+v.videoHeight; });"
+                + "  return v.play().then(function(){"
+                + "    return new Promise(function(los){var t=0;"
+                + "      var tick=function(){t++;"
+                + "        if(v.videoWidth>0||t>30){ los({play:'ok',videoWidth:v.videoWidth,videoHeight:v.videoHeight,durchgaenge:t}); }"
+                + "        else requestAnimationFrame(tick);};tick();});"
+                + "  }).catch(function(e){ return {play:'abgelehnt', grund:(e&&e.name||'')+': '+(e&&e.message||'')}; })"
+                + "    .then(function(r){ out.play=r; st.getTracks().forEach(function(t){t.stop();});"
+                + "      if(v.parentNode)v.parentNode.removeChild(v); sagen(out); });"
+                + "}).catch(function(e){ sagen({ stream:false, grund:(e&&e.name||'')+': '+(e&&e.message||'') }); });"
+                + "}catch(e){ try{Native.uiLog('CAM FEHLER '+e.message);}catch(e2){} }})()";
 
+        web.postDelayed(() -> web.evaluateJavascript(camProbe, (v) -> Log.i("LLMBOX-CAM", "cam_probe_gestartet=" + v)), 1500);
+    }
 
+    /**
+     * Fahert die Oberflaeche im Debug-Bau selbst an und misst die echten Groessen:
+     * ob der Adapter ueberhaupt laeuft, wie breit die Auswahlfelder sind und wie hoch
+     * die Tab-Leiste sowie die erste Inhaltszeile im Einstellungs-Dialog ist.
+     * So werden Beschwerden wie "Knöpfe zu groß" mit Zahlen statt Vermutungen geklaert.
+     */
+    private void probeUiAfterLoad() {
+        final String openSettings = "(function(){try{var b=document.getElementById('btn-settings');"
+                + "if(b)b.click();return JSON.stringify({adapter:!!window.__androidAdapterLoaded,"
+                + "burger:!!document.getElementById('btn-drawer'),settings:!!document.querySelector('.settings nav')});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
 
+        // Wichtig: getComputedStyle().flexDirection liefert auch bei display:block "row",
+        // deshalb wird zusaetzlich display und der Inline-Style-Attributwert gemessen.
+        final String measure = "(function(){try{"
+                + "var navs=[...document.querySelectorAll('.settings nav')];"
+                + "if(!navs.length)return JSON.stringify({nav:'fehlt'});"
+                + "var out=navs.map(function(nav){var cs=getComputedStyle(nav);var r=nav.getBoundingClientRect();"
+                + "var b0=nav.querySelector('button');var c0=b0?getComputedStyle(b0):null;var q0=b0?b0.getBoundingClientRect():null;"
+                + "var btns=[...nav.querySelectorAll('button')].map(function(b){var q=b.getBoundingClientRect();"
+                + "return (b.textContent||'').trim().slice(0,10)+'='+Math.round(q.height)+'x'+Math.round(q.width);});"
+                + "var wrap=nav.closest('.modal');var wcls=wrap?wrap.className:'-';"
+                + "var host=nav.parentNode;var hcs=getComputedStyle(host);"
+                + "return {tabs:btns,navH:Math.round(r.height),navW:Math.round(r.width),"
+                + "display:cs.display,dir:cs.flexDirection,alignItems:cs.alignItems,"
+                + "cssWidth:cs.width,inlineStyle:nav.getAttribute('style')||'-',"
+                + "hostCls:host.className,hostDisplay:hcs.display,hostDir:hcs.flexDirection,hostW:Math.round(host.getBoundingClientRect().width),"
+                + "paneVisible:(function(){var p=nav.parentNode.querySelector('.pane');if(!p)return '-';"
+                + "return Math.round(p.clientHeight)+'/'+p.scrollHeight;})(),"
+                + "modalH:(function(){var m=nav.closest('.modal');return m?Math.round(m.getBoundingClientRect().height):0;})(),"
+                + "modalCls:wcls,"
+                + "btn0:{display:c0?c0.display:'-',w:c0?c0.width:'-',minW:c0?c0.minWidth:'-',h:q0?Math.round(q0.height):0},"
+                + "navRules:(function(){var hits=[];try{[].forEach.call(document.styleSheets,function(sh){"
+                + "var rl=null;try{rl=sh.cssRules}catch(e2){hits.push('GESPERRT:'+(sh.href||'inline'));return}if(!rl)return;"
+                + "[].forEach.call(rl,function(rule){"
+                + "if(rule.selectorText&&/\\.settings\\s+nav/.test(rule.selectorText))"
+                + "hits.push(((sh.href||'inline').split('/').pop())+' {'+(rule.style.cssText||'')+'}');"
+                + "if(rule.cssRules)[].forEach.call(rule.cssRules,function(r2){"
+                + "if(r2.selectorText&&/\\.settings\\s+nav/.test(r2.selectorText))"
+                + "hits.push('@'+(sh.href||'inline').split('/').pop()+' {'+(r2.style.cssText||'')+'}');});});});}catch(e3){hits.push('Fehler '+e3.message)}"
+                + "return hits.slice(0,8)})()};"
+                + "});"
+                + "var links=[...document.querySelectorAll('link[rel=stylesheet]')].map(function(l){return (l.href||'').split('/').pop();});"
+                + "return JSON.stringify({modalCount:document.querySelectorAll('.modal-back').length,"
+                + "openTitles:[...document.querySelectorAll('.modal-head')].map(function(h){return (h.textContent||'').trim().slice(0,24);}),css:links,navs:out});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        // Was ist direkt nach dem Laden offen? (Hinweis auf automatisch geoeffneten Dialog)
+        final String probeStart = "(function(){try{return JSON.stringify({"
+                + "modals:document.querySelectorAll('.modal-back').length,"
+                + "titles:[...document.querySelectorAll('.modal-head')].map(function(h){return (h.textContent||'').trim().slice(0,24);}),"
+                + "w:window.innerWidth});}catch(e){return e.message}})()";
+
+        // Zeitplan: erst pruefen was beim Start offen ist (und warum die Tab-Leiste dort
+        // gestapelt ist), dann Einstellungen, dann Server-Fenster explizit geoeffnet.
+        final String closeModals = "(function(){try{var n=0;document.querySelectorAll('.modal-back .icon-btn').forEach(function(b){b.click();n++;});"
+                + "return JSON.stringify({closed:n,modals:document.querySelectorAll('.modal-back').length});}catch(e){return e.message}})()";
+        final String openServer = "(function(){try{var s=document.getElementById('btn-server');if(s)s.click();"
+                + "return JSON.stringify({server:!!document.querySelector('.settings nav')});}catch(e){return e.message}})()";
+
+        web.postDelayed(() -> web.evaluateJavascript(probeStart, (v) -> Log.i("LLMBOX-UI", "probe_start=" + v)), 900);
+        web.postDelayed(() -> web.evaluateJavascript(measure, (v) -> Log.i("LLMBOX-UI", "probe_beimstart=" + v)), 1600);
+        web.postDelayed(() -> web.evaluateJavascript(closeModals, (v) -> Log.i("LLMBOX-UI", "probe_close1=" + v)), 2400);
+        web.postDelayed(() -> web.evaluateJavascript(openSettings, (v) -> Log.i("LLMBOX-UI", "probe1=" + v)), 2800);
+        web.postDelayed(() -> web.evaluateJavascript(measure, (v) -> Log.i("LLMBOX-UI", "probe_settings=" + v)), 3600);
+        web.postDelayed(() -> web.evaluateJavascript(closeModals, (v) -> Log.i("LLMBOX-UI", "probe_close2=" + v)), 4400);
+        web.postDelayed(() -> web.evaluateJavascript(openServer, (v) -> Log.i("LLMBOX-UI", "probe3=" + v)), 4800);
+        web.postDelayed(() -> web.evaluateJavascript(measure, (v) -> Log.i("LLMBOX-UI", "probe_server=" + v)), 5800);
+        // Jeder Reiter wird einzeln durchgemessen: nur so zeigt sich, ob unterhalb der
+        // Tab-Leiste noch Inhalt verdeckt ist (die Beschwerde des Nutzers).
+        web.postDelayed(() -> web.evaluateJavascript(openTabJs("Konfiguration"), (v) -> Log.i("LLMBOX-UI", "probe_tab1=" + v)), 6400);
+        web.postDelayed(() -> web.evaluateJavascript(measure, (v) -> Log.i("LLMBOX-UI", "probe_server_konfig=" + v)), 7300);
+        web.postDelayed(() -> web.evaluateJavascript(openTabJs("Zielrechner"), (v) -> Log.i("LLMBOX-UI", "probe_tab2=" + v)), 7900);
+        web.postDelayed(() -> web.evaluateJavascript(measure, (v) -> Log.i("LLMBOX-UI", "probe_server_ziel=" + v)), 8800);
+        web.postDelayed(() -> web.evaluateJavascript(openTabJs("Modell starten"), (v) -> Log.i("LLMBOX-UI", "probe_tab3=" + v)), 9400);
+        web.postDelayed(() -> web.evaluateJavascript(measure, (v) -> Log.i("LLMBOX-UI", "probe_server_start=" + v)), 10300);
+        // Wichtig: die Sonde hat Einstellungs- und Server-Fenster selbst geoeffnet. Wuerden sie
+        // offen bleiben, hielte der Nutzer das fuer einen Fehler der App ("startet mit Dialog").
+        web.postDelayed(() -> web.evaluateJavascript(closeModals, (v) -> Log.i("LLMBOX-UI", "probe_close_end=" + v)), 11000);
+
+        // ── Chatliste und der gemeinsame Chat-Ordner ──
+        // Beides war Nutzer-Rueckmeldung: die Aktionsknopfe einer Chatzeile waren nur bei
+        // Maus-Hover sichtbar (auf dem Handy nie), und im Reiter "Daten" gab es keinen Weg,
+        // eine Windows-Freigabe als Chat-Ordner zu setzen. Die Sonde weist beide objektiv nach.
+        final String chatRowProbe = "(function(){try{"
+                + "var it=document.querySelector('.chat-item');if(!it)return JSON.stringify({zeile:'keine (evtl. keine Chats)'});"
+                + "var a=it.querySelector('.acts');var b=a?[...a.querySelectorAll('.mini-btn')]:[];"
+                + "var r=b.length?b[0].getBoundingClientRect():null;var cs=b.length?getComputedStyle(b[0]):null;"
+                + "return JSON.stringify({acts:a?getComputedStyle(a).display:'fehlt',knoepfe:b.length,"
+                + "titel:b.map(function(x){return x.getAttribute('title');}),"
+                + "gezeichnet:r?Math.round(r.width)+'x'+Math.round(r.height):'-',"
+                + "min:cs?cs.minWidth+' x '+cs.minHeight:'-',zeilenH:Math.round(it.getBoundingClientRect().height)});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        final String openDaten = "(function(){try{var b=document.getElementById('btn-settings');if(b)b.click();"
+                + "return JSON.stringify({settings:!!document.querySelector('.settings nav')});}catch(e){return e.message}})()";
+        final String datenTab = "(function(){try{"
+                + "for(var n of document.querySelectorAll('.settings nav')){"
+                + " for(var b of n.querySelectorAll('button')){if((b.textContent||'').trim().indexOf('Daten')===0){b.click();return 'Daten geoeffnet'}}}"
+                + "return 'Tab Daten nicht gefunden';}catch(e){return 'Fehler: '+e.message}})()";
+
+        // Prueft den vom Adapter ergaenzten Freigabe-Bereich in der Sync-Zeile.
+        final String syncProbe = "(function(){try{"
+                + "var row=[...document.querySelectorAll('.frow')].find(function(r){return (r.textContent||'').indexOf('Chats auf mehreren Rechnern')>=0;});"
+                + "if(!row)return JSON.stringify({syncZeile:'fehlt'});"
+                + "var box=row.querySelector('.sync-smb');"
+                + "var kn=[...row.querySelectorAll('button')].map(function(b){return (b.textContent||'').trim();});"
+                + "return JSON.stringify({freigabeBlock:!!box,eingaben:box?box.querySelectorAll('input').length:0,"
+                + "knoepfe:kn,status:(box?(box.querySelector('.smb-status')||{}).textContent:'').slice(0,120)});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        web.postDelayed(() -> web.evaluateJavascript(openDrawerForChatProbe(), (v) -> Log.i("LLMBOX-UI", "probe_drawer=" + v)), 11600);
+        web.postDelayed(() -> web.evaluateJavascript(chatRowProbe, (v) -> Log.i("LLMBOX-UI", "probe_chatliste=" + v)), 12400);
+        /* Prueft einen Einstellungs-Reiter namentlich und listet seine Zeilen/Knoepfe auf.
+           Damit laesst sich am Gerat belegen, ob eine Option wirklich sichtbar ist oder vom
+           Adapter ausgeblendet wurde (frueherer Fehler: Reiter verschwanden still). */
+
+        /* Sichtbare und ausgeblendete Zeilen des offenen Dialogs. Als Wurzel dient .modal –
+           dieser Selektor ist durch probe_settings belegt (modalCls:"modal wide"). */
+        final String zeilenProbe = "(function(){try{"
+                + "var pane=document.querySelector('.modal');"
+                + "if(!pane)return JSON.stringify({dialog:'fehlt'});"
+                + "var rows=[...pane.querySelectorAll('.frow')].filter(function(r){"
+                + "  var l=r.querySelector('.flabel');return l&&(l.textContent||'').trim();});"
+                + "var sichtbar=[],versteckt=[];"
+                + "rows.forEach(function(r){var t=(r.querySelector('.flabel').textContent||'').trim().split('\\n')[0].slice(0,42);"
+                + "  (getComputedStyle(r).display==='none'?versteckt:sichtbar).push(t);});"
+                + "var kn=[...pane.querySelectorAll('button')].map(function(b){return (b.textContent||'').trim();}).filter(Boolean).slice(0,14);"
+                + "return JSON.stringify({sichtbarAnzahl:sichtbar.length,verstecktAnzahl:versteckt.length,"
+                + "knoepfe:kn,sichten:sichtbar.slice(0,26),versteckte:versteckt});}catch(e){return 'Fehler: '+e.message}})()";
+
+        /** Reiter im Einstellungsdialog nach Namen antippen. */
+        final String tabJs = "(function(){try{for(var n of document.querySelectorAll('.settings nav')){"
+                + " for(var b of n.querySelectorAll('button')){"
+                + "  if((b.textContent||'').trim().indexOf('%LABEL%')===0){b.click();return 'geoeffnet: %LABEL%';}}}"
+                + "return 'Tab nicht gefunden';}catch(e){return 'Fehler: '+e.message}})()";
+
+        web.postDelayed(() -> web.evaluateJavascript(openDaten, (v) -> Log.i("LLMBOX-UI", "probe_open_daten=" + v)), 13200);
+        web.postDelayed(() -> web.evaluateJavascript(datenTab, (v) -> Log.i("LLMBOX-UI", "probe_daten_tab=" + v)), 14000);
+
+        /* Nachweis fuer die Nutzerfrage "Es fehlen Einstellungsoptionen": der Reiter
+           Workspace & Dateien enthaelt die Werkzeug-Grenzen (u. a. "Max. Werkzeug-Schritte
+           am Stueck", Standard 25). Frueher fehlten sie, weil die Android-Assets von einer
+           alten Quellversion stammten - jetzt messbar am Gerat statt im Quelltext. */
+        web.postDelayed(() -> web.evaluateJavascript(tabJs.replace("%LABEL%", "Workspace"), (v) -> Log.i("LLMBOX-UI", "probe_tab_ws=" + v)), 16200);
+        web.postDelayed(() -> web.evaluateJavascript(zeilenProbe, (v) -> Log.i("LLMBOX-UI", "probe_zeilen_workspace=" + v)), 17000);
+        // Reiter "Uebertragung": Zugang zu WLAN-Uebernahme, JSON-Import/-Export (Punkte 5 und 6).
+        web.postDelayed(() -> web.evaluateJavascript(tabJs.replace("%LABEL%", "Übertragun"), (v) -> Log.i("LLMBOX-UI", "probe_tab_transfer=" + v)), 17800);
+        web.postDelayed(() -> web.evaluateJavascript(zeilenProbe, (v) -> Log.i("LLMBOX-UI", "probe_zeilen_uebertragung=" + v)), 18600);
+
+        /* ── WLAN-Uebertragung wirklich durchspielen (--ez lanprobe true) ──
+           Sucht im Netz wie die Schaltflaeche, ruft die gefundene Adresse ab und zeigt, was
+           die Uebertragung enthalten wuerde. Es wird NICHTS uebernommen – die Einstellungen
+           des Gerats bleiben unveraendert. */
+        if (getIntent() != null && getIntent().getBooleanExtra("lanprobe", false)) {
+            final String lanProbe = "(function(){try{"
+                    + "window.__lanReport='suche …';"
+                    + "var anzahl=0;"
+                    + "window.api.transfer.lanSearch({waitMs:3000}).then(function(r){"
+                    + "  if(!r||!r.ok){window.__lanReport='keine Antwort: '+((r&&r.error)||'');return;}"
+                    + "  anzahl=(r.urls||[]).length;"
+                    + "  window.__lanUrls=r.urls;"
+                    + "  return window.api.fetch({url:r.urls[0],method:'GET',timeout:15000});"
+                    + "}).then(function(f){"
+                    + "  if(!f)return;"
+                    // Fehlergrund mit ausgeben: ohne error war nicht unterscheidbar, ob das
+                    // Netz, die Bruecke oder ein Tippfehler in der Sonde schuld war.
+                    + "  if(!f.ok){window.__lanReport='HTTP '+f.status+' – '+((f.error)||'keine Fehlermeldung');return;}"
+                    + "  var d=JSON.parse(f.text);"
+                    + "  window.__lanReport=JSON.stringify({urls:anzahl,format:d.format,version:d.version,"
+                    + "  contains:d.contains,verbindungen:((d.settings||{}).connections||[]).length});"
+                    + "}).catch(function(e){window.__lanReport='Fehler: '+e.message;});"
+                    + "return 'Netzsuche gestartet';}catch(e){return e.message}})()";
+            final String lanResultProbe = "(function(){try{return window.__lanReport||'kein Ergebnis';}catch(e){return e.message}})()";
+            web.postDelayed(() -> web.evaluateJavascript(lanProbe, (v) -> Log.i("LLMBOX-UI", "probe_lan_start=" + v)), 19400);
+            web.postDelayed(() -> web.evaluateJavascript(lanResultProbe, (v) -> Log.i("LLMBOX-UI", "probe_lan=" + v)), 26000);
+
+            /* Uebernahme wirklich durchfuehren (--ez lanapply true). Ohne diesen Schalter
+               bleibt alles lesbar und nichts wird geaendert. Mit ihm werden Einstellungen und
+               Verbindungen uebernommen – der Nachweis, dass die Uebertragung endet nicht beim
+               Abruf. Vorher die Einstellungen des Gerats sichern (run-as cat files/data/settings.json). */
+            if (getIntent().getBooleanExtra("lanapply", false)) {
+                /* Alle gefundenen Adressen der Reihe nach probieren, nicht nur die erste.
+                   Grund: ein Rechner kann auf das Rufsignal antworten, obwohl sein HTTP-Dienst
+                   schon beendet ist (frueherer Fehler in main.js). Die echte App macht es in
+                   transfer.js lanSearchAndApply() genauso - die Sonde muss dasselbe Verhalten
+                   pruefen, sonst meldet sie einen Fehler, den es in der App gar nicht gibt. */
+                final String applyProbe = "(function(){try{"
+                        + "window.__applyReport='laeuft …';"
+                        + "var anzahl=0, versuche=[];"
+                        + "window.api.transfer.lanSearch({waitMs:3000}).then(function(r){"
+                        + "  if(!r||!r.ok)throw new Error((r&&r.error)||'nichts gefunden');"
+                        + "  anzahl=(r.urls||[]).length;"
+                        + "  return (r.urls||[]).reduce(function(kette,u){"
+                        + "    return kette.then(function(v){ if(v)return v;"
+                        + "      return window.api.fetch({url:u,method:'GET',timeout:15000}).then(function(f){"
+                        + "        versuche.push(u+' -> HTTP '+f.status);"
+                        + "        if(!f.ok)return null;"
+                        + "        return window.api.transfer.apply(JSON.parse(f.text));"
+                        + "      });});"
+                        + "  },Promise.resolve(null)).then(function(res){"
+                        + "    if(!res)throw new Error('keine der '+anzahl+' Adressen lieferte Daten ('+versuche.join('; ')+')');"
+                        + "    window.__applyReport=JSON.stringify({urls:anzahl,ok:res&&res.ok,report:res&&res.report});"
+                        + "    return window.api.store.get('settings');"
+                        + "  }).then(function(s){"
+                        + "    window.__applyNach='verbindungen='+(((s||{}).connections)||[]).length"
+                        + "      +' modell='+((s||{}).model||'-')+' maxSteps='+(((s||{}).workspace||{}).maxSteps);"
+                        + "  });"
+                        + "}).catch(function(e){window.__applyReport='Fehler: '+e.message;});"
+                        + "return 'Uebernahme gestartet';}catch(e){return e.message}})()";
+                final String applyResultProbe = "(function(){try{return JSON.stringify({ergebnis:window.__applyReport||'kein Ergebnis',nachher:window.__applyNach||'-'});}catch(e){return e.message}})()";
+
+                /* WIRKUNG der Uebernahme in der laufenden Oberflaeche. Genau hier lag der
+                   gemeldete Fehler: die Datei war geschrieben, aber Verbindung, Modell und
+                   Werkzeuge blieben bis zum Neustart unveraendert ("nicht die richtigen
+                   Einstellungen uebertragen"). applyIncomingSettings() (app.js) laedt sie jetzt
+                   neu; danach muessen Verbindungsname, Modelliste und Statuszeile stimmen. */
+                final String wirkProbe = "(function(){try{"
+                        + "window.__wirkReport='laeuft …';"
+                        + "if(typeof window.applyIncomingSettings!=='function'){window.__wirkReport='applyIncomingSettings fehlt';return 'fehlt';}"
+                        + "window.applyIncomingSettings().then(function(w){window.__wirkReport=JSON.stringify(w);})"
+                        + " .catch(function(e){window.__wirkReport='Fehler: '+e.message;});"
+                        + "return 'Neuladen gestartet';}catch(e){return e.message}})()";
+                final String wirkErgebnisProbe = "(function(){try{"
+                        + "var st=document.getElementById('conn-status');"
+                        + "return JSON.stringify({uebernahme:window.__wirkReport||'kein Ergebnis',"
+                        + "verbindungsfeld:(document.getElementById('sel-conn')||{options:[]}).options.length,"
+                        + "ausgewaehltVerbindung:(document.getElementById('sel-conn')||{}).value||'-',"
+                        + "modellfeld:(document.getElementById('sel-model')||{}).value||'-',"
+                        + "statusText:(st?(st.textContent||'').trim():'fehlt'),statusKlasse:(st?st.className:'-'),"
+                        + "linksText:((document.getElementById('st-left')||{}).textContent||'').trim().slice(0,60)});"
+                        + "}catch(e){return 'Fehler: '+e.message}})()";
+
+                /* Beweis "aktive Verbindung hergestellt": kurze echte Anfrage an den Server.
+                   Ohne Antwort gilt die Verbindung nicht als hergestellt. */
+                final String lanChatProbe = "(function(){try{"
+                        + "var i=document.getElementById('input'),b=document.getElementById('btn-send');"
+                        + "if(!i||!b)return JSON.stringify({fehler:'Eingabe/Senden nicht gefunden'});"
+                        + "window.__lanChatVor=(document.querySelector('#messages-inner')||{}).textContent||'';"
+                        + "i.value='Antworte mit genau einem Wort: VERBUNDEN';"
+                        + "i.dispatchEvent(new Event('input',{bubbles:true}));b.click();"
+                        + "return JSON.stringify({gesendet:true,modell:(document.getElementById('sel-model')||{}).value});"
+                        + "}catch(e){return 'Fehler: '+e.message}})()";
+                final String lanChatErgebnisProbe = "(function(){try{"
+                        + "var txt=(document.querySelector('#messages-inner')||{}).textContent||'';"
+                        + "var vor=window.__lanChatVor||'';"
+                        + "return JSON.stringify({neuerText:txt.length-vor.length,"
+                        + "antwort:txt.slice(vor.length).trim().slice(0,80),"
+                        + "fehlerMeldung:(document.getElementById('toast-root')||{}).textContent.trim().slice(0,120)});"
+                        + "}catch(e){return 'Fehler: '+e.message}})()";
+
+                /* Zeitfenster: applyIncomingSettings() hoelt Modelliste, Chats und Status neu -
+                   das dauert am Gerat mehrere Sekunden. Ein Auslesen nach 12 s traf bisher nur
+                   den laufenden Vorgang ("laeuft ...") und war damit kein Beweis. */
+                web.postDelayed(() -> web.evaluateJavascript(applyProbe, (v) -> Log.i("LLMBOX-UI", "probe_apply_start=" + v)), 28000);
+                web.postDelayed(() -> web.evaluateJavascript(applyResultProbe, (v) -> Log.i("LLMBOX-UI", "probe_apply=" + v)), 36000);
+                web.postDelayed(() -> web.evaluateJavascript(wirkProbe, (v) -> Log.i("LLMBOX-UI", "probe_wirkung_start=" + v)), 40000);
+                web.postDelayed(() -> web.evaluateJavascript(wirkErgebnisProbe, (v) -> Log.i("LLMBOX-UI", "probe_wirkung=" + v)), 68000);
+                web.postDelayed(() -> web.evaluateJavascript(lanChatProbe, (v) -> Log.i("LLMBOX-UI", "probe_lan_chat_send=" + v)), 74000);
+                web.postDelayed(() -> web.evaluateJavascript(lanChatErgebnisProbe, (v) -> Log.i("LLMBOX-UI", "probe_lan_chat=" + v)), 104000);
+            }
+        }
+        // syncRowHolder() der Desktop-Version baut seine Zeile erst nach api.sync.get() auf -
+        // ohne diese Pause waere der Adapter-Bereich noch gar nicht vorhanden.
+        web.postDelayed(() -> web.evaluateJavascript(syncProbe, (v) -> Log.i("LLMBOX-UI", "probe_sync=" + v)), 15600);
+        /* ── Nachweis, dass Datei-/SMB-Zugriffe die Oberfläche nicht mehr blockieren ──
+           Der Nutzer berichtete: "Freezt die App wenn ich mitten im Chat bin". Ursache war,
+           dass jeder Dateizugriff als synchroner @JavascriptInterface-Aufruf den Render-Thread
+           der WebView festhielt. Die Sonde startet deshalb einen Zugriff auf eine Freigabe,
+           die nicht antwortet, und zaehlt waehrenddessen die JS-Timer-Ticks:
+             - frueher (synchron):  Ticks stehen still, Luecke = so lang wie der Zugriff
+             - jetzt (fsJob-Pool):  Ticks laufen weiter, die Oberflaeche bleibt bedienbar
+           Es wird nur gelesen (smbTest) - an den Einstellungen des Nutzers aendert das nichts. */
+        final String freezeProbe = "(function(){"
+                + "var ticks=0,maxGap=0,last=performance.now();"
+                + "var iv=setInterval(function(){var n=performance.now();"
+                + "if(n-last>maxGap)maxGap=Math.round(n-last);last=n;ticks++;},50);"
+                + "window.__fsJob('smbTest','/smb/192.0.2.99.99/freigabe').then(function(r){"
+                + "  window.__freezeResult={fehler:(r&&r.error||'').slice(0,70),ticks:ticks,maxGap:maxGap};"
+                + "}).catch(function(e){window.__freezeResult={fehler:String(e.message).slice(0,70),ticks:ticks,maxGap:maxGap};});"
+                + "setTimeout(function(){clearInterval(iv);},14000);"
+                + "return 'smbTest auf nicht erreichbare Freigabe gestartet';})()";
+
+        web.postDelayed(() -> web.evaluateJavascript(freezeProbe, (v) -> Log.i("LLMBOX-UI", "probe_freeze_start=" + v)), 17200);
+        // Der Zugriff braucht bis zu den SMB-Timeouts (8 s Verbindungsaufbau). Danach steht
+        // das Ergebnis inklusive der Timer-Luecke bereit.
+        web.postDelayed(() -> web.evaluateJavascript(
+                "(function(){try{return JSON.stringify(window.__freezeResult||{hinweis:'noch kein Ergebnis'});}catch(e){return e.message}})()",
+                (v) -> Log.i("LLMBOX-UI", "probe_freeze=" + v)), 31000);
+
+        /* ── Statuszeile, Kontextbalken und gespeicherte SMB-Zugangsdaten ── */
+        final String statusProbe = "(function(){try{"
+                + "var l=document.getElementById('st-left'),r=document.getElementById('st-right');"
+                + "var c=function(e){return e?{abgeschnitten:(e.scrollWidth>e.clientWidth+1)||(e.scrollHeight>e.clientHeight+1),"
+                + "zeilen:Math.round(e.getBoundingClientRect().height/(parseFloat(getComputedStyle(e).lineHeight)||1))}:'fehlt'};"
+                + "var m=document.getElementById('ctx-meter');"
+                + "return JSON.stringify({links:c(l),rechts:c(r),linksText:(l?l.textContent:'').slice(0,40),"
+                + "balken:{parent:m&&m.parentNode?(m.parentNode.id||m.parentNode.tagName):'-',basis:m?getComputedStyle(m).flexBasis:'-'}});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        // Die Zugangsdaten muessen beim Oeffnen der Einstellungen in den Feldern stehen,
+        // sonst wirken sie "verloren" und ein leer bestaetigtes Feld loescht den Benutzer.
+        final String credsProbe = "(function(){try{"
+                + "var box=[...document.querySelectorAll('.frow')].find(function(r){return (r.textContent||'').indexOf('Netzwerkordner (SMB)')>=0;});"
+                + "if(!box)return JSON.stringify({feld:'kein SMB-Bereich'});"
+                + "var i=[...box.querySelectorAll('input')];"
+                + "return JSON.stringify({pfad:(i[0]||{}).value||'',benutzer:(i[1]||{}).value||'LEER',"
+                + "domain:(i[2]||{}).value||'',passwortFeld:(i[3]||{}).value?'GEFUELLT':'leer (vorgesehen)',"
+                + "hinweis:((i[3]||{}).placeholder||'').slice(0,45)});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        web.postDelayed(() -> web.evaluateJavascript(statusProbe, (v) -> Log.i("LLMBOX-UI", "probe_status=" + v)), 31600);
+        web.postDelayed(() -> web.evaluateJavascript(openDaten, (v) -> Log.i("LLMBOX-UI", "probe_open2=" + v)), 32400);
+        // Workspace-Reiter wahlen (dort liegt die SMB-Zeile), dann Felder lesen.
+        web.postDelayed(() -> web.evaluateJavascript(
+                "(function(){try{for(var n of document.querySelectorAll('.settings nav')){"
+              + " for(var b of n.querySelectorAll('button')){if((b.textContent||'').trim().indexOf('Workspace')===0){b.click();return 'Workspace geoeffnet'}}}"
+              + "return 'Tab nicht gefunden';}catch(e){return e.message}})()",
+                (v) -> Log.i("LLMBOX-UI", "probe_ws_tab=" + v)), 33200);
+        web.postDelayed(() -> web.evaluateJavascript(credsProbe, (v) -> Log.i("LLMBOX-UI", "probe_creds=" + v)), 34600);
+
+        /* ── Echter Chatlauf: der gemeldete Freeze unter alltagsnahen Bedingungen ──
+           Der Workspace des Nutzers liegt auf einer Windows-Freigabe. Genau dabei trat der
+           Freeze auf. Diese Sonde schreibt eine kurze Nachricht in das echte Eingabefeld,
+           lost dieselbe Sendetaste aus wie von Hand und zaehlt waehrend der Antwort die
+           JS-Timer: bleiben sie stehen, haelt etwas die Oberflaeche fest.
+           NUR mit --ez probechat true, weil dabei ein echter Chat geschrieben wird. */
+        if (chatProbeRequested) {
+        final String chatSendProbe = "(function(){try{"
+                + "var i=document.getElementById('input'),b=document.getElementById('btn-send');"
+                + "if(!i||!b)return JSON.stringify({fehler:'Eingabe/Senden nicht gefunden'});"
+                + "window.__chatTicks=0;window.__chatMaxGap=0;var last=performance.now();"
+                + "if(window.__chatIv)clearInterval(window.__chatIv);"
+                + "window.__chatIv=setInterval(function(){var n=performance.now();"
+                + "if(n-last>window.__chatMaxGap)window.__chatMaxGap=Math.round(n-last);last=n;window.__chatTicks++;},50);"
+                // Etwas laengere Antwort, damit der Pause-Knopf wirklich testbar ist.
+                + "i.value='Antworte nur mit den Zahlen 1 bis 40, jede in einer eigenen Zeile.';"
+                + "i.dispatchEvent(new Event('input',{bubbles:true}));"
+                + "var r=b.getBoundingClientRect();"
+                + "b.click();"
+                + "return JSON.stringify({gesendet:true,sendenKnopf:[Math.round(r.left+r.width/2),Math.round(r.top+r.height/2)],"
+                // app.js deklariert S als const im Skript - es hangt NICHT an window.
+                // Die Zahl der Verbindungen wird deshalb am Auswahlfeld abgelesen.
+                + "verbindungen:(document.getElementById('sel-conn')||{options:[]}).options.length});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        final String chatResultProbe = "(function(){try{"
+                + "if(window.__chatIv)clearInterval(window.__chatIv);"
+                + "var msgs=document.querySelectorAll('#messages-inner .msg').length;"
+                + "var txt=(document.querySelector('#messages-inner')||{}).textContent||'';"
+                + "return JSON.stringify({ticks:window.__chatTicks,maxGapMs:window.__chatMaxGap,"
+                + "nachrichten:msgs,laeuft:(document.getElementById('btn-pause')||{}).className||'-',"
+                + "letzteZeile:txt.trim().split('\\n').slice(-1)[0].slice(0,60)});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        web.postDelayed(() -> web.evaluateJavascript(chatSendProbe, (v) -> Log.i("LLMBOX-UI", "probe_chat_send=" + v)), 35400);
+
+        /* V48 Pause/Fortsetzen: der Knopf ist nur sichtbar, waehrend die KI schreibt.
+           Er wird hier mitten in der Antwort angetippt; erwartet wird der Strip
+           "#pause-strip" mit einem "Fortsetzen"-Knopf. */
+        final String pauseProbe = "(function(){try{"
+                + "var b=document.getElementById('btn-pause');"
+                + "if(!b)return JSON.stringify({knopf:'fehlt'});"
+                + "var sichtbar=!b.classList.contains('hidden');"
+                + "if(sichtbar)b.click();"
+                + "return JSON.stringify({sichtbar:sichtbar,klasse:b.className});}catch(e){return 'Fehler: '+e.message}})()";
+        final String pauseStripProbe = "(function(){try{"
+                + "var s=document.getElementById('pause-strip');"
+                + "if(!s)return JSON.stringify({strip:'fehlt'});"
+                + "var btn=[...s.querySelectorAll('button')].map(function(x){return (x.textContent||'').trim();});"
+                + "return JSON.stringify({sichtbar:!s.classList.contains('hidden'),text:(s.textContent||'').trim().slice(0,70),knoepfe:btn});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        // Zeitpunkte knapp nach dem Senden: am Gerat war die Antwort schon nach ~5 s fertig,
+        // ein Test bei 41 s traf den Knopf nicht mehr (er ist nur waehrend des Schreibens sichtbar).
+        web.postDelayed(() -> web.evaluateJavascript(pauseProbe, (v) -> Log.i("LLMBOX-UI", "probe_pause=" + v)), 37000);
+        web.postDelayed(() -> web.evaluateJavascript(pauseStripProbe, (v) -> Log.i("LLMBOX-UI", "probe_pause_strip=" + v)), 38200);
+
+        /* Fortsetzen: der "Fortsetzen"-Knopf im Strip wird angetippt. Danach muss der Strip
+           verschwinden und die Antwort weiterschreiben (sichtbar an wachsendem Text). */
+        final String resumeProbe = "(function(){try{"
+                + "var s=document.getElementById('pause-strip');"
+                + "if(!s)return JSON.stringify({strip:'fehlt'});"
+                + "var b=[...s.querySelectorAll('button')].find(function(x){return (x.textContent||'').trim()==='Fortsetzen';});"
+                + "if(!b)return JSON.stringify({knoepfe:'kein Fortsetzen-Knopf'});"
+                + "var vor=(document.querySelector('#messages-inner')||{}).textContent||'';"
+                + "window.__resumeVor=vor.length;"
+                + "b.click();"
+                + "return JSON.stringify({geklickt:true,stripZu:s.classList.contains('hidden'),"
+                + "pauseKnopf:(document.getElementById('btn-pause')||{}).className});}catch(e){return 'Fehler: '+e.message}})()";
+        final String resumeWirkungProbe = "(function(){try{"
+                + "var s=document.getElementById('pause-strip');"
+                + "var txt=(document.querySelector('#messages-inner')||{}).textContent||'';"
+                + "return JSON.stringify({stripZu:s?s.classList.contains('hidden'):'fehlt',"
+                + "textGewachsen:txt.length-(window.__resumeVor||0),laeuft:(document.getElementById('btn-pause')||{}).className});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        web.postDelayed(() -> web.evaluateJavascript(resumeProbe, (v) -> Log.i("LLMBOX-UI", "probe_resume=" + v)), 40000);
+        web.postDelayed(() -> web.evaluateJavascript(resumeWirkungProbe, (v) -> Log.i("LLMBOX-UI", "probe_resume_wirkung=" + v)), 45000);
+
+        // Antwort abwarten (lokale Modelle brauchen einige Sekunden), dann auswerten.
+        web.postDelayed(() -> web.evaluateJavascript(chatResultProbe, (v) -> Log.i("LLMBOX-UI", "probe_chat_ergebnis=" + v)), 62000);
+
+        /* ── V48 "Kontext leeren" (#btn-handoff) ──
+           Der Knopf erzeugt eine Uebergabe und setzt chat.ctxStart; der alte Verlauf bleibt
+           sichtbar, wird aber nicht mehr an die KI gesendet. Sichtbarer Beleg ist die
+           Nachricht mit der Zusammenfassung "Uebergabe nach Kontext leeren".
+           Die Sonde wartet, bis die KI fertig geschrieben hat (hoStart bricht sonst mit
+           "Bitte erst die Antwort stoppen." ab) und klickt hochstens zweimal. */
+        final String handoffProbe = "(function(){try{"
+                + "var p=document.getElementById('btn-pause');"
+                + "if(p && !p.classList.contains('hidden'))return JSON.stringify({uebersprungen:'KI schreibt noch'});"
+                + "var b=document.getElementById('btn-handoff');"
+                + "if(!b)return JSON.stringify({knopf:'fehlt'});"
+                + "if(b.classList.contains('hidden'))return JSON.stringify({knopf:'verborgen (handoff aus?)'});"
+                + "window.__hoVor=(document.querySelectorAll('#messages-inner .msg').length);"
+                + "b.click();"
+                + "return JSON.stringify({geklickt:true,meldung:((document.getElementById('toast-root')||{}).textContent||'').trim().slice(0,60)});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+        final String handoffWirkungProbe = "(function(){try{"
+                + "var h=[...document.querySelectorAll('#messages-inner .handoff-msg summary')].map(function(s){return (s.textContent||'').trim().slice(0,50);});"
+                + "return JSON.stringify({nachrichten:document.querySelectorAll('#messages-inner .msg').length,"
+                + "vorher:window.__hoVor||0,uebergaben:h});}catch(e){return 'Fehler: '+e.message}})()";
+
+        web.postDelayed(() -> web.evaluateJavascript(handoffProbe, (v) -> Log.i("LLMBOX-UI", "probe_handoff=" + v)), 64000);
+        web.postDelayed(() -> web.evaluateJavascript(handoffProbe, (v) -> Log.i("LLMBOX-UI", "probe_handoff2=" + v)), 74000);
+        web.postDelayed(() -> web.evaluateJavascript(handoffWirkungProbe, (v) -> Log.i("LLMBOX-UI", "probe_handoff_wirkung=" + v)), 95000);
+
+        /* ── Chat-Sync ueber die echte Windows-Freigabe ──
+           Gemeldet wurde: "synchronisiert, aber 0 Chats kopiert". Ursache war das Umbenennen
+           auf der Freigabe (siehe SmbStore.rename). Diese Sonde prueft den echten Zustand und
+           hoelt die lokalen Chats nach - schreibt also in die Chat-Freigabe des Nutzers,
+           deshalb nur mit --ez probechat true. */
+        // Merkt sich jede Meldung des Hintergrundabgleichs, damit der Nachweis nicht von
+        // einem zufaelligen Zeitpunkt abhaengt.
+        final String wireRemoteProbe = "(function(){try{"
+                + "window.__remoteHits=window.__remoteHits||[];"
+                + "if(!window.__remoteWired){window.__remoteWired=true;"
+                + " window.api.onChatsChanged(function(m){window.__remoteHits.push("
+                + "  JSON.stringify({metas:(m.metas||[]).map(function(x){return x.id+'@'+x.rev}),removed:m.removed||[]}));});}"
+                + "return 'gelauscht';}catch(e){return e.message}})()";
+
+        // evaluateJavascript wartet ein Promise NICHT ab - der Stand wird deshalb in
+        // window.__syncReport geschrieben und in einem spaeteren Schritt ausgelesen.
+        final String syncStatusWrap = "(function(){try{"
+                + "window.api.sync.get().then(function(s){window.__syncDir=s.dir;window.__syncDev=s.deviceId;"
+                + " return window.api.chats.list();}).then(function(l){"
+                + "  window.__syncReport=JSON.stringify({dir:window.__syncDir||'(lokal)',geraete:window.__syncDev,"
+                + "  chats:(l||[]).length,aeltesterTitel:((l||[])[0]||{}).title});"
+                + " }).catch(function(e){window.__syncReport='Fehler: '+e.message;});"
+                + "return 'Sync-Stand wird gelesen';}catch(e){return e.message}})()";
+        final String syncReportProbe = "(function(){try{return window.__syncReport||'noch kein Ergebnis';}"
+                + "}catch(e){return e.message}})()";
+
+        final String migrateProbe = "(function(){try{"
+                + "window.__mig=window.api.sync.migrate().then(function(r){window.__migDone=r;});"
+                + "return 'migrate gestartet';}catch(e){return 'Fehler: '+e.message}})()";
+        final String migrateResultProbe = "(function(){try{var r=window.__migDone;"
+                + "if(!r)return 'laeuft noch';"
+                + "return JSON.stringify({copied:r.copied,skipped:r.skipped,fehlgeschlagen:(r.fehlgeschlagen||[]).map(function(x){return x.error}).slice(0,3)});"
+                + "}catch(e){return 'Fehler: '+e.message}})()";
+
+        /* ── Einmalige Korrektur des doppelten Unterordners (--ez fixsync true) ──
+           Der Nutzer hatte \\host\share\MeinProjekt\LLM-Box-Chats eingetragen; die App haengt
+           den Unterordner aber selbst an -> "…\LLM-Box-Chats\LLM-Box-Chats". Die Handy-Chats
+           lagen dort getrennt vom PC-Ordner, deshalb wirkte der Sync leer.
+           Dieser Schritt setzt den Ordner auf die Freigabe zurueck und fuehrt die lokalen Chats
+           in den gemeinsamen Ordner ueber (Kopie, nichts wird geloescht). */
+        if (getIntent() != null && getIntent().getBooleanExtra("fixsync", false)) {
+            final String fixProbe = "(function(){try{"
+                    + "window.__fixReport='laeuft';"
+                    + "window.api.sync.get().then(function(s){"
+                    + "  window.__fixVor=s.dir;"
+                    + "  return window.api.sync.setDir(s.dir);}).then(function(r){"
+                    + "  if(!r||!r.ok)throw new Error((r&&r.error)||'setDir abgelehnt');"
+                    + "  return window.api.sync.migrate();}).then(function(m){"
+                    + "  window.__fixMig=m;"
+                    + "  return window.api.chats.list();}).then(function(l){"
+                    + "  window.__fixReport=JSON.stringify({vor:window.__fixVor,neu:l.length+' Chats im gemeinsamen Ordner'});"
+                    + " }).catch(function(e){window.__fixReport='Fehler: '+e.message;});"
+                    + "return 'Korrektur gestartet';}catch(e){return e.message}})()";
+            final String fixResultProbe = "(function(){try{return window.__fixReport||'kein Ergebnis';}catch(e){return e.message}})()";
+            web.postDelayed(() -> web.evaluateJavascript(fixProbe, (v) -> Log.i("LLMBOX-UI", "probe_fixsync_start=" + v)), 90000);
+            web.postDelayed(() -> web.evaluateJavascript(
+                    "(function(){try{var r=window.__migDone;return r?JSON.stringify({copied:r.copied,skipped:r.skipped,fehler:(r.fehlgeschlagen||[]).length}):'laeuft noch';}catch(e){return e.message}})()",
+                    (v) -> Log.i("LLMBOX-UI", "probe_fixsync_migrate=" + v)), 150000);
+            web.postDelayed(() -> web.evaluateJavascript(fixResultProbe, (v) -> Log.i("LLMBOX-UI", "probe_fixsync=" + v)), 152000);
+        }
+
+        final boolean fixSync = getIntent() != null && getIntent().getBooleanExtra("fixsync", false);
+        web.postDelayed(() -> web.evaluateJavascript(wireRemoteProbe, (v) -> Log.i("LLMBOX-UI", "probe_remote_wire=" + v)), 96000);
+        web.postDelayed(() -> web.evaluateJavascript(syncStatusWrap, (v) -> Log.i("LLMBOX-UI", "probe_sync_vor=" + v)), 97000);
+        web.postDelayed(() -> web.evaluateJavascript(syncReportProbe, (v) -> Log.i("LLMBOX-UI", "probe_sync_vor_stand=" + v)), 99500);
+        // Mit fixsync uebernimmt der Korrekturschritt die Migration - nicht doppelt starten.
+        if (!fixSync) {
+            web.postDelayed(() -> web.evaluateJavascript(migrateProbe, (v) -> Log.i("LLMBOX-UI", "probe_migrate_start=" + v)), 100500);
+            // Die Chats des Nutzers sind mehrere MB gross; das Kopieren ueber die Freigabe dauert.
+            web.postDelayed(() -> web.evaluateJavascript(migrateResultProbe, (v) -> Log.i("LLMBOX-UI", "probe_migrate=" + v)), 145000);
+        }
+        web.postDelayed(() -> web.evaluateJavascript(syncStatusWrap, (v) -> Log.i("LLMBOX-UI", "probe_sync_nach=" + v)), 147000);
+        web.postDelayed(() -> web.evaluateJavascript(syncReportProbe, (v) -> Log.i("LLMBOX-UI", "probe_sync_nach_stand=" + v)), 150000);
+        // Der Hintergrundabgleich (5 s) soll eine fremde Aenderung von selbst melden.
+        web.postDelayed(() -> web.evaluateJavascript(
+                "(function(){try{return JSON.stringify({hits:(window.__remoteHits||[]).slice(-3),syncNow:typeof window.__syncNow});}catch(e){return e.message}})()",
+                (v) -> Log.i("LLMBOX-UI", "probe_remote_hits=" + v)), 156000);
+        }
+
+        /* ── Rohe Netzpruefung von der App aus (--ez smbprobe true) ──
+           Der Sync scheitert am Gerat mit "failed to connect to /192.0.2.10 (port 445) …
+           after 5000ms", waehrend dieselbe Verbindung vom Rechner klappt und toybox-nc auf dem
+           Handy erfolgreich wirkt. Um zu unterscheiden, ob (a) Android/Samsung dem APP-Prozess
+           SMB-Port 445 sperrt, (b) nur dieser eine Server blockt oder (c) die SMB-Bibliothek
+           selbst scheitert, prueft diese Sonde rein nativ - ohne WebView und ohne JS:
+             1. TCP 445 zum Freigabeserver
+             2. TCP 445 zum Windows-PC (derselbe Port, anderer Rechner)
+             3. TCP 5357 (Synology-Freigabeport) zum selben Server
+             4. SMB-Aufruf selbst (test) mit Fehlergrund
+           Laeuft im fsPool, damit die Oberflaeche nicht wartet. */
+        if (getIntent() != null && getIntent().getBooleanExtra("smbprobe", false)) {
+            final String nas = "192.0.2.10";
+            final String pc = getIntent().getStringExtra("pcip") == null ? "192.0.2.50" : getIntent().getStringExtra("pcip").trim();
+            // Jeder Schritt loggt sofort fuer sich: die fruehere Variante sammelte alles und
+            // gab es erst am Ende aus - blieb ein Schritt haengen, fehlte die gesamte Zeile.
+            Log.i("LLMBOX-UI", "probe_smb_native=gestartet (Ziel " + nas + ", PC " + pc + ")");
+            fsPool.execute(() -> {
+                /* Port 8080 ist bekanntermaessen erreichbar (darueber laeuft der Chat). Wenn die
+                   App also gar kein LAN duerfte, muesste auch dieser fehlschlagen. Port 5357 ist
+                   der alternative SMB-Port eines Synology: klappt er, kann die App die Freigabe
+                   ueber diesen Port statt 445 benutzen. */
+                for (String[] t : new String[][] {
+                        { "192.0.2.30", "8080", "LLM-Server(bekannt OK)" },
+                        { nas, "5357", "Synology-SMB-Alternative" },
+                        { nas, "445", "Freigabe-SMB" },
+                        { pc, "445", "Windows-PC-SMB" } }) {
+                    long ms = System.currentTimeMillis();
+                    try (java.net.Socket s = new java.net.Socket()) {
+                        s.connect(new java.net.InetSocketAddress(t[0], Integer.parseInt(t[1])), 6000);
+                        Log.i("LLMBOX-UI", "probe_smb_tcp=" + t[2] + " " + t[0] + ":" + t[1]
+                                + " VERBUNDEN nach " + (System.currentTimeMillis() - ms) + " ms");
+                    } catch (Throwable e) {
+                        Log.i("LLMBOX-UI", "probe_smb_tcp=" + t[2] + " " + t[0] + ":" + t[1]
+                                + " FEHLER nach " + (System.currentTimeMillis() - ms) + " ms: " + shortText(e.getMessage()));
+                    }
+                }
+                try {
+                    JSONObject o = new JSONObject(smb.test("/smb/" + nas + "/daten"));
+                    Log.i("LLMBOX-UI", "probe_smb_call=homes ok=" + o.optBoolean("ok")
+                            + (o.has("error") ? (" grund=" + shortText(o.optString("error"))) : (" eintraege=" + o.optInt("entries"))));
+                } catch (Throwable e) {
+                    Log.i("LLMBOX-UI", "probe_smb_call=FEHLER " + shortText(String.valueOf(e)));
+                }
+            });
+        }
+
+        /* ── Gemeinsamen Chat-Ordner einrichten (--ez setsync true) ──
+           Auf dem Gerat war Sync nie aktiv: files/data/sync.json enthaelt nur eine Geraete-ID,
+           und die Freigabe-Zugangsdaten (files/data/smb.json) fehlen vollstaendig
+           (probe_creds meldete "benutzer: LEER"). fixsync allein reicht deshalb nicht - es
+           setzt nur einen bereits vorhandenen Ordner neu.
+           Die Zugangsdaten kommen als Intent-Angaben und stehen damit NICHT im Quelltext:
+             --es smbhost 192.0.2.10 --es smbuser BENUTZER --es smbpass PASSWORT
+                                       [--es smbdomain DOMAENE] [--es smbshare homes/MeinProjekt]
+           Alles laeuft ueber die echten App-Funktionen (Native.smbSaveCreds, api.sync.setDir,
+           api.sync.migrate) - derselbe Weg, den der Knopf "Freigabe verbinden & uebernehmen"
+           in Einstellungen -> Daten geht. */
+        if (getIntent() != null && getIntent().getBooleanExtra("setsync", false)) {
+            final String cHost = jsQuote(getIntent().getStringExtra("smbhost") == null ? "" : getIntent().getStringExtra("smbhost").trim());
+            final String cUser = jsQuote(getIntent().getStringExtra("smbuser") == null ? "" : getIntent().getStringExtra("smbuser").trim());
+            final String cDom = jsQuote(getIntent().getStringExtra("smbdomain") == null ? "" : getIntent().getStringExtra("smbdomain").trim());
+            final String cPass = jsQuote(getIntent().getStringExtra("smbpass") == null ? "" : getIntent().getStringExtra("smbpass"));
+            final String shareRaw = (getIntent().getStringExtra("smbsyncdir") == null || getIntent().getStringExtra("smbsyncdir").trim().isEmpty())
+                    ? "/smb/192.0.2.10/daten/MeinProjekt" : getIntent().getStringExtra("smbsyncdir").trim();
+            final String cDir = jsQuote(shareRaw);
+
+            /* Ausfuehrung als Protokoll: jeder Schritt schreibt sein Ergebnis (inklusive des
+               echten Fehlergrundes) in window.__syncLog. Der fruehere Ablauf gab Promises direkt
+               an evaluateJavascript - die wartet aber kein Promise ab, und weil der Logpuffer des
+               Gerats nur 5 MiB hat, waren die Zeilen ausserdem weg, bevor sie ausgelesen wurden.
+               Jetzt: ein Schritt pro Aufruf, Ergebnis in einer Variable, Auslesen am Ende. */
+            final String syncSteps = "(function(){"
+                    + "window.__syncLog=window.__syncLog||[];"
+                    + "var L=function(s){window.__syncLog.push(s);};"
+                    + "L('schritt='+(window.__syncStep=(window.__syncStep||0)+1));"
+                    + "if(window.__syncStep===1){"
+                    + "  if(typeof Native==='undefined'||typeof Native.smbSaveCreds!=='function'){L('FEHLT:Native.smbSaveCreds');return;}"
+                    + "  try{L('creds gespeichert: '+String(Native.smbSaveCreds('%HOST%','%USER%','%DOM%','%PASS%')).slice(0,40));}"
+                    + "  catch(e){L('FEHLER smbSaveCreds: '+e.message);}"
+                    + "  window.__fsJob('smbTest','%DIR%').then(function(r){"
+                    + "    L('smbTest ok='+(r&&r.ok)+(r&&r.error?(' grund='+String(r.error).slice(0,140)):'')+(r&&r.entries!==undefined?(' eintraege='+r.entries):''));"
+                    + "  }).catch(function(e){L('FEHLER smbTest: '+e.message);});"
+                    + "}else if(window.__syncStep===2){"
+                    + "  window.api.sync.setDir('%DIR%').then(function(r){"
+                    + "    L('setDir ok='+(r&&r.ok)+(r&&r.error?(' grund='+String(r.error).slice(0,160)):'')+(r&&r.folder?(' ordner='+r.folder):''));"
+                    + "  }).catch(function(e){L('FEHLER setDir: '+e.message);});"
+                    + "}else if(window.__syncStep===3){"
+                    + "  window.api.sync.migrate().then(function(m){"
+                    + "    L('migrate ok='+(m&&m.ok)+' kopiert='+(m&&m.copied)+' unveraendert='+(m&&m.skipped)"
+                    + "      +(m&&m.error?(' grund='+String(m.error).slice(0,140)):'')"
+                    + "      +(m&&m.fehlgeschlagen&&m.fehlgeschlagen.length?(' fehlgeschlagen='+JSON.stringify(m.fehlgeschlagen.slice(0,2)).slice(0,200)):''));"
+                    + "  }).catch(function(e){L('FEHLER migrate: '+e.message);});"
+                    + "}else if(window.__syncStep===4){"
+                    + "  Promise.all([window.api.sync.get(),window.api.chats.list()]).then(function(a){"
+                    + "    L('stand dir='+(a[0].dir||'(nur lokal)')+' geraet='+a[0].deviceId+' chats='+(a[1]||[]).length"
+                    + "      +' aeltester='+(((a[1]||[])[0]||{}).title||'-').slice(0,40));"
+                    + "  }).catch(function(e){L('FEHLER stand: '+e.message);});"
+                    + "}else{L('fertig');}"
+                    + "})();";
+
+            final String syncProtokoll = "(function(){try{return JSON.stringify(window.__syncLog||[]);}catch(e){return e.message}})()";
+            final String stepsJs = syncSteps.replace("%HOST%", cHost).replace("%USER%", cUser)
+                    .replace("%DOM%", cDom).replace("%PASS%", cPass).replace("%DIR%", cDir);
+
+            // Vier Schritte nacheinander; jeder darf bis zu ~20 s brauchen (SMB-Timeouts 8/15 s).
+            web.postDelayed(() -> web.evaluateJavascript(stepsJs, (v) -> Log.i("LLMBOX-UI", "probe_setsync_1=" + v)), 90000);
+            web.postDelayed(() -> web.evaluateJavascript(syncProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_setsync_nach1=" + v)), 116000);
+            web.postDelayed(() -> web.evaluateJavascript(stepsJs, (v) -> Log.i("LLMBOX-UI", "probe_setsync_2=" + v)), 120000);
+            web.postDelayed(() -> web.evaluateJavascript(syncProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_setsync_nach2=" + v)), 150000);
+            web.postDelayed(() -> web.evaluateJavascript(stepsJs, (v) -> Log.i("LLMBOX-UI", "probe_setsync_3=" + v)), 154000);
+            web.postDelayed(() -> web.evaluateJavascript(syncProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_setsync_nach3=" + v)), 200000);
+            web.postDelayed(() -> web.evaluateJavascript(stepsJs, (v) -> Log.i("LLMBOX-UI", "probe_setsync_4=" + v)), 204000);
+            web.postDelayed(() -> web.evaluateJavascript(syncProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_setsync_ende=" + v)), 216000);
+        }
+
+        /* ── Abgleich-Rhythmus nachmessen (--ez probe true --ez syncrate true) ──
+           Der Nutzer kann seit dieser Version selbst waehlen, wie oft abgeglichen wird
+           (Echtzeit = 2 s bis 30 Minuten). Am Gerat soll bewiesen werden, dass die gewaehlte
+           Stufe wirklich eingehalten wird - und zwar ueber die echten App-Funktionen.
+           native-main.js zaehlt jeden Abgleich-Lauf mit (window.__syncTicks), daraus werden
+           die echten Abstaende in Millisekunden gemeldet.
+           Ablauf: Grundtempo messen -> auf 1 Minute stellen -> messen (es darf fast nichts
+           passieren) -> zurueck auf Echtzeit -> messen. */
+        if (getIntent() != null && getIntent().getBooleanExtra("syncrate", false)) {
+            final String rateSteps = "(function(){"
+                    + "window.__rateLog=window.__rateLog||[];"
+                    + "var L=function(s){window.__rateLog.push(s);};"
+                    + "L('schritt='+(window.__rateStep=(window.__rateStep||0)+1));"
+                    + "if(window.__rateStep===1){"
+                    // Gegenprobe: eine eigene, unabhaengige setTimeout-Kette mit festem 2-s-Takt.
+                    // Laeuft sie, ist die WebView allgemein nicht gedrosselt - dann liegt ein
+                    // Fehler an der Abgleich-Schleife selbst. Bleibt sie bei 0, drosselt Android.
+                    + "  if(!window.__ctlFired){window.__ctlFired=0;(function loop(){setTimeout(function(){window.__ctlFired++;loop();},2000);})();}"
+                    + "  window.api.sync.get().then(function(r){L('vorher everyMs='+r.everyMs+' dir='+(r.dir||'(nur lokal)')+' ticks='+window.__syncTicks()+' gegenprobe='+window.__ctlFired+' sichtbar='+(typeof document!=='undefined'?document.visibilityState:'?'));})"
+                    + "   .catch(function(e){L('FEHLER get: '+e.message);});"
+                    + "}else if(window.__rateStep===2){"
+                    // Bewusst KEIN Zuruecksetzen des Zaehlers: die Zahl der Laeufe seit dem
+                    // App-Start ist gerade der Beweis dafuer, ob der Timer ueberhaupt laeuft.
+                    // Vorher wurde hier auf 0 gestellt - dadurch war "anzahl:0" nicht von
+                    // "Timer laeuft nicht" zu unterscheiden.
+                    + "  L('takt_standard='+window.__syncTicks());"
+                    + "}else if(window.__rateStep===3){"
+                    + "  window.api.sync.setEvery(60000).then(function(r){L('setEvery(60000) ok='+(r&&r.ok)+' wert='+(r&&r.everyMs)+(r&&r.error?(' grund='+r.error):''));})"
+                    + "   .catch(function(e){L('FEHLER setEvery: '+e.message);});"
+                    + "}else if(window.__rateStep===4){"
+                    + "  window.api.sync.get().then(function(r){L('gemessen_1min='+window.__syncTicks()+' everyMs='+r.everyMs+' gegenprobe='+window.__ctlFired);})"
+                    + "   .catch(function(e){L('FEHLER messen: '+e.message);});"
+                    + "}else if(window.__rateStep===5){"
+                    + "  window.api.sync.setEvery(2000).then(function(r){L('setEvery(2000) ok='+(r&&r.ok)+' wert='+(r&&r.everyMs));})"
+                    + "   .catch(function(e){L('FEHLER setEvery: '+e.message);});"
+                    + "}else if(window.__rateStep===6){"
+                    + "  window.api.sync.get().then(function(r){L('takt_echtzeit='+window.__syncTicks()+' everyMs='+r.everyMs+' gegenprobe='+window.__ctlFired);})"
+                    + "   .catch(function(e){L('FEHLER messen: '+e.message);});"
+                    + "}else{L('fertig');}"
+                    + "})();";
+            final String rateProtokoll = "(function(){try{return JSON.stringify(window.__rateLog||[]);}catch(e){return e.message}})()";
+
+            // Nach 75 s ist die Basis-Sonde durch; bis dahin laeuft der Abgleich bereits.
+            web.postDelayed(() -> web.evaluateJavascript(rateSteps, (v) -> Log.i("LLMBOX-UI", "probe_rate_1=" + v)), 76000);
+            web.postDelayed(() -> web.evaluateJavascript(rateProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_rate_standard=" + v)), 92000);
+            web.postDelayed(() -> web.evaluateJavascript(rateSteps, null), 94000);      // auf 1 Minute stellen
+            web.postDelayed(() -> web.evaluateJavascript(rateProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_rate_gesetzt=" + v)), 97000);
+            web.postDelayed(() -> web.evaluateJavascript(rateSteps, null), 124000);     // nach 30 s messen
+            web.postDelayed(() -> web.evaluateJavascript(rateProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_rate_langsam=" + v)), 127000);
+            web.postDelayed(() -> web.evaluateJavascript(rateSteps, null), 130000);     // zurueck auf Echtzeit
+            web.postDelayed(() -> web.evaluateJavascript(rateProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_rate_zurueck=" + v)), 133000);
+            web.postDelayed(() -> web.evaluateJavascript(rateSteps, null), 163000);     // nach 30 s messen
+            web.postDelayed(() -> web.evaluateJavascript(rateProtokoll, (v) -> Log.i("LLMBOX-UI", "probe_rate_echtzeit=" + v)), 166000);
+        }
+
+        // Alles wieder in den Ausgangszustand: die Sonde darf keine offenen Dialoge oder
+        // einen offenen Drawer hinterlassen - das wirkte sonst wie ein Fehler der App.
+        // Bewusst ZULETZT (70 s): die spaeteren Sonden oeffnen selbst Einstellungen und
+        // den Drawer, ein frueheres Schließen (16 s) haette nichts gebracht.
+        web.postDelayed(() -> web.evaluateJavascript(
+                "(function(){try{var n=0;document.querySelectorAll('.modal-back .icon-btn').forEach(function(b){b.click();n++;});"
+              + "document.body.classList.remove('drawer-open');"
+              + "var i=document.getElementById('input');if(i){i.value='';i.dispatchEvent(new Event('input',{bubbles:true}));}"
+              + "return JSON.stringify({closed:n,drawer:false,eingabeGeleert:true});}catch(e){return e.message}})()",
+                (v) -> Log.i("LLMBOX-UI", "probe_close_end2=" + v)), 70000);
+    }
 
     /** Sonde: Drawer der Chatliste oeffnen, damit eine Chatzeile gemessen werden kann. */
     private String openDrawerForChatProbe() {

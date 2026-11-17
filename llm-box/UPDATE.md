@@ -84,7 +84,7 @@ Bestehende Einstellungen, Verbindungen und Chats bleiben erhalten. Neu ist nur d
 # Update-Chronik ab Version 1.0.37
 
 Die folgenden Abschnitte setzen die obige Beschreibung (Version 1.0.36) fort und führen jede
-veröffentlichte Version bis zur aktuellen **1.0.65** auf – chronologisch aufsteigend, damit zu jeder
+veröffentlichte Version bis zur aktuellen **1.0.67** auf – chronologisch aufsteigend, damit zu jeder
 Version nachvollziehbar ist, was sich geändert hat.
 
 Hinweise zur Lesart:
@@ -128,6 +128,8 @@ Hinweise zur Lesart:
 | 1.0.63 | Gemapptes Netzlaufwerk wird zur echten Freigabe aufgelöst |
 | 1.0.64 | (nur Android: Kamera-Vorschau und Scan-Abbruch) |
 | 1.0.65 | Einheitliche Kopfzeile auf dem Handy; Windows = Veröffentlichungsstand |
+| 1.0.66 | Sprachen Deutsch/Englisch/Französisch vollständig, weniger Abbrüche der KI, Modellprofil für IQ3/Q3, neues Raster der Einstellungen |
+| 1.0.67 | Sprachauswahl beim allerersten Start |
 
 ---
 
@@ -878,3 +880,186 @@ Vorgängerversion: 1.0.63 (Windows) bzw. 1.0.64-android · Windows und Android
 auf 1.0.65-android gesetzt, Windows-Version in `package.json` auf 1.0.65. Stand der Testsuite:
 10 Prüfläufe, 297 Prüfungen, 0 Fehler – die Suite läuft damit auch auf einem Rechner ohne gemapptes
 Netzlaufwerk durch.
+
+---
+
+# Update: Version 1.0.66
+
+Vorgängerversion: 1.0.65 · Windows (Oberfläche, wirkt über den Android-Build auch auf dem Handy)
+
+Diese Version macht die **Sprachauswahl Deutsch / English / Français** vollständig, behebt die
+**vorzeitigen Abbrüche der KI im Werkzeugmodus** bei kleinen, stark quantisierten Modellen (z. B. IQ3) und
+bringt ein **einheitliches Raster für alle Einstellungen**. Grundlage ist der Vergleich mit dem Archiv
+`llm-box63` (Diff `llm-box-v67.diff`, kumulativ); die Sprachschicht war dort bereits angelegt, aber unvollständig und
+fehlerhaft.
+
+## Neu
+
+### Sprachauswahl (Deutsch, English, Français)
+- **Einstellungen → Darstellung → „Sprache der App“.** Die Sprache gilt für die gesamte Oberfläche:
+  Beschriftungen, Knöpfe, Hilfetexte, Dialoge, Statuszeile, Tooltips, Fehler- und Statusmeldungen, das
+  Server-Fenster, die Übertragung und die Platzhalter im Eingabefeld. Die KI antwortet ebenfalls in dieser
+  Sprache (Systemprompt und Werkzeugbeschreibungen gibt es in allen drei Sprachen).
+- Die Sprachnamen in der Auswahl bleiben immer in der eigenen Sprache stehen („Deutsch“, „English“, „Français“).
+- **Chat-Inhalt wird nie übersetzt.** Nachrichten, Code und Dateivorschauen bleiben, wie sie geschrieben wurden;
+  die Knöpfe und Hinweiskarten darin werden übersetzt.
+- Das Wörterbuch umfasst jetzt **1.036 Einträge und 150 Muster** (Texte mit eingebetteten Werten, z. B.
+  Zahlen und Fehlermeldungen) mit je englischer und französischer Fassung. Neu ist die Datei
+  `i18n-lex-full.js` mit rund 590 zusätzlichen Einträgen (Server & Monitor, Übertragung, Einstellungen,
+  Fehlermeldungen, Farbschema, Nachrichten-Fußzeile, Statuszeile, Menüs, Werkzeugbeschreibungen).
+- Die Übersetzung erkennt jetzt auch **mehrzeilige Tooltips** (Zeile für Zeile), **mehrsätzige Hilfetexte**
+  (Satz für Satz) und zusammengesetzte Meldungen (bekannte Bruchstücke werden ersetzt).
+- Reine KI-Texte (Übergabe-Prompts, Rückmeldungen der Werkzeuge an das Modell) sowie Eigennamen und
+  technische Begriffe bleiben bewusst unübersetzt.
+
+### Modellprofil für kleine, stark quantisierte Modelle (IQ3/Q3)
+- Neues Auswahlfeld **„Modellprofil“** mit Knopf „Profil anwenden“ unter *Einstellungen → Modell &
+  Parameter*. Zwei Profile: „Kleines / stark quantisiertes Modell (IQ3/Q3)“ und „Standard (große oder
+  Cloud-Modelle)“.
+- **Profil IQ3:** Temperatur 0,3 · Top-P 0,9 · Top-K 20 · Min-P 0,05 · Wiederholungsstrafe 1,0 ·
+  Max. Antwortlänge 12288 · Arbeitskontext-Obergrenze 64000 · Kontext-Budget 80 % · letzte
+  Werkzeug-Ergebnisse 4 · Übergabe-Hinweis ab 60 % · 40 Werkzeug-Schritte am Stück · 8 Schritte je Unteragent.
+- Das IQ3-Profil ist der **Standard für neue Installationen**. Bestehende Installationen bekommen es beim
+  ersten Start **genau einmal** (Merker `profileIq3V65`); danach gelten die eigenen Werte. Das Standard-Profil
+  setzt die früheren Werte zurück (Temperatur 0,7, Top-K 40, Wiederholungsstrafe 1,1, 25 Schritte).
+- Steht eine Verbindung auf „Sampling dem Server überlassen“, wirken Temperatur, Top-K und Co. nicht; dann
+  zählen nur die Kontext- und Schritt-Werte.
+- **Neu: Arbeitskontext-Obergrenze (Tokens)** unter *Workspace & Dateien* (Einstellung
+  `workspace.ctxSoftCap`, Standard 64000, 0 = nur das Server-Fenster zählt).
+- **Kurzer System-Prompt und kurze Werkzeugbeschreibungen im IQ3-Profil.** Der ausführliche Standard-Prompt
+  kostete mit Bausteinen und Werkzeugdefinitionen rund **4.000 Tokens je Anfrage** (System ≈ 1.560, Werkzeuge
+  ≈ 2.420), bevor die Aufgabe beginnt. Die Kurzfassung (Deutsch, Englisch, Französisch) braucht rund
+  **2.500 Tokens** (System ≈ 680, Werkzeuge ≈ 1.860), also etwa 1.400 weniger. Das Profil „Standard“ behält die
+  ausführlichen Texte. Bewusst weggelassen sind zwei Anweisungen, die kleinen Modellen schaden: „mehrere
+  parallele Unteragenten statt seriell“ (die Berichte füllen den Hauptkontext) und „Änderungen.md zu Beginn
+  komplett lesen“ (die Datei wird schnell mehrere tausend Zeilen lang); stattdessen wird nur das Ende gelesen.
+- **Der Standard-Prompt folgt der Sprache.** Das Feld „System-Prompt“ zeigte bisher immer den deutschen Text,
+  obwohl beim Senden eine andere Fassung ging. Ein **unveränderter** Standard-Prompt wird jetzt bei
+  Sprachwechsel, Profilwechsel und beim Start durch die Fassung für Sprache und Profil ersetzt, sodass das Feld
+  zeigt, was tatsächlich gesendet wird. **Eigene Prompts bleiben unberührt** (sie bekommen nur die Sprachregel).
+  Neuer Knopf **„Standard-Prompt wiederherstellen“** (*Modell & Parameter*). Bestehende Installationen werden
+  einmalig angeglichen (Merker `promptSyncV66`).
+
+## Behoben
+
+### KI bricht im Werkzeugmodus ab
+- **Ursache 1:** Die automatische Aufforderung „Du hast einen nächsten Schritt angekündigt“ erkannte nur
+  Antworten, die auf „:“, „…“ oder „...“ endeten. Abgebrochene Antworten endeten aber auf einen Punkt
+  („Ich baue jetzt den Test.“) und wurden nie nachgefasst. `looksUnfinished()` erkennt Ankündigungen jetzt
+  auch mit Punkt (Deutsch, Englisch, Französisch), ignoriert Rückfragen, lange Antworten und
+  Abschlussmeldungen („Ich habe …“, „Fertig“). Die Aufforderung wird bis zu **3 Mal** in Folge gesendet
+  (vorher 2) und steht in der Sprache der Oberfläche.
+- **Ursache 2:** Komprimierung (80 %) und Übergabe-Hinweis (70 %) richteten sich nach dem **Server-Fenster**.
+  Bei einem großen Fenster (z. B. 262k) griffen sie erst bei etwa 180k Tokens, weit über der Grenze, ab der
+  stark quantisierte Modelle Werkzeugaufrufe vergessen und Details erfinden. Sie richten sich jetzt nach dem
+  kleineren Wert aus Server-Fenster und Arbeitskontext-Obergrenze (`effCtx()`).
+- **Ursache 3:** Der Systemprompt enthielt keine Regel gegen „ankündigen ohne handeln“. Neuer Baustein
+  (`actHint`, in drei Sprachen): Schritte nie nur ankündigen, ohne Werkzeugaufruf nur bei vollständig
+  erledigter Aufgabe oder Rückfrage, keine Dateinamen, Schlüssel oder Texte erfinden – vorher lesen.
+
+### Sprachschicht
+- **Leere, hängende Oberfläche in Englisch/Französisch:** Der Beobachter, der Texte beim Einfügen übersetzt,
+  bekam seine eigenen Änderungen zurückgemeldet, setzte dabei den Merker für den Originaltext auf `null`, und
+  `T(null)` lieferte einen leeren Text. Der Knoten wurde geleert, löste die nächste Meldung aus und so weiter
+  (Endlosschleife). Jetzt merkt sich jeder Knoten den zuletzt selbst geschriebenen Text und ignoriert dessen
+  Rückmeldung. Der Wechsel Deutsch → Englisch → Französisch → Deutsch stellt das Fenster wieder exakt her.
+- **Abbruch mitten in der Übersetzung:** Ein `TypeError` bei losgelösten Textknoten (`parentElement` ist
+  `null`) brach den Rest eines Beobachter-Stapels ab; einzelne Texte blieben deshalb deutsch.
+- **Muster ohne Endanker** schnitten den Rest eines Satzes ab (z. B. „… Chat(s) kopiert, 2 waren schon
+  vorhanden“). Sechs Muster in `i18n-lex.js`, `-hints.js`, `-settings.js` und `-extra.js` korrigiert.
+- **Platzhalter im Eingabefeld** („Nachricht schreiben … (Dateien per Drag & Drop oder Strg+V)“) blieb
+  deutsch, weil Eingabefelder (`textarea`) komplett übersprungen wurden. Platzhalter und Tooltips werden
+  jetzt übersetzt; der eingetippte Inhalt bleibt unangetastet.
+
+### Einstellungen
+- **Absturz im Reiter „Daten“:** Steht beim Abgleich-Rhythmus ein Wert ohne exakte Stufe (z. B. 3000 ms), brach
+  `syncEveryRow()` mit einem `TypeError` ab, weil die Suche mit einer Zahl statt einem Objekt startete.
+
+## Verbessert
+
+### Einstellungen: einheitliches Raster
+- **Dialog größer** (bis 1120 × 800 Pixel); die Navigation ist breiter, Reiternamen brechen nicht mehr um.
+- **Zwei Spalten pro Zeile:** links Beschriftung und Hilfetext (nimmt die restliche Breite, Umbruch erst am
+  Zeilenende, nicht mehr nach etwa fünf Wörtern), rechts eine Steuerungsspalte fester Breite (höchstens
+  380 Pixel, bei schmalerem Fenster 46 % der Reiterbreite, mindestens 300 Pixel).
+- **Alle Eingabefelder, Auswahlfelder und Knöpfe** haben dieselbe Breite, 36 Pixel Höhe, gleiche Rundung und
+  Schrift. Gemessen über alle Reiter, drei Sprachen und zwei Fensterbreiten (1280 und 1100 Pixel): je Reiter
+  exakt gleiche Breite, kein seitliches Überlaufen.
+- **Reiter „Verbindungen“:** Die Liste steht als Chip-Leiste über dem Formular statt links in einer
+  schmalen Restspalte, das Formular nutzt die volle Breite.
+- **Farbzeilen** sind ein festes Raster (Farbe, Hex-Wert, „Standard“-Knopf, Regler, Deckkraft); bei der
+  Akzentfarbe stehen Regler und sechs Farbpunkte in einer Reihe.
+- **Zeilen mit mehreren Feldern** (Netzwerkordner): gleichmäßiges 3-Spalten-Raster. Beim Workspace-Ordner
+  behalten Pfadtext und Knopf ihre natürliche Breite.
+- **Schmale Fenster:** Unter 640 Pixel Reiterbreite eine Spalte, unter 760 Pixel Fensterbreite
+  Vollbild-Dialog mit Symbol-Navigation (gilt auch für die Handy-Oberfläche).
+- Die Änderungen stehen als **eigener Block am Ende von `styles.css`**; bestehende Zeilen sind unverändert,
+  weil der Android-Build in dieser Datei feste Textstellen sucht.
+
+## Geänderte Dateien
+`renderer/js/i18n.js` (+70/−8), `renderer/js/i18n-lex-full.js` (neu, +693), `renderer/js/i18n-lex-ctx.js`
+(neu), `renderer/js/i18n-lex.js`, `i18n-lex-hints.js`, `i18n-lex-settings.js`, `i18n-lex-extra.js` (je
+Mustern korrigiert), `renderer/js/i18n-prompts.js` (Baustein `actHint`), `renderer/js/app.js` (+32/−6:
+Erkennung von Ankündigungen, `effCtx()`, Nachfass-Text je Sprache, einmalige Profil-Anwendung beim Start),
+`renderer/js/handoff.js` (Füllstand nach wirksamem Fenster), `renderer/js/settings.js` (Profile,
+Auswahlfeld, Arbeitskontext-Obergrenze, Abgleich des Standard-Prompts, Knopf „Standard-Prompt
+wiederherstellen“, Sprachnamen geschützt, Korrektur `syncEveryRow()`), `renderer/js/i18n-prompts.js`
+(Kurzfassungen von Prompt, Bausteinen und Werkzeugbeschreibungen), `renderer/js/i18n.js` (Werkzeugbeschreibungen
+je Profil),
+`renderer/index.html` (zwei Skripte eingebunden), `renderer/styles.css` (+101, nur angehängt),
+`GEAENDERTE-DATEIEN.txt` (Protokoll). **Hinweis zur Versionsnummer:** `package.json` steht auf **1.0.66**
+(die Nummer 1.0.65 ist in dieser Chronik schon vergeben); eine Android-Version müsste beim Bauen
+entsprechend gesetzt werden.
+
+## Geprüft und nicht geprüft
+- **Geprüft** (simulierter Browser mit Attrappe der Electron-Schnittstelle, echte `index.html` und alle
+  Skripte): Start ohne Fehler; Wechsel Deutsch → Englisch → Französisch → Deutsch ergibt das Hauptfenster
+  Byte für Byte wieder; alle 8 Einstellungsreiter, 4 Server-Reiter, Strata-Import, Denken- und
+  Freigabe-Menü und ein Chat mit Werkzeugkarten, Fehler- und Hinweisleiste: **0 deutsche Reste** in Englisch
+  und Französisch (übrig bleiben nur Eigennamen und technische Begriffe). Profilwerte, Profilwechsel per
+  Knopf, Sprachauswahl und der Abgleich des Standard-Prompts (neue und bestehende Installation, eigener
+  Prompt, Profilwechsel, Wiederherstellen-Knopf) wurden getestet. Die Erkennung von Ankündigungen wurde an 20 Beispielsätzen
+  geprüft (12 echte Abbrüche, 8 Abschlüsse/Rückfragen).
+- **Layout** in Chromium geprüft (Screenshots und Messung, auch dunkles Design, Server-Fenster und
+  700-Pixel-Fenster).
+- **Nicht geprüft:** ein echtes Electron-Fenster, Meldungen, die nur bei echten Serverfehlern erscheinen
+  (übersetzt, aber nicht am Bildschirm gesehen), und die **Android-Oberfläche** (WebView). Die
+  Android-Build-Patches in `build-android.ps1` konnten nicht gelaufen werden; sie melden fehlende Suchtexte
+  laut. Ob das IQ3-Profil mit dem kurzen Prompt die Abbrüche im Dauerbetrieb tatsächlich verringert, zeigt erst der Einsatz.
+
+---
+
+# Update: Version 1.0.67
+
+Vorgängerversion: 1.0.66 · Windows (Oberfläche, wirkt über den Android-Build auch auf dem Handy)
+
+## Neu
+- **Sprachauswahl beim allerersten Start.** Beim ersten Aufruf der Anwendung erscheint ein Dialog „Sprache
+  wählen · Choose your language · Choisissez votre langue“ mit **Deutsch, English und Français**. Er ist
+  dreisprachig und wird nie übersetzt.
+  - **Nur beim ersten Start:** Der Dialog erscheint nur, wenn noch nie Einstellungen gespeichert waren (neue
+    Installation). Bestehende Installationen sehen ihn nicht und behalten ihre Sprache.
+  - **Vorschlag nach Systemsprache** (hervorgehoben, Fokus darauf): Deutsch → Deutsch, Französisch →
+    Français, jede andere Sprache → English. Bedienung per Klick, Enter oder Pfeiltasten.
+  - **Nicht wegklickbar:** Escape und ein Klick neben den Dialog schließen ihn nicht; der Fokus bleibt im
+    Dialog (das Eingabefeld holt sich beim Start sonst den Fokus). So wird die Wahl nicht übersehen.
+  - **Die Wahl gilt sofort für alles:** Oberfläche, Antwortsprache der KI und der Standard-Prompt (in der
+    gewählten Sprache, kurz im IQ3-Profil). Sie wird **sofort gespeichert**, nicht erst nach der
+    Verzögerung des normalen Speicherns, und beim nächsten Start erscheint der Dialog nicht mehr.
+  - Beim allerersten Start entfällt die Hinweismeldung zum Modellprofil (die Werte sind dort ohnehin schon
+    der Standard).
+  - Später änderbar unter *Einstellungen → Darstellung → Sprache der App* (Hinweis steht im Dialog).
+
+## Geänderte Dateien
+`renderer/js/settings.js` (`showLanguageChooser()`, `applyProfileOnce(silent)`), `renderer/js/app.js`
+(Erkennung des ersten Starts in `init()`), `renderer/styles.css` (neuer Block am Dateiende),
+`package.json` (Version 1.0.67), `GEAENDERTE-DATEIEN.txt` (Protokoll).
+
+## Geprüft und nicht geprüft
+- **Geprüft** (Chromium, echte `index.html`): Dialog nur beim allerersten Start; Vorschlag nach Systemsprache
+  (Englisch, Deutsch, Französisch, Spanisch → English); Escape und Hintergrundklick schließen nicht;
+  Pfeiltasten, Enter und Klick; die Wahl wird sofort gespeichert und setzt Oberfläche und Prompt; Neustart
+  ohne Dialog; bestehende Installation ohne Dialog; kein Hinweis-Toast; helles und dunkles Design.
+  Alle früheren Prüfungen (Übersetzung, Profil, Prompt, Raster) laufen weiter fehlerfrei.
+- **Nicht geprüft:** ein echtes Electron-Fenster und die Android-Oberfläche. Auf dem Handy muss der
+  Speicher beim ersten Start ebenfalls „leer“ melden, damit der Dialog erscheint.

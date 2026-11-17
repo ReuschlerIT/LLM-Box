@@ -1,0 +1,283 @@
+# LLM Box 1.0.67 (Windows und Android)
+
+**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.67** gebaut und liegen fertig im
+Ordner `download/` (Setup, portable EXE, APK). Die Android-Fassung trägt **1.0.67-android**
+(versionCode 69) und ist auf zwei Handys installiert. Beide Fassungen entstehen aus **derselben
+Quelle** (`llm-box/`), die Android-Oberfläche wird beim Bauen aus den Dateien von `llm-box/renderer/`
+erzeugt. Vorgängerversion auf GitHub: [v1.0.50](https://github.com/ReuschlerIT/LLM-Box/releases/tag/v1.0.50)
+
+Die aktuelle Fassung bringt **Deutsch, English und Français** für die gesamte Oberfläche (mit
+Sprachabfrage beim allerersten Start), ein **Modellprofil für kleine, stark quantisierte Modelle (IQ3)**
+und damit deutlich weniger vorzeitige Abbrüche im Werkzeugmodus. Die Vorgängerversion 1.0.65 brachte
+**sehr große Chats deutlich schneller**, den **Windows-Netzwerkordner direkt als Arbeitsordner**
+(am PC wie auf dem Handy) und die **Übertragung zwischen PC und Handy in beide Richtungen**.
+
+## Programme
+
+Windows- und Android-Programme (Stand 1.0.67, alle aus derselben Quelle gebaut):
+
+| Datei | Für | Größe |
+|---|---|---|
+| `LLM.Box.Setup.1.0.67.exe` | Windows 10/11, Installer | 84,0 MB |
+| `LLM.Box.1.0.67.portable.exe` | Windows 10/11, ohne Installation | 83,7 MB |
+| `LLM-Box-1.0.67-android.apk` | Android 8.0 oder neuer, Fassung 1.0.67-android | 11,0 MB |
+
+Beide Fassungen haben dieselbe Oberfläche und dasselbe Chat-Format. Bestehende Einstellungen,
+Verbindungen und Chats bleiben beim Update erhalten.
+
+---
+
+## Die Höhepunkte seit 1.0.50
+
+### Große Chats: Aufbau rund 50× schneller
+Der Nachrichtenbereich wurde bisher vollständig geleert und jede Nachricht einzeln neu aufgebaut. An
+einem echten Chat mit 3402 Nachrichten gemessen: **2966 ms und rund 110.000 DOM-Knoten** pro Aufbau –
+jeder folgende Layout-Durchlauf war dadurch teuer (Zögern beim Öffnen, beim Umschalten von Panel oder
+Dock, beim Übergeben an die KI).
+
+Seit 1.0.59 wird **fensterweise** aufgebaut: nur die sichtbaren Nachrichten erscheinen vollständig,
+darüber kompakte Zeilen und eine Sammelzeile „ältere anzeigen“. Derselbe Chat braucht jetzt
+**60 ms und rund 2760 Knoten**; am größten echten Chat (13 MB, 3487 Nachrichten) bleibt der Aufbau
+konstant bei etwa 2755 Knoten. Entlastend gemessen: Tippen war nie die Ursache – 100 Tastenanschläge
+bei 3402 Nachrichten kosten 149 ms.
+
+### Windows-Freigabe als Arbeitsordner (ab 1.0.61)
+Ein Netzlaufwerk lässt sich direkt als Workspace nutzen, ohne etwas zu kopieren: neue Zeile im Reiter
+„Workspace & Dateien“ mit Adresse, Benutzer, Domain, Passwort und dem Knopf **„Verbinden & übernehmen“**.
+Zugangsdaten liegen in einer eigenen Datei im App-Ordner, getrennt von den App-Einstellungen. Auf dem
+Handy gab es diese Möglichkeit schon früher; der PC zieht jetzt nach.
+
+Dazu ab 1.0.63: Ein als **Laufwerksbuchstabe** eingebundenes Netzlaufwerk wurde vorher als frei
+erfundener Rechner fehlgedeutet – die Übergabe des Netzwerkordners scheiterte daran. Jetzt wird die
+dahinterliegende Freigabe bei Windows abgefragt und benutzt; ein einzelner Laufwerksbuchstabe wird als
+Rechner-Adresse ausdrücklich abgelehnt.
+
+### Übertragung zwischen PC und Handy
+- **Ein QR-Code statt sechs** Bildern: Die Windows-App bietet ihre Daten im WLAN an, das andere Gerät
+  sucht sie selbst („Im WLAN suchen“) oder liest den einen Code. (Windows-seitig behoben in 1.0.54)
+- **Das Handy scannt selbst mit der Kamera**, ohne zusätzliche QR-App – erkannt wird die Adresse des
+  Angebots ebenso wie eine mehrteilige Bildfolge; fremde Codes werden nur angezeigt, nicht übernommen
+  (ab 1.0.62).
+- **Netzwerkordner samt Zugangsdaten wandert mit** (ab 1.0.61).
+- **Nach der Übernahme ist alles sofort wirksam** – Verbindung, Modell und Werkzeuge, ohne
+  App-Neustart (ab 1.0.55).
+- **„Im WLAN anbieten“ ist mehrfach hintereinander nutzbar**: Das Angebot wird nach dem Abruf
+  vollständig abgeschaltet, auch das Rufsignal im WLAN (ab 1.0.56).
+
+### Chats auf mehreren Geräten
+Neue Einstellung **„Chats abgleichen alle …"** mit Stufen von 2 Sekunden bis 30 Minuten, ohne Neustart
+wirksam (ab 1.0.57). Beim Zurückkehren ins Fenster wird sofort abgeglichen. Gesperrte Chat-Metadaten
+gelten nicht mehr als „gelöscht“ – Chats verschwinden nicht mehr aus der Liste, wenn ein Netzlaufwerk
+oder ein anderes Programm eine Datei blockiert (ab 1.0.58).
+
+### Sprache: Deutsch, English, Français (ab 1.0.66)
+Die ganze Oberfläche ist übersetzt – Beschriftungen, Knöpfe, Hilfetexte, Dialoge, Statuszeile, Tooltips
+und Fehlermeldungen (Wörterbuch 1.036 Einträge, 150 Muster). Beim **allerersten Start** fragt die App
+nach der Sprache; die Wahl gilt sofort auch für die Antwortsprache der KI und den Standard-Prompt. Chat-
+Inhalt wird nie übersetzt. Umzuschalten unter *Einstellungen → Darstellung → Sprache der App* (ab 1.0.67).
+
+### Modellprofil für kleine, stark quantisierte Modelle (ab 1.0.66)
+Neues Profil **„Kleines / stark quantisiertes Modell (IQ3/Q3)"** – kurzer System-Prompt und kurze
+Werkzeugbeschreibungen (rund 2.500 statt 4.000 Tokens je Anfrage), neue Einstellung
+**„Arbeitskontext-Obergrenze (Tokens)"**. Dazu Korrekturen gegen vorzeitige Abbrüche im Werkzeugmodus
+(`effCtx()`, `looksUnfinished()`, Prompt-Baustein `actHint`).
+
+---
+
+## Änderungen im Einzelnen
+
+### Version 1.0.50 *(auf GitHub bereits veröffentlicht – hier als Ausgangspunkt)*
+- **Rechtschreibprüfung** im Eingabefeld: falsch geschriebene Wörter mit roter Wellenlinie.
+- **Rechtsklick-Menü** mit Rechtschreib-Vorschlägen (bis zu sechs), „Zum Wörterbuch hinzufügen“ sowie
+  Ausschneiden/Kopieren/Einfügen/Alles auswählen – ein solches Menü gab es vorher nicht.
+- **Sprachen wählbar**: Deutsch, Englisch oder beide; zwei neue Einstellungen unter „Darstellung“.
+  Die Wörterbücher werden beim ersten Start geladen und arbeiten danach offline.
+
+### Version 1.0.51
+- **Behoben:** Fehlermeldung „Chat konnte nicht gespeichert werden … ENOENT: rename ‚….json.tmp' →
+  ‚….json'". Ursache: alle Speichervorgänge einer Datei teilten sich denselben Temporärnamen. Beim
+  Antworten wird sehr oft gespeichert; überlappen sich zwei Vorgänge, ist die Datei beim zweiten schon
+  weg – auf Netzlaufwerken und mit Virenscanner häufiger. Jetzt: Warteschlange pro Datei, eindeutiger
+  Name, bis zu fünf Wiederholungen, zuletzt direktes Schreiben.
+- **Behoben:** Die Antwort sprang beim Tippen hoch und runter, während die KI arbeitete. Das Eingabefeld
+  wurde bei jedem Zeichen kurz zusammengefaltet und änderte damit die Höhe des Nachrichtenbereichs.
+  Jetzt wird die Höhe über ein unsichtbares Spiegel-Feld gemessen; eine einmal gewählte Leseposition
+  bleibt erhalten.
+
+### Version 1.0.52
+- **Neu:** Einstellungsseite **„Übertragung“** mit QR-Bildfolge und JSON-Export. Übertragen werden alle
+  Einstellungen, Verbindungen (inklusive API-Schlüssel), Modell, Parameter, System-Prompt, Darstellung
+  und – wenn ausgewählt – Chats und Textdateien des Workspace. Ein einzelner QR-Code fasst rund 3 KB,
+  deshalb gibt es die Bildfolge (zu je 600 Zeichen) und die JSON-Datei. Format dokumentiert in
+  `llm-box/docs/TRANSFER-FORMAT.md`.
+- **Grenze dieser Version:** Nur Export. Workspace-Dateien gingen nur in der JSON-Datei mit, und einen
+  Import in die Windows-App gab es noch nicht.
+
+### Version 1.0.53
+Für diese Version ist **kein eigener Änderungsabschnitt belegt**. Nachgewiesen ist nur, dass dieser
+Stand existierte und bereits den Reiter „Übertragung“ sowie die Einstellung „Max. Werkzeug-Schritte am
+Stück“ (Standard 25) enthielt – außerdem beide in 1.0.54 behobenen Übertragungsfehler.
+
+### Version 1.0.54
+- **Behoben:** Fehlermeldung „ReferenceError: z is not defined" genau beim Klick auf „Im WLAN
+  anbieten". Die Größenangabe des Angebots griff auf eine Variable zu, die bei einer früheren Umstellung
+  weggefallen war.
+- **Behoben:** Jeder Abruf antwortete „403 – Token passt nicht". Die erzeugten Adressen endeten auf
+  `#token`; ein Fragment wird über HTTP aber nie an den Server übermittelt. Das Token hängt jetzt als
+  Query-Parameter an der Adresse.
+
+### Version 1.0.55
+- **Behoben:** Übernommene Einstellungen waren erst nach einem App-Neustart wirksam. Die Datei war
+  korrekt geschrieben, die laufende Oberfläche behielt aber ihren beim Start geladenen Stand – und ein
+  verzögerter Speicher-Vorgang schrieb kurz danach den alten Zustand zurück. Nachgewiesen mit einem
+  Vergleichswerkzeug: Die Dateien waren identisch, der Fehler lag im Neuladen.
+
+### Version 1.0.56
+- **Behoben:** „Im WLAN anbieten" war nur einmal benutzbar; das zweite Gerät bekam „HTTP 0". Nach dem
+  Abruf wurde nur der HTTP-Dienst geschlossen, das Rufsignal im WLAN blieb gebunden – suchende Geräte
+  fanden die tote Adresse des bereits abgerufenen Rechners.
+
+### Version 1.0.57
+- **Neu:** Abgleich-Rhythmus wählbar (2 s / 5 s / 10 s / 30 s / 1 min / 5 min / 10 min / 30 min), ohne
+  Neustart wirksam; die Statuszeile zeigt die gewählte Stufe.
+- **Verbessert:** Der feste Drei-Sekunden-Takt ist durch einen selbst nachplanenden Timer ersetzt – nur
+  so greift eine längere Einstellung sofort. Beim Zurückkehren ins Fenster wird sofort abgeglichen.
+
+### Version 1.0.58
+- **Behoben:** Eine Chat-Metadatei, die sich nicht lesen ließ (Sperrung durch Netzlaufwerk oder ein
+  anderes Programm), galt als „entfernt" – der Chat verschwand aus der Liste und die ganze Liste wurde
+  neu aufgebaut. Jetzt gilt nur „Datei existiert nicht" als Entfernen; eine Sperre nutzt den zuletzt
+  erfolgreich gelesenen Stand weiter.
+- **Ehrliche Einordnung:** Die Vermutung, diese Sperren seien die Ursache für das Zögern großer Chats,
+  wurde durch Messung **widerlegt** – die betroffenen Dateien waren dauerhaft gesperrt und gehörten zu
+  Chats ohne zugehörige Datei. Der Fix bleibt sinnvoll, war aber nicht die Lösung; die kam in 1.0.59.
+
+### Version 1.0.59
+- **Der fensterweise Nachrichtenaufbau** (siehe Höhepunkte oben) – Windows und Android, weil beide
+  dieselbe Oberfläche nutzen.
+
+### Version 1.0.60
+- **Behoben:** Eine im Abgleich fehlende Generations-Marke nachgebaut: Ein überholter Durchlauf konnte
+  erneut nachplanen und damit eine zweite Abgleich-Kette erzeugen. Wirkt beim Wechsel des Rhythmus
+  während eines laufenden Abgleichs – es war **nicht** die Ursache der Chat-Bremse (die hatte 1.0.59).
+
+### Version 1.0.61
+- **Neu:** Windows-Freigabe als Arbeitsordner, inklusive Verbindungstest und eigenem Speicher für
+  Zugangsdaten (siehe Höhepunkte oben).
+- **Behoben:** Workspace-Dateien wanderten beim WLAN-Weg bisher nie mit – der Auslieferungsdienst baute
+  sein Angebot ohne diesen Anteil.
+
+### Version 1.0.62
+- **Neu (auf dem Handy):** Eigener QR-Scan mit der Kamera, ohne zusätzliche App. Erkannt wird die
+  Adresse des Angebots ebenso wie eine mehrteilige Bildfolge; fremde Codes werden nicht übernommen.
+- **Behoben:** Die Kamera blieb nach einem Abbruch belegt und der Scan-Knopf dauerhaft ausgegraut.
+- **Verbessert:** Ein irreführender Hilfetext („… mit einer beliebigen QR-App lesen") ersetzt. In der
+  Windows-Oberfläche erscheint der Scan-Knopf bewusst nicht – dort wird angeboten, nicht gescannt.
+
+### Version 1.0.63
+- **Behoben:** Auflösung eines gemappten Netzlaufwerks zur echten Freigabe (siehe Höhepunkte oben).
+- **Behoben (auf dem Handy):** Der Scan-Dialog schloss nie, und der Knopf blieb ausgegraut, wenn der
+  Dialog über Kreuz oder Escape geschlossen wurde.
+
+### Version 1.0.64
+Diese Nummer existiert **nur für Android** – ein Windows-Build 1.0.64 wurde nicht erstellt; die
+Windows-Änderungen dieses Zeitraums stecken in 1.0.63.
+- **Behoben:** Schwarze Kamera-Vorschau auf manchen Handys. Ursache war **nicht** die Berechtigung,
+  sondern eine Wiedergaberegel der App: Die Vorschau durfte ohne vorangegangene Nutzeraktion nicht
+  starten.
+- Abbruch eines Scans gibt die Kamera wieder frei; der Dialog bleibt nicht mehr stehen.
+
+### Version 1.0.65
+- **Android:** Einheitliche Kopfzeile – der Knopf „Modelle neu laden" ist dort nicht mehr sichtbar,
+  weil Modelle beim Start, bei einem Verbindungswechsel und beim Schließen der Einstellungen ohnehin neu
+  geladen werden. Die Kopfzeile bleibt dadurch einzeilig statt zweizeilig (gemessen: 168 px → 87 px);
+  die Auswahlfelder bleiben unverändert lesbar. Der Verbindungstest empfiehlt außerdem keinen Knopf
+  mehr, den es auf dem Handy nicht gibt.
+- **Windows:** Diese Version ist der Veröffentlichungsstand – Aufbau aus einer bereinigten Quelle,
+  Diagnose-Sonden entfernt, Beispielwerte neutralisiert. Neue Funktionen kamen für Windows nicht hinzu.
+
+### Version 1.0.66
+- **Neu: Sprachauswahl Deutsch / English / Français** für die ganze Oberfläche (Beschriftungen, Knöpfe,
+  Hilfetexte, Dialoge, Statuszeile, Tooltips, Fehlermeldungen, Server-Fenster, Übertragung,
+  Platzhalter). Die KI antwortet in derselben Sprache; Chat-Inhalt wird nie übersetzt. Wörterbuch jetzt
+  1.036 Einträge und 150 Muster, neue Datei `i18n-lex-full.js` mit rund 590 Einträgen.
+- **Neu: Modellprofil „Kleines / stark quantisiertes Modell (IQ3/Q3)“** unter *Einstellungen → Modell &
+  Parameter* (Temperatur 0,3, Top-K 20, Kontext-Obergrenze 64000, 40 Werkzeug-Schritte …) und die neue
+  Einstellung **„Arbeitskontext-Obergrenze (Tokens)“** unter *Workspace & Dateien*. IQ3 ist der Standard
+  für neue Installationen und wird bei bestehenden genau einmal gesetzt (Merker `profileIq3V65`).
+- **Verbessert: kurzer System-Prompt und kurze Werkzeugbeschreibungen im IQ3-Profil** – rund 2.500 statt
+  4.000 Tokens je Anfrage. Das Feld „System-Prompt“ zeigt jetzt die Fassung, die tatsächlich gesendet
+  wird (Sprache und Profil); eigene Prompts bleiben unberührt. Neuer Knopf „Standard-Prompt
+  wiederherstellen“.
+- **Behoben: die KI brach im Werkzeugmodus ab.** Drei Ursachen: die Aufforderung „Du hast einen nächsten
+  Schritt angekündigt“ erkannte Abbrüche auf einen Punkt nicht (`looksUnfinished()`, jetzt bis 3 Mal in
+  Folge); Komprimierung und Übergabe-Hinweis richteten sich nach dem großen Server-Fenster statt nach dem
+  wirksamen Arbeitskontext (`effCtx()`); der Prompt hatte keine Regel gegen „ankündigen ohne handeln“
+  (neuer Baustein `actHint`).
+- **Verbessert:** einheitliches Raster für alle Einstellungs-Reiter (Änderungen nur angehängt in
+  `styles.css`, damit die Android-Build-Patches unverändert greifen).
+
+### Version 1.0.67
+- **Neu: Sprachabfrage beim allerersten Start** – Dialog „Sprache wählen · Choose your language ·
+  Choisissez votre langue“ mit Deutsch, English, Français, dreisprachig und nie übersetzt. Er erscheint
+  nur bei einer Installation ohne gespeicherte Einstellungen, schlägt die Systemsprache vor, ist nicht
+  wegklickbar (Escape und Klick daneben gehen nicht) und die Wahl gilt sofort für Oberfläche,
+  Antwortsprache und Standard-Prompt. Später änderbar unter *Einstellungen → Darstellung → Sprache der App*.
+- **Behoben (Android): die Sprachwahl beim ersten Start ging verloren.** Die Android-Schicht
+  (`tools-android\native-main.js`) hatte – anders als `llm-box\main.js` – **keine Schreib-Queue pro
+  Datei**. Beim allerersten Start schreibt der Start viermal unabgewartet in `settings.json`
+  (Design-Standard, Prompt-, Verbindungs- und Profil-Migration); die Schreibung der Sprachwahl lief
+  dazwischen ein und wurde von einer später fertig werdenden Migration mit altem Stand überschrieben –
+  `uiLang` blieb „de“, `langChosen` fehlte, der Dialog kam erneut. Jetzt sind die Schreibvorgänge pro
+  Datei aufgereiht (`writeQueues`), die letzte Schreibung gewinnt. Am Handy geprüft: Sprache gewählt,
+  `settings.json` enthält `uiLang` und `langChosen`, Oberfläche englisch, nach Neustart kein Dialog mehr.
+- **Behoben (Android): drei deutsche Reste bei englischer Oberfläche** – „Farben (heller Modus)“,
+  der Preisvorlagen-Hinweis und der SMB-Hinweis. Ursache beim Preisvorlagen-Hinweis war die
+  Satztrennung in `i18n.js`: sie zerteilte „1 Mio. Token“ am Punkt der Abkürzung, übersetzt wurde nur
+  der zweite Teilsatz. Neu: `splitSentences()` mit Abkürzungsliste (`ABBREV_RE`).
+
+---
+
+## Geprüft
+
+Die Prüfsuite läuft ohne Gerät und umfasst inzwischen **11 Prüfläufe mit 330 Prüfungen, 0 Fehler**
+(Bridge-Vollständigkeit, portierte Kernschicht inklusive der neuen Schreib-Queue, Start der Oberfläche in
+einer WebView-Attrappe, kompletter Chat inklusive KI-Werkzeugen, PDF-Auslese, Chat-Abgleich,
+Übertragungsformat, Abgleich-Timer, QR-Scan, Übernahme-Korrekturen und seit dieser Fassung fest
+mitgezählt die Übersetzungsprüfung `tools-android\test-i18n.js` mit 24 Prüfungen).
+Sie läuft jetzt auch auf einem Rechner ohne gemapptes Netzlaufwerk durch.
+
+**Am Gerät geprüft (SM-S948B und SM-G986B, Fassung 1.0.67-android / versionCode 69):** IQ3-Profil wird
+beim ersten Start gesetzt (`modelProfile":"iq3"`, `ctxSoftCap":64000`), Sprachumschaltung über die
+Oberfläche (Deutsch/English/Français) wirkt sofort, Sprachabfrage beim ersten Start erscheint und die
+Wahl bleibt jetzt erhalten, 1.357 gesammelte UI-Textzeilen über alle acht Einstellungs-Reiter: keine
+deutschen Reste bei aktivem Englisch.
+
+Belege für die Performance-Angaben stammen aus Messungen an echten Chat-Dateien; die Protokolle der
+einzelnen Sitzungen stehen in `llm-box/UPDATE.md` zusammengefasst, jede Version dort als eigener
+Abschnitt seit 1.0.36.
+
+**Windows-Fassung 1.0.67:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
+aus derselben Quelle wie die APK. Beide Programmdateien und die APK wurden vor dem Einstellen in
+`download/` mit `tools-android\scan-persoenlich.js` geprüft: keine echten personenbezogenen Werte
+(keine internen IP-Adressen, Laufwerksbuchstaben, Freigabenamen, Rechner- oder Gerätenamen). Die
+Quelldateien im Repository nutzen durchgehend Beispielwerte aus dem Testnetz nach RFC 5737
+(`192.0.2.x`) und den Beispielordner `D:\MeinProjekt`.
+
+## Bekannte Grenzen
+
+- Dokumente werden gelesen, aber nicht geschrieben: Die KI kann keine .docx/.xlsx/.pdf erzeugen oder
+  ändern (sie kann aber .csv, .md, .html schreiben oder über Skripte arbeiten). Gescannte PDFs ohne
+  Text (OCR) und alte Formate (.doc, .xls, .ppt) werden nicht gelesen.
+- Die Werkzeug-Funktionen brauchen ein Modell mit Tool Calling.
+- Bildausgabe funktioniert über OpenAI-kompatible Chat-Schnittstellen; reine Bild-Endpunkte und
+  Ollama-Bildmodelle werden noch nicht unterstützt.
+- Die Token-Schätzung vor dem Senden ist grob.
+
+## Sicherheitshinweise
+
+- QR-Codes und JSON-Dateien enthalten API-Schlüssel im Klartext, wenn Verbindungen mit übertragen
+  werden. Hinweis steht in der App und im Handbuch; übertrage solche Dateien nur auf eigene Geräte.
+- Freigabe-Zugangsdaten gehören **nicht** in ein Repository. Sie liegen im App-Ordner unter
+  `%APPDATA%\LLM Box`.
+- API-Schlüssel werden unverschlüsselt im App-Ordner gespeichert, zusammen mit Chats und Einstellungen.

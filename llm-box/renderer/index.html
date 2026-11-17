@@ -42,6 +42,8 @@
         </div>
       </header>
 
+      <!-- Chat-Inhalt wird ueber die Klassen (.bubble, .md, .inner, pre) nicht uebersetzt,
+           Knöpfe und Hinweiskaelte dazwischen aber sehr wohl (siehe i18n.js skipThis()). -->
       <section id="messages" aria-live="polite"><div id="messages-inner"></div></section>
       <button id="scroll-down" class="scroll-down hidden" title="Nach unten"></button>
 
@@ -86,6 +88,20 @@
   <script src="vendor/purify.js"></script>
   <script src="vendor/highlight.js"></script>
   <script src="vendor/qrcode.js"></script>
+  <!-- Sprachschicht: muss VOR util.js geladen werden, weil el()/toast()/openModal() dort T() nutzen.
+       Die drei i18n-lex*-Dateien fuellen das Woerterbuch (Schluessel = deutscher Quelltext). -->
+  <script src="js/i18n.js"></script>
+  <script src="js/i18n-lex.js"></script>
+  <script src="js/i18n-lex-settings.js"></script>
+  <script src="js/i18n-lex-extra.js"></script>
+  <!-- Android-eigene Texte (Hinweise des Adapters, Fehlermeldungen der Bruecke) -->
+  <script src="js/i18n-lex-android.js"></script>
+  <!-- Erklaerungs- und Hilfetexte der Einstellungen (.fhint) -->
+  <script src="js/i18n-lex-hints.js"></script>
+  <script src="js/i18n-lex-ctx.js"></script>
+  <script src="js/i18n-lex-full.js"></script>
+  <!-- Sprachregeln und Systemprompt-Varianten fuer die KI (nutzen app.js und settings.js) -->
+  <script src="js/i18n-prompts.js"></script>
   <script src="js/llm.js"></script>
   <script src="js/util.js"></script>
   <script src="js/settings.js"></script>
