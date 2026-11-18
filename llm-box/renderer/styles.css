@@ -305,6 +305,12 @@ details.tool.fail > summary { color: var(--err); }
 .queued-strip .queued-hint { flex: 1; font-size: 12px; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .queued-strip .queued-cancel { flex-shrink: 0; border: 0; background: transparent; color: var(--text-faint); display: flex; padding: 2px; border-radius: 6px; }
 .queued-strip .queued-cancel:hover { color: var(--err); background: var(--bg-hover); opacity: 1; }
+.queued-strip.hidden { display: none; }
+#queued-strip { flex-direction: column; align-items: stretch; gap: 4px; }
+#queued-strip .queued-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.queued-strip .queued-now { flex-shrink: 0; border: 1px solid var(--line); background: transparent; color: var(--text-dim); border-radius: 6px; padding: 1px 8px; font-size: 12px; cursor: pointer; }
+.queued-strip .queued-now:hover { color: var(--accent); border-color: var(--accent-line); background: var(--bg-hover); }
+.msg.user .steer-tag { font-size: 11px; color: var(--text-faint); text-align: right; margin: 0 4px 2px; }
 .composer-bar { display: flex; align-items: center; justify-content: space-between; }
 .composer-bar .left, .composer-bar .right { display: flex; align-items: center; gap: 4px; }
 .chip-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; background: transparent; color: var(--text-dim); border-radius: 8px; padding: 5px 9px; font-size: 13px; }

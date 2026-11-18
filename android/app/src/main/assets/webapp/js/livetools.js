@@ -75,13 +75,13 @@ function tlJoin(buf, chunk) {
   return buf;
 }
 
-function tlStart(tc) {
+function tlStart(tc, R) {
   if (!tc || tc.name === 'propose_new_session' || TL.cards.has(tc.id)) return null;
   const a = tc.args || {};
   const raw = a.path || a.query || a.label || a.command || a.package || a.name || a.task;
   const arg = raw ? ' · ' + String(raw).replace(/\s+/g, ' ').slice(0, 90) : '';
   const kind = tc.name === 'run_command' || tc.name === 'install_tool' ? 'exec' : tc.name === 'delegate_task' ? 'agent' : 'plain';
-  const c = { tc, kind, state: 'queued', t0: 0, tOut: 0, buf: '', cut: false, execId: null, timeout: 0, act: '' };
+  const c = { tc, run: R || null, kind, state: 'queued', t0: 0, tOut: 0, buf: '', cut: false, execId: null, timeout: 0, act: '' };
   c.status = el('span', { class: 'tl-status' });
   c.head = el('div', { class: 'tl-head hidden' });
   c.out = el('pre', { class: 'tl-out' });
@@ -98,10 +98,10 @@ function tlStart(tc) {
   c.node.addEventListener('toggle', () => followApply(c.inner));
   c.node.firstChild.addEventListener('click', () => { c.touched = true; }); // Nutzer hat selbst auf-/zugeklappt: nicht mehr automatisch öffnen
   TL.cards.set(tc.id, c);
-  liveHost().append(c.node);
+  liveHost(R).append(c.node);
   // Wächst die Ausgabe, läuft das Feld mit (unabhängig davon, wie die Zeilen ankommen)
   if (typeof ResizeObserver !== 'undefined') { c.ro = new ResizeObserver(() => followApply(c.inner)); c.ro.observe(c.out); }
-  followBottom();
+  followBottom(R);
   tlPaint(c);
   if (!TL.timer) TL.timer = setInterval(tlTick, 500);
   return c;
@@ -176,7 +176,7 @@ function tlShow(c) {
   // Das Feld, das tatsächlich scrollt, ist .inner (max-height): dort gilt die Mitscroll-Regel
   followApply(c.inner);
   tlPaint(c);
-  followBottom();
+  followBottom(c.run);
 }
 
 /* Programm-Ausgabe (stdout und stderr) anhängen */
@@ -206,12 +206,16 @@ function tlFinish(id, tm) {
   if (c && c.ro) c.ro.disconnect();
   const done = toolEl(tm);
   if (c && c.node.parentNode) c.node.replaceWith(done); // auch im unsichtbaren Container (Hintergrund-Lauf)
-  else liveHost().append(done);
-  followBottom();
+  else liveHost(c && c.run).append(done);
+  followBottom(c && c.run);
 }
 
 /* Aufräumen, falls ein Lauf abbricht */
-function tlClear() {
-  for (const c of TL.cards.values()) { if (c.ro) c.ro.disconnect(); c.node.remove(); }
-  TL.cards.clear();
+function tlClear(R) {
+  for (const [id, c] of [...TL.cards]) {
+    if (R && c.run !== R) continue; // nur die Karten dieses Laufs (andere Chats arbeiten weiter)
+    if (c.ro) c.ro.disconnect();
+    c.node.remove();
+    TL.cards.delete(id);
+  }
 }

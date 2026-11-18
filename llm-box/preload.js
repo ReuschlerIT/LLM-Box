@@ -56,7 +56,7 @@ contextBridge.exposeInMainWorld('api', {
   ws: {
     list: (o) => inv('ws:list', o),
     tool: (o) => inv('ws:tool', o),
-    abortAll: () => inv('ws:abort'),
+    abortAll: (owner) => inv('ws:abort', owner),
   },
   strata: {
     run: (req, cb) => {

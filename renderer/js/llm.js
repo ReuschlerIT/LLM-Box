@@ -1,4 +1,4 @@
-/* LLM-Schicht: Ollama (/api/chat) und OpenAI-kompatibel (/chat/completions).
+/* LLM-Schicht: Ollama (/api/chat), OpenAI-kompatibel (/chat/completions) und Anthropic (Claude, /v1/messages).
    Streaming, Token-Metriken (tok/s, Prompt, Antwort, Gesamt, TTFT) und Workspace-Werkzeuge. */
 (function (root) {
   'use strict';
@@ -7,8 +7,22 @@
   const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
   const joinUrl = (base, p) => String(base || '').replace(/\/+$/, '') + p;
 
+  /* Anthropic (Claude): eigene Kopfzeilen (x-api-key statt Bearer) und Basis-Adresse mit /v1 */
+  const ANTH_VERSION = '2023-06-01';
+  const isAnth = (conn) => !!conn && conn.type === 'anthropic';
+  function anthropicBase(conn) {
+    let b = String((conn && conn.baseUrl) || '').trim().replace(/\/+$/, '');
+    if (!b) b = 'https://api.anthropic.com';
+    return /\/v\d+$/.test(b) ? b : b + '/v1';
+  }
+
   function headersFor(conn) {
     const h = { 'Content-Type': 'application/json' };
+    if (isAnth(conn)) {
+      h['anthropic-version'] = ANTH_VERSION;
+      if (conn.apiKey) h['x-api-key'] = conn.apiKey;
+      return h;
+    }
     if (conn.apiKey) h.Authorization = 'Bearer ' + conn.apiKey;
     return h;
   }
@@ -24,13 +38,36 @@
     let hint = '';
     if (status === 401 || status === 403) hint = ' – API-Schlüssel prüfen.';
     else if (status === 404) hint = ' – Modell oder Adresse nicht gefunden.';
+    else if (status === 429) hint = ' – Anfragelimit erreicht. Kurz warten und erneut versuchen.';
+    else if (status === 529) hint = ' – Der Anbieter ist gerade überlastet. Später erneut versuchen.';
+    else if (/credit balance|billing/i.test(msg)) hint = ' – Guthaben beim Anbieter aufgebraucht oder keine Zahlungsart hinterlegt (Anthropic: console.anthropic.com → Plans & Billing).';
+    else if (/temperature|top_p|top_k/i.test(msg) && /deprecated|not supported|not allowed|cannot|may only|invalid/i.test(msg)) hint = ' – Dieses Modell nimmt keine eigenen Sampling-Werte an. Stelle in der Verbindung „Sampling-Parameter“ auf „Dem Server überlassen“.';
+    else if (/budget_tokens|adaptive/i.test(msg)) hint = ' – Diese Denk-Variante passt nicht zum Modell. Ändere in der Verbindung „Denkaufwand senden als“ (Adaptiv für neuere Modelle, Festes Budget für ältere).';
     else if (/think|reasoning/i.test(msg)) hint = ' – Dieses Modell unterstützt die Denk-Einstellung nicht. Stelle „Denken“ im Eingabefeld auf Auto.';
     else if (/tool/i.test(msg)) hint = ' – Dieses Modell unterstützt keine Werkzeuge. Schalte den KI-Dateizugriff aus oder wähle ein anderes Modell.';
     return `HTTP ${status}: ${msg}${hint}`;
   }
 
   /* ───── Modelle ───── */
+  async function listAnthropicModels(conn) {
+    const base = anthropicBase(conn);
+    const out = [];
+    let after = '';
+    for (let page = 0; page < 5; page++) {
+      const url = joinUrl(base, '/models?limit=1000' + (after ? '&after_id=' + encodeURIComponent(after) : ''));
+      const res = await api().fetch({ url, method: 'GET', headers: { ...headersFor(conn), Accept: 'application/json' } });
+      if (!res.ok) throw new Error(res.error || errorText(res.status, res.text));
+      let j;
+      try { j = JSON.parse(res.text); } catch { throw new Error(`Die Antwort von ${url} ist kein JSON: ${String(res.text || '').replace(/\s+/g, ' ').slice(0, 120)}`); }
+      for (const m of j.data || []) if (m && m.id) out.push({ id: m.id, name: m.display_name || m.id, raw: m });
+      if (!j.has_more || !j.last_id) break;
+      after = j.last_id;
+    }
+    return out;
+  }
+
   async function listModels(conn) {
+    if (isAnth(conn)) return listAnthropicModels(conn);
     const url = conn.type === 'ollama' ? joinUrl(conn.baseUrl, '/api/tags') : joinUrl(conn.baseUrl, '/models');
     const res = await api().fetch({ url, method: 'GET', headers: { ...headersFor(conn), Accept: 'application/json' } });
     if (!res.ok) throw new Error(res.error || errorText(res.status, res.text));
@@ -69,6 +106,21 @@
   async function modelInfo(conn, modelId, models) {
     const info = { ctx: null, ctxKey: '', ctxSource: '', runtime: false, answered: [], candidates: [], entryKeys: [] };
     const cands = [];
+    if (isAnth(conn)) {
+      // Claude: Die Modellliste nennt das Eingabe-Limit (max_input_tokens) selbst, weitere Abfragen sind nicht nötig.
+      const entry = (models || []).find((m) => m.id === modelId);
+      const raw = (entry && entry.raw) || {};
+      info.entryKeys = Object.keys(raw);
+      if (entry) info.answered.push('/models');
+      if (+raw.max_input_tokens > 0) {
+        info.ctx = +raw.max_input_tokens;
+        info.ctxKey = 'max_input_tokens';
+        info.ctxSource = '/models';
+        info.runtime = true;
+        info.candidates = [{ key: 'max_input_tokens', value: info.ctx, source: '/models' }];
+      }
+      return info;
+    }
     if (conn.type === 'ollama') {
       const j = await getJson(conn, joinUrl(conn.baseUrl, '/api/show'), 'POST', JSON.stringify({ model: modelId }));
       if (j) {
@@ -125,7 +177,7 @@
 
   /* Echtzeit-Füllstand: llama.cpp-kompatibles /slots (Strata: n_ctx, n_prompt_tokens). Liefert null, wenn der Server es nicht kann. */
   async function slotInfo(conn) {
-    if (conn.type === 'ollama') return null;
+    if (conn.type === 'ollama' || isAnth(conn)) return null;
     const root = String(conn.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
     const j = await getJson(conn, joinUrl(root, '/slots'));
     if (!j) return null;
@@ -213,6 +265,91 @@
     return out;
   }
 
+  /* Nachrichten → Anthropic-Format (Messages API).
+     - System-Prompt steht getrennt (system), Bilder als base64-Blöcke, Werkzeug-Ergebnisse als tool_result im nächsten user-Turn.
+     - Aufeinanderfolgende Nachrichten gleicher Rolle werden zusammengelegt, fehlende/überzählige Werkzeug-Ergebnisse repariert.
+     - Denk-Blöcke (mit Signatur) werden nur zurückgegeben, wenn Denken aktiv ist und dasselbe Modell sie erzeugt hat. */
+  const tid = (id) => String(id || uid()).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+  const ANTH_IMG = { 'image/jpeg': 'image/jpeg', 'image/jpg': 'image/jpeg', 'image/png': 'image/png', 'image/gif': 'image/gif', 'image/webp': 'image/webp' };
+  function anthImage(f) {
+    const url = f.dataUrl || '';
+    const m = /^data:(image\/[a-z0-9.+-]+);base64,([\s\S]*)$/i.exec(url);
+    if (m) {
+      const mt = ANTH_IMG[m[1].toLowerCase()];
+      return mt ? { type: 'image', source: { type: 'base64', media_type: mt, data: m[2] } } : { type: 'text', text: `[Bild im Format ${m[1]} wird von der Claude-API nicht unterstützt]` };
+    }
+    if (/^https?:/i.test(url)) return { type: 'image', source: { type: 'url', url } };
+    return null;
+  }
+
+  function toWireAnthropic(conn, system, messages, model, withThinking) {
+    const out = [];
+    const push = (role, blocks) => {
+      if (!blocks.length) return;
+      const last = out[out.length - 1];
+      if (last && last.role === role) last.content.push(...blocks);
+      else out.push({ role, content: blocks.slice() });
+    };
+    for (const m of messages) {
+      if (m.role === 'user') {
+        const blocks = [];
+        const imgs = (m.files || []).filter((f) => f.kind === 'image');
+        for (const im of imgs) { const b = anthImage(im); if (b) blocks.push(b); }
+        const text = userText(m);
+        blocks.push({ type: 'text', text: text && text.trim() ? text : imgs.length ? '(Bild)' : '(leer)' });
+        push('user', blocks);
+      } else if (m.role === 'assistant') {
+        const calls = m.toolCalls || [];
+        if (m.error && !m.content && !calls.length) continue;
+        const hasImg = !!(m.images && m.images.length);
+        if (!m.content && !calls.length && !hasImg) continue;
+        const blocks = [];
+        if (withThinking && m.thinkBlocks && m.thinkBlocks.length && m.model === model) blocks.push(...m.thinkBlocks);
+        if (m.content && m.content.trim()) blocks.push({ type: 'text', text: m.content });
+        else if (hasImg && !calls.length) blocks.push({ type: 'text', text: '[Bild erzeugt]' });
+        for (const tc of calls) blocks.push({ type: 'tool_use', id: tid(tc.id), name: tc.name, input: tc.args && typeof tc.args === 'object' ? tc.args : {} });
+        push('assistant', blocks);
+      } else if (m.role === 'tool') {
+        push('user', [{ type: 'tool_result', tool_use_id: tid(m.toolCallId), content: String(m.content || '').trim() ? String(m.content) : '(leer)' }]);
+      }
+    }
+    // Reparatur: jedes tool_use braucht sein tool_result direkt danach, und ein tool_result braucht sein tool_use direkt davor
+    for (let i = 0; i < out.length; i++) {
+      const m = out[i];
+      if (m.role === 'assistant') {
+        const ids = m.content.filter((b) => b.type === 'tool_use').map((b) => b.id);
+        if (!ids.length) continue;
+        let nxt = out[i + 1];
+        if (!nxt || nxt.role !== 'user') { nxt = { role: 'user', content: [] }; out.splice(i + 1, 0, nxt); }
+        const have = new Set(nxt.content.filter((b) => b.type === 'tool_result').map((b) => b.tool_use_id));
+        const missing = ids.filter((id) => !have.has(id)).map((id) => ({ type: 'tool_result', tool_use_id: id, content: '(Kein Ergebnis: der Aufruf wurde nicht ausgeführt.)', is_error: true }));
+        const results = nxt.content.filter((b) => b.type === 'tool_result');
+        const rest = nxt.content.filter((b) => b.type !== 'tool_result');
+        nxt.content = [...missing, ...results, ...rest]; // tool_result-Blöcke müssen vor anderem Inhalt stehen
+      } else {
+        const prev = out[i - 1];
+        const ids = new Set(prev && prev.role === 'assistant' ? prev.content.filter((b) => b.type === 'tool_use').map((b) => b.id) : []);
+        m.content = m.content.filter((b) => b.type !== 'tool_result' || ids.has(b.tool_use_id));
+        if (!m.content.length) { out.splice(i, 1); i--; }
+      }
+    }
+    if (out.length && out[0].role !== 'user') out.unshift({ role: 'user', content: [{ type: 'text', text: '(Fortsetzung des Gesprächs)' }] });
+    if (out.length && out[out.length - 1].role === 'assistant') out.push({ role: 'user', content: [{ type: 'text', text: 'Fahre fort.' }] }); // neuere Modelle erlauben keinen vorgegebenen Antwortanfang
+    const cache = conn.promptCache !== false;
+    if (cache && out.length) {
+      const lm = out[out.length - 1];
+      const lb = lm.content[lm.content.length - 1];
+      if (lb) lb.cache_control = { type: 'ephemeral' };
+    }
+    const sys = system ? (cache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system) : undefined;
+    return { system: sys, messages: out };
+  }
+
+  const toAnthTool = (t) => {
+    const f = (t && t.function) || t || {};
+    return { name: f.name, description: f.description || '', input_schema: f.parameters || f.input_schema || { type: 'object', properties: {} } };
+  };
+
   function buildOptions(conn, p) {
     const has = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(v);
     // „Dem Server überlassen“: keine Sampling-Werte senden, der Server nimmt seine eigenen Standards (wie seine Weboberfläche)
@@ -221,6 +358,14 @@
       .split('|')
       .map((s) => s.replace(/\\n/g, '\n'))
       .filter((s) => s.length);
+    if (isAnth(conn)) {
+      // Claude: nur Temperatur (0 bis 1), optional Top-K und Stop-Sequenzen. Top-P wird nie mitgeschickt, weil neuere Modelle beides zusammen ablehnen.
+      const o = {};
+      if (has(p.temperature)) o.temperature = Math.min(1, Math.max(0, +p.temperature));
+      if (conn.extraParams && has(p.topK) && +p.topK > 0) o.top_k = +p.topK;
+      if (stop.length) o.stop_sequences = stop;
+      return o;
+    }
     if (conn.type === 'ollama') {
       const o = {};
       if (has(p.temperature)) o.temperature = +p.temperature;
@@ -258,7 +403,26 @@
 
   /* ───── Chat ───── */
   /* Denkaufwand: 'auto' | 'off' | 'low' | 'medium' | 'high' */
-  const thinkModeOf = (conn) => conn.thinkMode || (conn.extraParams ? 'template' : 'effort');
+  const thinkModeOf = (conn) => (isAnth(conn) ? (['adaptive', 'budget', 'none'].includes(conn.thinkMode) ? conn.thinkMode : 'adaptive') : conn.thinkMode || (conn.extraParams ? 'template' : 'effort'));
+  /* Claude: „Auto“ sendet nichts, „Aus“ schaltet Denken ab. Sonst entweder adaptiv + effort (Opus/Sonnet 4.6 und neuer; Claude 4.7+ lehnt das feste Budget ab)
+     oder festes Budget (ältere Modelle, 4.5 und früher). Mit Denken sind Temperatur und Top-K nicht erlaubt. */
+  const BUDGETS = { low: 2048, medium: 8192, high: 16384 };
+  function applyThinkingAnthropic(conn, body, level, canThink) {
+    if (!level || level === 'auto') return;
+    if (level === 'off') { body.thinking = { type: 'disabled' }; return; }
+    const mode = thinkModeOf(conn);
+    if (mode === 'none' || !canThink) return;
+    if (mode === 'budget') {
+      const budget = BUDGETS[level] || BUDGETS.medium;
+      body.thinking = { type: 'enabled', budget_tokens: budget };
+      if (!(body.max_tokens > budget)) body.max_tokens = budget + 4096;
+    } else {
+      body.thinking = { type: 'adaptive', display: 'summarized' };
+      body.output_config = { effort: level };
+    }
+    delete body.temperature;
+    delete body.top_k;
+  }
   function applyThinking(conn, body, level, model) {
     if (!level || level === 'auto') return;
     if (conn.type === 'ollama') {
@@ -284,7 +448,7 @@
   const IMG_ANY = /image|dall-?e|nano[-_ ]?banana|flux|riverflow|seedream|sdxl|stable[-_ ]?diffusion/i;
   const IMG_ONLY = /flux|riverflow|seedream|sdxl|stable[-_ ]?diffusion/i; // reine Bildmodelle liefern keinen Text
   function imageModalities(conn, model) {
-    if (conn.type === 'ollama') return null;
+    if (conn.type === 'ollama' || isAnth(conn)) return null;
     const mode = conn.imageOutput || 'auto';
     if (mode === 'off') return null;
     if (mode === 'auto' && !IMG_ANY.test(model || '')) return null;
@@ -304,21 +468,35 @@
   function streamChat({ conn, model, system, messages, params, tools, thinkLevel, handlers }) {
     const id = uid();
     const ollama = conn.type === 'ollama';
+    const anth = isAnth(conn);
     const h = handlers || {};
-    const wire = toWire(conn, system, messages);
+    let wire = anth ? null : toWire(conn, system, messages);
     const opts = buildOptions(conn, params || {});
     let body;
-    if (ollama) {
+    if (anth) {
+      const pm = +(params && params.maxTokens);
+      body = { model, max_tokens: pm > 0 ? pm : 16384, stream: true, ...opts };
+      // Mit festem Budget verlangt die API im laufenden Werkzeug-Ablauf den Denk-Block des letzten Schritts. Fehlt er, wird Denken für diese Anfrage ausgelassen.
+      const lastMsg = messages[messages.length - 1];
+      const lastAsst = [...messages].reverse().find((m) => m.role === 'assistant');
+      const canThink = !(thinkModeOf(conn) === 'budget' && lastMsg && lastMsg.role === 'tool' && !(lastAsst && lastAsst.thinkBlocks && lastAsst.thinkBlocks.length));
+      applyThinkingAnthropic(conn, body, thinkLevel, canThink);
+      const withThinking = !!(body.thinking && body.thinking.type !== 'disabled');
+      const aw = toWireAnthropic(conn, system, messages, model, withThinking);
+      wire = aw.messages;
+      if (aw.system) body.system = aw.system;
+      body.messages = wire;
+    } else if (ollama) {
       body = { model, messages: wire, stream: true, options: opts };
       if (params && params.keepAlive) body.keep_alive = params.keepAlive;
     } else {
       body = { model, messages: wire, stream: true, stream_options: { include_usage: true }, ...opts };
     }
-    if (tools && tools.length) body.tools = tools;
-    applyThinking(conn, body, thinkLevel, model);
+    if (tools && tools.length) body.tools = anth ? tools.map(toAnthTool) : tools;
+    if (!anth) applyThinking(conn, body, thinkLevel, model);
     const mods = imageModalities(conn, model);
     if (mods) body.modalities = mods;
-    const url = joinUrl(conn.baseUrl, ollama ? '/api/chat' : '/chat/completions');
+    const url = anth ? joinUrl(anthropicBase(conn), '/messages') : joinUrl(conn.baseUrl, ollama ? '/api/chat' : '/chat/completions');
 
     let content = '';
     let thinking = '';
@@ -338,13 +516,69 @@
     let timings = null;
     let finalObj = null;
     let finishReason = '';
+    // Anthropic: Blöcke je Index, Nutzungszahlen, Denk-Blöcke samt Signatur (für Werkzeug-Abläufe mit Denken)
+    const aBlocks = {};
+    const thinkBlocks = [];
+    let usageA = null;
+    const STOP_MAP = { end_turn: 'stop', stop_sequence: 'stop', max_tokens: 'length', model_context_window_exceeded: 'length', tool_use: 'tool_calls' };
     const t0 = now();
     let tFirst = null;
     const mark = () => {
       if (tFirst === null) tFirst = now();
     };
 
+    function handleAnth(o) {
+      switch (o.type) {
+        case 'message_start':
+          usageA = { ...(usageA || {}), ...((o.message && o.message.usage) || {}) };
+          break;
+        case 'content_block_start': {
+          const b = o.content_block || {};
+          aBlocks[o.index] = { type: b.type, text: b.text || '', thinking: b.thinking || '', signature: b.signature || '', id: b.id, name: b.name, json: '', data: b.data };
+          if (b.type === 'tool_use') mark();
+          if (b.type === 'thinking' && thinking) thinking += '\n\n';
+          if (b.type === 'text' && b.text) { mark(); n++; content += b.text; if (h.onContent) h.onContent(content, n); }
+          break;
+        }
+        case 'content_block_delta': {
+          const d = o.delta || {};
+          const e = aBlocks[o.index] || (aBlocks[o.index] = { type: 'text', text: '', thinking: '', signature: '', json: '' });
+          if (d.type === 'text_delta' && d.text) {
+            mark(); n++;
+            e.text += d.text; content += d.text;
+            if (h.onContent) h.onContent(content, n);
+          } else if (d.type === 'thinking_delta' && d.thinking) {
+            mark(); n++;
+            e.thinking += d.thinking; thinking += d.thinking;
+            if (h.onThinking) h.onThinking(thinking, n);
+          } else if (d.type === 'signature_delta') e.signature = d.signature || e.signature;
+          else if (d.type === 'input_json_delta') e.json += d.partial_json || '';
+          break;
+        }
+        case 'content_block_stop': {
+          const e = aBlocks[o.index];
+          if (!e) break;
+          if (e.type === 'tool_use') {
+            let args = {};
+            try { args = e.json ? JSON.parse(e.json) : {}; } catch {}
+            toolCalls.push({ id: e.id || uid(), name: e.name, args });
+          } else if (e.type === 'thinking') thinkBlocks.push({ type: 'thinking', thinking: e.thinking, signature: e.signature });
+          else if (e.type === 'redacted_thinking') thinkBlocks.push({ type: 'redacted_thinking', data: e.data });
+          break;
+        }
+        case 'message_delta':
+          if (o.delta && o.delta.stop_reason) finishReason = STOP_MAP[o.delta.stop_reason] || o.delta.stop_reason;
+          if (o.usage) usageA = { ...(usageA || {}), ...o.usage };
+          break;
+        case 'error':
+          throw new Error((o.error && o.error.message) || JSON.stringify(o.error || o));
+        default:
+          break;
+      }
+    }
+
     function handleObj(o) {
+      if (anth) return handleAnth(o);
       if (ollama) {
         if (o.error) throw new Error(typeof o.error === 'string' ? o.error : JSON.stringify(o.error));
         const m = o.message || {};
@@ -466,6 +700,15 @@
             stats.promptTps = finalObj.prompt_eval_duration && finalObj.prompt_eval_count ? finalObj.prompt_eval_count / (finalObj.prompt_eval_duration / 1e9) : null;
             stats.loadSec = finalObj.load_duration ? finalObj.load_duration / 1e9 : 0;
             if (finalObj.total_duration) stats.duration = finalObj.total_duration / 1e9;
+          } else if (anth && usageA && (numOr0(usageA.output_tokens) > 0 || numOr0(usageA.input_tokens) > 0)) {
+            // Claude: input_tokens zählt nur den nicht zwischengespeicherten Teil, der Rest steht in cache_read/cache_creation
+            const cRead = numOr0(usageA.cache_read_input_tokens);
+            const cWrite = numOr0(usageA.cache_creation_input_tokens);
+            stats.promptTokens = numOr0(usageA.input_tokens) + cRead + cWrite;
+            stats.completionTokens = numOr0(usageA.output_tokens) || n;
+            stats.tps = genSec >= 0.25 && stats.completionTokens ? stats.completionTokens / genSec : null;
+            if (cRead) stats.cachedTokens = cRead;
+            if (cWrite) stats.cacheWriteTokens = cWrite;
           } else if (usage && (+usage.completion_tokens > 0 || +usage.prompt_tokens > 0)) {
             // Server-Angaben immer als Zahlen lesen (manche liefern Text oder 0 als Platzhalter)
             stats.promptTokens = numOr0(usage.prompt_tokens);
@@ -482,8 +725,8 @@
             stats.tps = genSec >= 0.25 && n ? n / genSec : null;
           }
           stats.totalTokens = (stats.promptTokens || 0) + (stats.completionTokens || 0);
-          request.response = { usage: usage || null, timings: timings || null, finish: finishReason || null }; // zur Fehlersuche unter „Anfrage“
-          resolve({ content, thinking, images, toolCalls, stats, aborted, finishReason });
+          request.response = { usage: usage || usageA || null, timings: timings || null, finish: finishReason || null }; // zur Fehlersuche unter „Anfrage“
+          resolve({ content, thinking, images, toolCalls, stats, aborted, finishReason, thinkBlocks: thinkBlocks.length ? thinkBlocks : null });
         },
         (err) => reject(err)
       );
@@ -494,7 +737,7 @@
 
   /* Vom Server selbst gemessene Geschwindigkeit der letzten Anfrage (Strata: /metrics). null, wenn der Server das nicht liefert. */
   async function serverDecodeStats(conn, tokens) {
-    if (conn.type === 'ollama') return null;
+    if (conn.type === 'ollama' || isAnth(conn)) return null;
     const root = String(conn.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
     for (let attempt = 0; attempt < 2; attempt++) {
       await new Promise((r) => setTimeout(r, attempt ? 1500 : 400));
@@ -609,7 +852,7 @@
     ),
   ];
 
-  const LLM = { serverDecodeStats, imageModalities, thinkModeOf, listModels, modelInfo, slotInfo, streamChat, pullModel, splitThink, WORKSPACE_TOOLS, uid, joinUrl };
+  const LLM = { anthropicBase, serverDecodeStats, imageModalities, thinkModeOf, listModels, modelInfo, slotInfo, streamChat, pullModel, splitThink, WORKSPACE_TOOLS, uid, joinUrl };
   root.LLM = LLM;
   if (typeof module !== 'undefined' && module.exports) module.exports = LLM;
 })(typeof window !== 'undefined' ? window : globalThis);

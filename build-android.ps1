@@ -14,10 +14,24 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 function Read-File([string]$p) { [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8) }
 function Write-File([string]$p, [string]$t) { [System.IO.File]::WriteAllText($p, $t, $utf8NoBom) }
 
+# Zeilenenden anpassen: die Desktop-Quelle liefert seit 1.0.70 CRLF, die Here-Strings in
+# diesem Skript (und damit alle mehrzeiligen Suchtexte) sind LF. Passt der Suchtext nicht,
+# wird er auf CRLF umgesetzt und noch einmal versucht - sonst wirft z. B. der Patch fuer die
+# Statuszeile ("Suchtext nicht gefunden"), obwohl die Stelle unveraendert da ist.
+# Der neue Text bekommt dieselbe Zeilenendart wie der Fund, damit die Datei nicht gemischt wird.
+function Align-Newlines([string]$fileContent, [string]$old, [string]$new) {
+    if ($fileContent.Contains($old)) { return @($old, $new) }
+    $crlf = $old.Replace("`r`n", "`n").Replace("`n", "`r`n")
+    if ($fileContent.Contains($crlf)) { return @($crlf, $new.Replace("`r`n", "`n").Replace("`n", "`r`n")) }
+    return @($old, $new)
+}
+
 # Ersetzt genau einmal; bricht ab, wenn der Suchtext fehlt oder mehrfach vorkommt.
 function Patch([string]$file, [string]$old, [string]$new, [string]$label) {
     $t = Read-File $file
     if ($t.Contains($new)) { Write-Host "   .    $label (bereits gepatcht)"; return }
+    $a = Align-Newlines $t $old $new
+    $old = $a[0]; $new = $a[1]
     $n = ([regex]::Matches($t, [regex]::Escape($old))).Count
     if ($n -eq 0) { throw "Patch '$label': Suchtext nicht gefunden in $file" }
     if ($n -gt 1) { throw "Patch '$label': Suchtext $n-mal gefunden (eindeutig erwartet) in $file" }
@@ -34,9 +48,10 @@ function PatchAny([string]$file, [object[]]$pairs, [string]$label) {
         if ($t.Contains($pairs[$i + 1])) { Write-Host "   .    $label (bereits gepatcht)"; return }
     }
     for ($i = 0; $i -lt $pairs.Count; $i += 2) {
-        $n = ([regex]::Matches($t, [regex]::Escape($pairs[$i]))).Count
+        $a = Align-Newlines $t ([string]$pairs[$i]) ([string]$pairs[$i + 1])
+        $n = ([regex]::Matches($t, [regex]::Escape($a[0]))).Count
         if ($n -eq 1) {
-            Write-File $file ($t.Replace($pairs[$i], $pairs[$i + 1]))
+            Write-File $file ($t.Replace($a[0], $a[1]))
             Write-Host "   OK   $label"
             return
         }
@@ -180,6 +195,19 @@ $newKosten = @'
     $('#st-right').innerHTML += `<span class="st-line">Kosten ${c.est || lv ? '~' : '≈'} <b>${fmt.money(amount, 'EUR')}</b></span>`;
 '@
 Patch $app $oldKosten $newKosten 'app.js: Statuszeile eigene Zeile fuer Kosten'
+
+# Ab 1.0.70 zeigt die Statuszeile zusaetzlich den gemessenen Strom der Antwort
+# (Einstellungen -> Kosten -> Strompreis). Ohne eigene Zeile haenge die Angabe hinter
+# "Dauer" und waere auf dem Handy abgeschnitten, weil sie nicht in einem .st-line-Element
+# steckt. Die bestehende Regel in android.css (.st-line { display: block }) macht daraus
+# automatisch eine vierte Zeile - deshalb hier nur das HTML-Element ergaenzen.
+$oldStrom = @'
+      $('#st-right').innerHTML += ` · Strom ${lv ? '~' : '≈'} <b>${has ? fmt.money(energyCost(e.wh + lw), 'EUR') : '–'}</b>`;
+'@
+$newStrom = @'
+      $('#st-right').innerHTML += `<span class="st-line">Strom ${lv ? '~' : '≈'} <b>${has ? fmt.money(energyCost(e.wh + lw), 'EUR') : '–'}</b></span>`;
+'@
+Patch $app $oldStrom $newStrom 'app.js: Statuszeile eigene Zeile fuer Strom'
 
 # Enter im Eingabefeld macht auf dem Handy standardmaessig einen Umbruch (Touch-Tastatur),
 # Senden wie am Desktop mit Strg+Enter bzw. der Sendetaste. Umstellbar in

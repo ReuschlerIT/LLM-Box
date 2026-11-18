@@ -84,8 +84,9 @@ Bestehende Einstellungen, Verbindungen und Chats bleiben erhalten. Neu ist nur d
 # Update-Chronik ab Version 1.0.37
 
 Die folgenden Abschnitte setzen die obige Beschreibung (Version 1.0.36) fort und führen jede
-veröffentlichte Version bis zur aktuellen **1.0.67** auf – chronologisch aufsteigend, damit zu jeder
-Version nachvollziehbar ist, was sich geändert hat.
+veröffentlichte Version bis zur aktuellen **1.0.70** auf – chronologisch aufsteigend, damit zu jeder
+Version nachvollziehbar ist, was sich geändert hat. 1.0.69 und 1.0.70 teilen sich einen Abschnitt
+(begründet dort).
 
 Hinweise zur Lesart:
 - „Windows“ = die Desktop-Anwendung, „Android“ = die Handy-App (eigene Versionsnummern mit dem
@@ -130,6 +131,9 @@ Hinweise zur Lesart:
 | 1.0.65 | Einheitliche Kopfzeile auf dem Handy; Windows = Veröffentlichungsstand |
 | 1.0.66 | Sprachen Deutsch/Englisch/Französisch vollständig, weniger Abbrüche der KI, Modellprofil für IQ3/Q3, neues Raster der Einstellungen |
 | 1.0.67 | Sprachauswahl beim allerersten Start |
+| 1.0.68 | Claude-Anbindung (Anthropic-API) als eigener Verbindungstyp |
+| 1.0.69 | (keine eigene Quelle – siehe gemeinsamer Abschnitt 1.0.69/1.0.70) |
+| 1.0.70 | Stromverbrauch in der Statuszeile, Hinweise an die laufende KI, Läufe pro Chat |
 
 ---
 
@@ -1063,3 +1067,102 @@ Vorgängerversion: 1.0.66 · Windows (Oberfläche, wirkt über den Android-Build
   Alle früheren Prüfungen (Übersetzung, Profil, Prompt, Raster) laufen weiter fehlerfrei.
 - **Nicht geprüft:** ein echtes Electron-Fenster und die Android-Oberfläche. Auf dem Handy muss der
   Speicher beim ersten Start ebenfalls „leer“ melden, damit der Dialog erscheint.
+
+---
+
+# Update: Version 1.0.68
+
+Vorgängerversion: 1.0.67 · Windows und Android (gemeinsame Oberfläche)
+
+## Neu
+- **Claude (Anthropic) als eigener Verbindungstyp.** Voreinstellung „Anthropic (Claude)“ unter *Einstellungen → Verbindungen*,
+  Basis-Adresse `https://api.anthropic.com/v1` (ein fehlendes `/v1` wird ergänzt), API-Schlüssel Pflicht.
+  - Messages-API mit Streaming, Werkzeugen, Bildern (base64), Stop-Sequenzen und Nutzungszahlen. Modellliste samt Eingabe-Limit
+    (`max_input_tokens`) kommt von Anthropic und füttert die Kontextanzeige.
+  - **Denken:** „Adaptiv + effort“ (Standard) oder festes Token-Budget für ältere Modelle. Denk-Blöcke samt Signatur werden in
+    Werkzeug-Abläufen zurückgegeben, aber nur beim selben Modell.
+  - **Sampling:** Standard „Dem Server überlassen“; sonst nur Temperatur (0 bis 1), nie Top-P. Mit Denken entfallen Temperatur und Top-K.
+  - **Prompt-Caching** (abschaltbar) auf System-Prompt, Werkzeugen und letztem Verlauf.
+  - Lückenhafte Werkzeug-Verläufe (fehlende oder überzählige Ergebnisse, Verlauf endet mit Antwort) werden vor dem Senden repariert.
+  - Eigene Diagnose („Verbindung genau prüfen“) mit Testanfrage von höchstens 16 Token; Fehlertexte für 401, 429, 529, fehlendes Guthaben.
+  - Oberfläche auf Deutsch, Englisch und Französisch. Datenschutz-Hinweis am Schlüsselfeld.
+
+## Geänderte Dateien
+`renderer/js/llm.js`, `settings.js`, `app.js`, `subagents.js`, `i18n-lex-hints.js` (jeweils in `renderer/`, `llm-box/renderer/` und
+der Android-Webapp), neue Tests `tools-android/test-anthropic-llm.js` und `test-anthropic-ui.js`, Versionsnummern, Dokumentation.
+Kein Java-, `main.js`- oder `native-main.js`-Code geändert: beide Netzwerkwege reichen Kopfzeilen unverändert durch.
+
+## Geprüft und nicht geprüft
+- **Geprüft:** simulierte Claude-Streams (Denken, Text, Werkzeug, Nutzung, Fehler), Nachrichten-Umwandlung samt Reparatur, Modellwechsel,
+  Budget-Modus; Oberfläche in jsdom (Voreinstellung, Felder, Test, Diagnose, Typwechsel, Chat über die Android-Brücke); alle bisherigen Prüfläufe.
+- **Nicht geprüft:** ein echter Aufruf gegen `api.anthropic.com` (kein Schlüssel), das Verhalten einzelner Modelle bei Parametern,
+  der Bau von EXE und APK. Nach dem Bauen mit „Verbindung genau prüfen“ gegen das gewünschte Modell testen.
+
+---
+
+# Update: Version 1.0.69 und 1.0.70 (gemeinsamer Abschnitt)
+
+Vorgängerversion: 1.0.68 · Windows und Android (gemeinsame Oberfläche)
+
+**Warum ein gemeinsamer Abschnitt:** Die Quelle der Desktop-App nennt die Version 1.0.70
+(`package.json`), enthält aber keinen eigenen Änderungsabschnitt für 1.0.69. Was zwischen 1.0.68 und
+1.0.70 geändert wurde, lässt sich nicht mehr in zwei Versionen trennen. Aufgeführt ist deshalb alles,
+was der Vergleich der Oberfläche 1.0.67 → 1.0.70 zeigt (10 Dateien, 812 Zeilen hinzu, 288 gelöscht).
+
+## Neu
+
+### Stromverbrauch messen und ausweisen
+- **Neues Feld „Strompreis (€ je kWh)“** unter *Einstellungen → Kosten* (Beispielwert 0,35).
+- **GPU-Leistung wird gemessen:** jede Sekunde die Wattzahl des überwachten Servers, aufsummiert je
+  Anfrage (`server.js`: `svReadPower`, `svPowerPrice`, `enAdd`/`enClose`).
+- **Statuszeile:** bei eingetragenem Strompreis erscheint „Strom ≈ … €“ neben Tokens, Dauer und Kosten.
+- **Pro Antwort** zeigen die Statistik und der Markdown-Export die Stromkosten dieser Antwort samt
+  durchschnittlicher Leistung.
+- Ohne erreichbaren Monitor oder ohne `gpu_power` des Server-Monitors bleibt die Angabe „–“.
+
+### Hinweise an die laufende KI
+- **Eingabe während einer Antwort** ist kein blockiertes Vormerken mehr, sondern ein Hinweis an den
+  laufenden Auftrag (`inbox`). Er wird **nach dem aktuellen Schritt** zugestellt.
+- **Knopf „Jetzt“** unterbricht die laufende Antwort und stellt den Hinweis sofort zu
+  („Unterbricht die laufende Antwort und stellt den Hinweis sofort zu“).
+- Zugestellte Hinweise tragen in der Chat-Liste das Kennzeichnungsfeld **„Hinweis während der Arbeit“**.
+- **Nicht mehr zugestellte Hinweise** wandern zurück ins Eingabefeld
+  („Dein Hinweis wurde nicht mehr zugestellt und steht wieder im Eingabefeld.“), der Knopf
+  „Zurück ins Eingabefeld holen“ holt sie bewusst zurück.
+
+### Mehrere Aufträge pro Chat
+- **Läufe pro Chat** (`RUNS`): Jeder Auftrag hat eigenen Fortschritt, eigene Live-Werte und eigene
+  Werkzeugkarten. Der angezeigte Auftrag läuft über `viewRun()`, nicht mehr über das globale
+  `S.generating`.
+- **Werkzeugkarten gehören zum Auftrag** (`livetools.js`: `tlClear(R)` löscht nur die Karten dieses
+  Laufes), **Unteragenten zum Chat** (`subagents.js`: `owner: chat.id`).
+- **Einen laufenden Chat verwerfen** (`discardAllRuns`) bricht alle Aufträge dieses Chats ab.
+
+## Behoben
+- Der Platzhalter für fortgesetzte Gespräche („(Fortsetzung des Gesprächs)“) war unübersetzt;
+  er hat jetzt Einträge für Englisch und Französisch.
+- Zwei veraltete Wörterbuch-Einträge zum alten Vormerken („Vormerken – wird gesendet, sobald die KI
+  fertig ist“) standen in keinem Quelltext mehr und sind entfernt.
+
+## Geänderte Dateien
+`renderer/js/app.js`, `llm.js`, `settings.js`, `server.js`, `livetools.js`, `subagents.js`,
+`handoff.js`, `i18n-lex.js`, `i18n-lex-hints.js`, `i18n-lex-settings.js`, `styles.css`
+(jeweils in `renderer/`, `llm-box/renderer/` und der Android-Webapp).
+
+## Android: zwei Stellen, die der Bau sonst stillschweigend falsch macht
+- **Zeilenenden:** die Desktop-Quelle liefert CRLF, die mehrzeiligen Suchtexte des Bau-Skripts sind LF.
+  Der Patch für die Statuszeile findet seinen Suchtext sonst nicht. Das Bau-Skript setzt mehrzeilige
+  Such- und Ersatztexte jetzt an die Zeilenenden der Datei um.
+- **Statuszeile auf dem Handy:** Tokens, Dauer, Kosten und jetzt auch Strom stehen in je einer eigenen
+  Zeile (`<span class="st-line">`), damit auf dem schmalen Bildschirm nichts abgeschnitten wird.
+- **Neue Prüfläufe:** `tools-android/patch-check.js` prüft alle Patch-Suchtexte gegen die Quelle, ohne
+  zu bauen; `tools-android/bruecken-check.js` prüft, ob die Android-Brücke weiterhin an die Interna der
+  Desktop-Seite passt (z. B. `S.generating` → `viewRun()`).
+
+## Geprüft und nicht geprüft
+- **Geprüft:** alle bisherigen Prüfläufe (306 Einzelprüfungen, 0 Fehler), Übersetzungsprüfung
+  (24 Prüfungen, 0 Fehler), Bau der Android-APK mit allen 16 Anpassungen, Endscan der fertigen APK.
+- **Nicht geprüft:** die Strommessung an einem echten Server mit `gpu_power`, ein echter Aufruf gegen
+  `api.anthropic.com` (kein Schlüssel), und die neuen Hinweis- und Lauf-Mechanismen an einem echten
+  Handy. Die in 1.0.68 angekündigten Tests `test-anthropic-llm.js` und `test-anthropic-ui.js` wurden
+  nie geliefert und existieren nicht.

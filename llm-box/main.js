@@ -906,13 +906,13 @@ async function searchText(root, query, rel, ignore, ctl) {
 
 ipcMain.handle('ws:list', async (_e, { root, rel, ignore }) => listDir(root, rel, ignore));
 
-ipcMain.handle('ws:abort', () => {
-  for (const c of wsRuns) c.cancelled = true;
+ipcMain.handle('ws:abort', (_e, owner) => {
+  for (const c of wsRuns) if (!owner || c.owner === owner) c.cancelled = true; // mit Chat-ID: nur dessen Werkzeuge (andere Chats arbeiten weiter)
   return true;
 });
 
-ipcMain.handle('ws:tool', async (_e, { root, name, args, maxKB, ignore }) => {
-  const ctl = { cancelled: false };
+ipcMain.handle('ws:tool', async (_e, { root, name, args, maxKB, ignore, owner }) => {
+  const ctl = { cancelled: false, owner: owner || '' };
   wsRuns.add(ctl);
   try {
     args = args || {};

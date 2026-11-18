@@ -13,13 +13,19 @@ Von [Reuschler-IT](https://github.com/ReuschlerIT) · Windows und Android · Ele
 
 ## Herunterladen
 
-Die fertigen Programme liegen im Ordner `download/`:
+Die fertigen Programme hängen als Dateien am jeweiligen GitHub-Release, nicht mehr im Repository
+(die Windows-Programme sind rund 84 MB und gehören nicht in eine Quellcode-Geschichte):
+
+**Aktuelle Version 1.0.70:** [Releases](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70)
 
 | Datei | Für |
 |---|---|
-| `LLM.Box.Setup.1.0.67.exe` | Windows 10/11 (Installer) |
+| `LLM-Box-1.0.70-android.apk` | Android 8.0 oder neuer |
+| `LLM.Box.Setup.1.0.67.exe` | Windows 10/11 (Installer, letzte Windows-Veröffentlichung) |
 | `LLM.Box.1.0.67.portable.exe` | Windows 10/11 (portable, ohne Installation) |
-| `LLM-Box-1.0.67-android.apk` | Android 8.0 oder neuer |
+
+Ältere Versionen stehen unter [Releases](https://github.com/ReuschlerIT/LLM-Box/releases)
+(1.0.67 mit Windows-Programmdateien, 1.0.65, 1.0.50).
 
 Beide Versionen haben dieselbe Oberfläche und dasselbe Chat-Format, der Austausch zwischen PC und
 Handy funktioniert in beide Richtungen (QR-Code, WLAN oder JSON-Datei – siehe unten).
@@ -115,7 +121,7 @@ Die Oberfläche läuft auch auf Android (ab Version 8.0) – als eigene App mit 
 - Chatliste als Drawer, Knöpfe fingerfreundlich, Auswahlfelder bedarfsgerecht breit
 - Chats, Einstellungen und Verbindungen gleiches Format wie am PC
 - Netzwerkfreigaben (SMB) direkt als Arbeitsordner nutzbar, ohne Kopieren
-- Gebaut wird sie aus diesem Repository (`build-android.ps1`), fertige APK im Ordner `download/`
+- Gebaut wird sie aus diesem Repository (`build-android.ps1`), die fertige APK hängt am GitHub-Release
 
 ### Aussehen
 - Standard ist das helle Design, dazu ein dunkles Design (unten), 8 Farbschemata, jede Farbe und Deckkraft einstellbar
@@ -161,7 +167,7 @@ Der vollständige Verlauf **einzelner Versionen ab 1.0.36** steht in [`llm-box/U
 - Beim Zurückkehren ins Fenster wird sofort abgeglichen; ein doppelter Unterordner beim Einrichten wird automatisch bereinigt (bis 1.0.54)
 
 ### Sprache: Deutsch, English, Français (ab 1.0.66)
-- **Die ganze Oberfläche ist übersetzt** – Beschriftungen, Knöpfe, Hilfetexte, Dialoge, Statuszeile, Tooltips, Fehlermeldungen, Server-Fenster und Platzhalter (Wörterbuch mit 1.036 Einträgen und 150 Mustern). Die KI antwortet in derselben Sprache; Chat-Inhalt wird nie übersetzt
+- **Die ganze Oberfläche ist übersetzt** – Beschriftungen, Knöpfe, Hilfetexte, Dialoge, Statuszeile, Tooltips, Fehlermeldungen, Server-Fenster und Platzhalter (Wörterbuch mit 1.063 Einträgen und 156 Mustern). Die KI antwortet in derselben Sprache; Chat-Inhalt wird nie übersetzt
 - **Sprachabfrage beim allerersten Start** – dreisprachiger Dialog, der die Systemsprache vorschlägt und dessen Wahl sofort für Oberfläche, Antwortsprache und Standard-Prompt gilt (ab 1.0.67)
 - **Später umschaltbar** unter *Einstellungen → Darstellung → Sprache der App* (ab 1.0.67)
 
@@ -169,6 +175,27 @@ Der vollständige Verlauf **einzelner Versionen ab 1.0.36** steht in [`llm-box/U
 - **Neues Profil „Kleines / stark quantisiertes Modell (IQ3/Q3)"** – kurzer System-Prompt und kurze Werkzeugbeschreibungen, rund 2.500 statt 4.000 Tokens je Anfrage; Standard für neue Installationen
 - **Neue Einstellung „Arbeitskontext-Obergrenze (Tokens)"** und ein Knopf „Standard-Prompt wiederherstellen"
 - **Weniger vorzeitige Abbrüche im Werkzeugmodus** – der wirksame Arbeitskontext statt des großen Server-Fensters entscheidet über Komprimierung und Übergabe (ab 1.0.66)
+
+### Claude-Anbindung (ab 1.0.68)
+- **Verbindungstyp „Anthropic (Claude)"** unter *Einstellungen → Verbindungen* mit API-Schlüssel,
+  Basis-Adresse `https://api.anthropic.com/v1`, Modellliste und Eingabe-Limit vom Anbieter
+- **Denken wählbar:** „Adaptiv + effort" (Standard) oder festes Token-Budget für ältere Modelle
+- **Prompt-Caching** auf System-Prompt, Werkzeugen und letztem Verlauf, abschaltbar
+- Lückenhafte Werkzeug-Verläufe werden vor dem Senden repariert; eigene Diagnose mit Testanfrage
+  von höchstens 16 Token und deutlichen Meldungen für 401, 429, 529 und fehlendes Guthaben
+
+### Stromverbrauch (ab 1.0.70)
+- **Neue Einstellung „Strompreis (€ je kWh)"** unter *Einstellungen → Kosten*
+- **GPU-Leistung des überwachten Servers wird gemessen** und je Anfrage aufsummiert; die Statuszeile
+  zeigt „Strom ≈ … €" neben Tokens, Dauer und Kosten, die Statistik die Kosten dieser Antwort
+- Ohne erreichbaren Monitor oder ohne `gpu_power` des Server-Monitors bleibt die Angabe „–"
+
+### Hinweise an die laufende KI (ab 1.0.70)
+- **Eingabe während einer Antwort** wird als Hinweis an den laufenden Auftrag gestellt und nach dem
+  aktuellen Schritt zugestellt – der Knopf **„Jetzt"** unterbricht die Antwort und stellt sofort zu
+- Nicht zugestellte Hinweise kommen zurück ins Eingabefeld, Kennzeichnung „Hinweis während der Arbeit"
+- **Mehrere Aufträge pro Chat:** jeder Auftrag hat eigene Fortschritts-, Live- und Werkzeugkarten;
+  Unteragenten gehören zum Chat, Werkzeugkarten zum Auftrag
 
 ### Werkzeuge der KI
 - **Laufende Workspace-Suchen wirklich abbrechen** – inklusive Meldung, wie viele Dateien geprüft wurden (ab 1.0.50)
@@ -256,8 +283,10 @@ llm-box/                 Windows-App (Electron)
 android/                 Android-App (Java, WebView) – gebaut mit build-android.ps1
 tools-android/           Portierungshelfer und Prüfläufe
 webdeps/                 Web-Bausteine für die Android-Oberfläche
-download/                fertige Programmdateien (Setup, portable EXE, APK)
 ```
+
+Die fertigen Programmdateien (Setup, portable EXE, APK) liegen nicht im Repository, sondern als
+Dateien am GitHub-Release der jeweiligen Version.
 
 ## Lizenz
 

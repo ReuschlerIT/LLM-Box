@@ -7,28 +7,16 @@ const S = {
   models: [],
   modelsErr: null,
   attachments: [],
-  generating: false,
-  run: null,
-  stopRequested: false,
-  hardStop: null, // Promise, das beim Stopp-Knopf sofort erfüllt wird: damit hängt kein Schritt (Werkzeug, Stream) den Abbruch auf
-  stopResolve: null,
-  paused: false, // Pause gedrückt: die KI hält an der nächsten sicheren Stelle an
-  pauseAborted: false, // laufende Antwort wurde wegen Pause abgebrochen (wird nach Fortsetzen neu angefragt)
-  pauseWaiters: [],
-  streaming: false,
   panelOpen: false,
   search: '',
   stick: true,
   themeKey: '',
-  pendingApproval: null,
-  runChat: null, // Chat, in dem gerade die KI arbeitet (kann im Hintergrund weiterlaufen, während ein anderer Chat angezeigt wird)
-  runNode: null, // Knoten der gerade streamenden Antwort
-  runAm: null, // zugehörige Nachricht
   sync: { dir: '', deviceId: 'lokal', deviceName: 'Dieser Rechner' },
   unread: new Set(), // Chats, in denen im Hintergrund eine Antwort fertig wurde
-  queuedMessage: null, // { text, attachments } - während die KI noch arbeitet eingegeben, wird nach Abschluss automatisch gesendet
 };
 const MAX_STEPS = 8;
+// „S.generating“ = irgendein Chat arbeitet gerade (für den Chat der Ansicht: viewRun())
+Object.defineProperty(S, 'generating', { get: () => RUNS.size > 0, enumerable: false, configurable: true });
 
 /* Kontext-Grenze: Nach „Kontext leeren“ sieht die KI nur noch Nachrichten ab chat.ctxStart (die älteren bleiben sichtbar, werden aber nicht mehr gesendet) */
 const ctxStart = (chat) => Math.max(0, Math.min(+(chat && chat.ctxStart) || 0, chat ? chat.messages.length : 0));
@@ -38,17 +26,33 @@ const _soonSet = new Set();
 const _soonRun = debounce(() => { const l = [..._soonSet]; _soonSet.clear(); l.forEach((c) => c && saveChatNow(c)); }, 500);
 const saveChatSoon = (chat) => { _soonSet.add(chat || S.chat); _soonRun(); };
 
-/* Hintergrund-Lauf: Zeigt der Nutzer gerade einen anderen Chat, landen Live-Elemente (Antwort, Programm-Karten, Rückfragen)
-   in einem unsichtbaren Container und werden beim Zurückwechseln wieder angezeigt. */
-const GHOST = document.createElement('div');
-const runView = () => !S.generating || !S.runChat || S.chat === S.runChat;
-const liveHost = () => (runView() ? document.querySelector('#messages-inner') : GHOST);
-function followBottom() { if (S.stick && runView()) scrollBottom(); }
+/* ───── Läufe: pro Chat ein eigener Lauf-Zustand („Run“) ─────
+   Mehrere Chats können gleichzeitig arbeiten. Jeder Lauf hat seinen eigenen Zustand: Stopp, Pause, laufende Anfrage,
+   offene Freigaben, Live-Karten und den Posteingang für Hinweise an die laufende KI (inbox). Zeigt der Nutzer gerade
+   einen anderen Chat, landen die Live-Elemente eines Laufs in seinem unsichtbaren Container (ghost) und werden beim
+   Zurückwechseln wieder angezeigt. */
+const RUNS = new Set();
+const DELETED = new WeakSet(); // gelöschte Chats: laufende Läufe dürfen sie nicht wieder speichern
+const UNSENT = new WeakMap(); // Hinweise, die beim Ende eines Laufs nicht mehr zugestellt wurden: kommen ins Eingabefeld zurück
+function newRun(chat) {
+  return {
+    chat, run: null, live: null, stopRequested: false, paused: false, pauseWaiters: [], pauseAborted: false, streaming: false,
+    execId: null, pendingApproval: null, runNode: null, runAm: null, hardStop: null, stopResolve: null,
+    inbox: [], steerAbort: false, powerOk: false, livePoll: null, ghost: document.createElement('div'),
+  };
+}
+const runOf = (chat) => { if (chat) for (const r of RUNS) if (r.chat === chat) return r; return null; };
+const runById = (id) => { for (const r of RUNS) if (r.chat.id === id) return r; return null; };
+const viewRun = () => runOf(S.chat); // Lauf des gerade angezeigten Chats (oder null)
+const isViewed = (R) => !!R && S.chat === R.chat;
+const liveHost = (R) => (!R || isViewed(R) ? document.querySelector('#messages-inner') : R.ghost);
+function followBottom(R) { if (S.stick && (!R || isViewed(R))) scrollBottom(); }
 function parkLive() {
-  if (!(S.generating && S.runChat && S.chat === S.runChat)) return;
-  if (S.runNode) GHOST.append(S.runNode);
-  if (typeof TL !== 'undefined') for (const c of TL.cards.values()) GHOST.append(c.node);
-  if (S.pendingApproval && S.pendingApproval.card) GHOST.append(S.pendingApproval.card);
+  const R = viewRun();
+  if (!R) return;
+  if (R.runNode) R.ghost.append(R.runNode);
+  if (typeof TL !== 'undefined') for (const c of TL.cards.values()) if (c.run === R) R.ghost.append(c.node);
+  if (R.pendingApproval && R.pendingApproval.card) R.ghost.append(R.pendingApproval.card);
 }
 
 // Ohne angelegte Verbindung liefert activeConn() einen Platzhalter (none: true), damit nirgends ein Fehler entsteht
@@ -337,7 +341,7 @@ const settingsChanged = debounce(() => {
   renderFilePanel();
   renderStatus();
   updateCtxMeter();
-  if (S.chat && !S.generating) renderMessages();
+  if (S.chat && !viewRun()) renderMessages();
 }, 120);
 
 /* ═════════════ Verbindung & Modelle ═════════════ */
@@ -388,7 +392,7 @@ async function refreshModelInfo() {
 
 // Fragt bei Strata-artigen Servern, ob das Modell geladen ist (/v1/status, /health). null = unbekannt.
 async function probeServerState(conn) {
-  if (!conn || conn.type === 'ollama') return null;
+  if (!conn || conn.type === 'ollama' || conn.type === 'anthropic') return null;
   const root = String(conn.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
   const headers = conn.apiKey ? { Authorization: 'Bearer ' + conn.apiKey } : {};
   for (const path of ['/v1/status', '/health']) {
@@ -469,8 +473,9 @@ function renderChatList() {
       last = g;
     }
     const title = el('span', { class: 't' }, c.source === 'strata' ? el('span', { class: 'src-badge', text: 'Strata', title: 'Aus der Strata-Weboberfläche importiert' }) : null, c.title || 'Chat');
-    const isRun = !!(S.generating && S.runChat && S.runChat.id === c.id);
-    const dot = isRun ? el('span', { class: 'chat-dot ' + (S.pendingApproval ? 'attn' : 'run'), title: S.pendingApproval ? 'Wartet auf deine Antwort oder Freigabe' : 'Die KI arbeitet hier gerade' })
+    const rr = runById(c.id);
+    const isRun = !!rr;
+    const dot = isRun ? el('span', { class: 'chat-dot ' + (rr.pendingApproval ? 'attn' : 'run'), title: rr.pendingApproval ? 'Wartet auf deine Antwort oder Freigabe' : 'Die KI arbeitet hier gerade' })
       : S.unread.has(c.id) ? el('span', { class: 'chat-dot unread', title: 'Neue Antwort' }) : null;
     const item = el('div', { class: 'chat-item' + (S.chat && S.chat.id === c.id ? ' active' : ''), title: `${c.title}\n${fmt.tok(c.tokens || 0)} Tokens`, onclick: () => openChat(c.id) },
       dot,
@@ -499,33 +504,34 @@ function newChat() {
 }
 
 async function openChat(id) {
-  if (S.generating && S.chat && S.chat.id === id) return;
+  if (S.chat && S.chat.id === id && runOf(S.chat)) return;
   // Läuft in diesem Chat gerade die KI, gilt das Objekt im Speicher (die Datei auf der Platte ist veraltet)
-  const running = !!(S.generating && S.runChat && S.runChat.id === id);
-  const c = running ? S.runChat : await api.chats.load(id);
+  const R = runById(id);
+  const c = R ? R.chat : await api.chats.load(id);
   if (!c) return;
   parkLive();
   S.chat = c;
   S.attachments = [];
   S.stick = true;
   S.unread.delete(id);
-  if (!S.generating && c.connectionId && c.connectionId !== S.settings.activeConnection && S.settings.connections.some((x) => x.id === c.connectionId)) {
-    S.settings.activeConnection = c.connectionId;
+  if (!R && c.connectionId && c.connectionId !== S.settings.activeConnection && S.settings.connections.some((x) => x.id === c.connectionId)) {
+    S.settings.activeConnection = c.connectionId; // laufende Chats behalten ihre eigene Verbindung
     saveSettings();
     renderConnSelect();
     refreshModels();
   }
   renderAll();
-  if (S.generating && !running && S.runChat) toast(`Die Antwort in „${S.runChat.title}“ läuft im Hintergrund weiter.`, 3500);
-  submitQueuedMessageIfAny();
+  restoreUnsent(c);
+  const bg = [...RUNS].filter((r) => r !== R);
+  if (bg.length) toast(bg.length === 1 ? `Die Antwort in „${bg[0].chat.title}“ läuft im Hintergrund weiter.` : `${bg.length} Antworten laufen im Hintergrund weiter.`, 3500);
 }
 
 async function saveChatNow(chat) {
   const c = chat || S.chat;
-  if (!c || !c.messages.length) return;
+  if (!c || !c.messages.length || DELETED.has(c)) return; // gelöschte Chats nicht wieder anlegen
   c.updated = Date.now();
   // „arbeitet gerade“: Andere Rechner sehen, dass hier eine Antwort läuft, und schreiben nicht dazwischen
-  const busy = S.generating && S.runChat === c ? { dev: S.sync.deviceId, name: S.sync.deviceName, ts: Date.now() } : null;
+  const busy = runOf(c) ? { dev: S.sync.deviceId, name: S.sync.deviceName, ts: Date.now() } : null;
   const meta = { id: c.id, title: c.title, created: c.created, updated: c.updated, model: c.model, tokens: chatTotals(c).total, source: c.source, importKey: c.importKey, busy };
   let r = null;
   try { r = await api.chats.save(c, meta); } catch (e) { toast('Chat konnte nicht gespeichert werden: ' + e.message, 6000); return; }
@@ -568,7 +574,7 @@ async function onRemoteChats(m) {
   if (cur) {
     if ((m.removed || []).includes(cur.id)) toast('Dieser Chat wurde auf einem anderen Rechner gelöscht. Er wird beim nächsten Speichern neu angelegt.', 6000);
     else if ((m.metas || []).some((x) => x.id === cur.id)) {
-      if (S.generating && S.runChat === cur) {
+      if (runOf(cur)) {
         if (remoteWarned !== cur.id) { remoteWarned = cur.id; toast('Dieser Chat wurde auf einem anderen Rechner geändert. Beim Speichern entsteht eine Konfliktkopie.', 8000); }
       } else {
         const c = await api.chats.load(cur.id);
@@ -609,16 +615,24 @@ async function renameChat(id) {
 }
 
 async function deleteChat(id) {
-  if (S.generating && S.chat && S.chat.id === id) return toast('Bitte erst die Antwort stoppen.');
   const meta = S.chatList.find((c) => c.id === id);
-  if (!(await confirmModal('Chat löschen', `„${meta ? meta.title : 'Chat'}“ wird unwiderruflich gelöscht.`, { okLabel: 'Löschen', danger: true }))) return;
+  const working = !!runById(id);
+  if (!(await confirmModal('Chat löschen', `„${meta ? meta.title : 'Chat'}“ wird unwiderruflich gelöscht.` + (working ? ' Die KI arbeitet hier gerade, ihre Antwort wird abgebrochen.' : ''), { okLabel: 'Löschen', danger: true }))) return;
+  // Läuft hier (inzwischen) die KI: Chat vormerken, damit der Lauf ihn nicht wieder speichert, dann den Lauf beenden
+  const R = runById(id);
+  if (R) { DELETED.add(R.chat); stopGeneration(R); }
   await api.chats.delete(id);
   S.chatList = S.chatList.filter((c) => c.id !== id);
+  S.unread.delete(id);
   if (S.chat && S.chat.id === id) {
     S.chat = null;
     newChat();
   }
   renderChatList();
+}
+// „Alle Chats löschen“: alle laufenden Läufe beenden, ohne dass sie ihre Chats wieder speichern
+function discardAllRuns() {
+  for (const R of [...RUNS]) { DELETED.add(R.chat); stopGeneration(R); }
 }
 
 /* ───── Kosten ───── */
@@ -641,6 +655,16 @@ function chatCost(chat) {
   return { amount, est, pr: pricesFor(conn) };
 }
 const fmtNum = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
+/* Stromkosten: Energie aus der GPU-Leistung des Monitors (siehe server.js, enAdd), Preis in € je kWh aus Einstellungen → Kosten */
+const powerPrice = () => svPowerPrice();
+function chatEnergy(chat) { // Wattstunden aller Antworten dieses Chats, die gemessen wurden
+  let wh = 0, any = false;
+  for (const m of chat.messages) if (m.role === 'assistant' && m.stats && fin(m.stats.energyWh) > 0) { wh += +m.stats.energyWh; any = true; }
+  return { wh, any };
+}
+const energyCost = (wh) => (wh / 1000) * powerPrice();
+const fmtEnergy = (wh) => (wh >= 1000 ? (wh / 1000).toFixed(2) + ' kWh' : wh >= 10 ? wh.toFixed(1) + ' Wh' : wh.toFixed(2) + ' Wh').replace('.', ',');
+const energyTip = (wh) => `${fmtEnergy(wh)} × ${fmtNum(powerPrice())} € je kWh\nBerechnet aus der GPU-Leistung (Monitor), über die Zeit der Anfragen aufsummiert. Nur die GPU des überwachten Servers, ohne CPU und den übrigen Rechner.`;
 const moneyTip = (pr) => `Eingabe ${fmtNum(pr.in)} € und Ausgabe ${fmtNum(pr.out)} € je 1 Mio. Token`;
 
 const fin = (v) => (Number.isFinite(+v) && +v > 0 ? +v : 0);
@@ -696,7 +720,7 @@ function renderStatus() {
   const trBusy = typeof TR !== 'undefined' && TR.busy.size ? ' · Gedankengang wird im Hintergrund übersetzt (belegt den Server)' : '';
   $('#st-left').textContent = (S.modelsErr ? S.modelsErr.split('\n')[0] : currentModel() ? '' : 'Kein Modell gewählt') + trBusy;
   const t = S.chat ? chatTotals(S.chat) : { total: 0, prompt: 0, comp: 0, avgTps: null, tokSum: 0, secSum: 0, duration: 0, runs: 0 };
-  const lv = S.live; // laufende Anfrage: Werte in Echtzeit dazurechnen
+  const lv = (viewRun() || {}).live || null; // laufende Anfrage: Werte in Echtzeit dazurechnen
   let tokSum = t.tokSum;
   let secSum = t.secSum;
   let dur = t.duration;
@@ -728,6 +752,13 @@ function renderStatus() {
   tip += `\nØ Tokens/s: Antwort-Tokens geteilt durch Generierungszeit über alle Anfragen dieses Chats${lv ? ', die laufende Anfrage ist live eingerechnet (1 Chunk ≈ 1 Token)' : ''}`;
   tip += `\nDauer: Summe der Verarbeitungszeit aller ${t.runs}${lv ? ' + 1 laufenden' : ''} Anfragen dieses Chats (inklusive Werkzeug-Schritte, ohne Wartezeit auf Freigaben und ohne deine Schreibzeit): ${fmt.dur(dur)}`;
   if (S.settings.pricing.enabled && S.chat) {
+    if (powerPrice() > 0) {
+      const e = chatEnergy(S.chat);
+      const lw = lv && lv.en ? lv.en.ws / 3600 : 0; // laufende Anfrage live einrechnen
+      const has = e.any || (lv && lv.en && lv.en.n > 0);
+      $('#st-right').innerHTML += `<span class="st-line">Strom ${lv ? '~' : '≈'} <b>${has ? fmt.money(energyCost(e.wh + lw), 'EUR') : '–'}</b></span>`;
+      tip += has ? `\nStromkosten: ${energyTip(e.wh + lw)}` : '\nStromkosten: noch keine GPU-Leistungswerte gemessen (der Server-Monitor muss erreichbar sein und gpu_power liefern; gemessen wird nur auf dem Server, den der Monitor überwacht).';
+    }
     const c = chatCost(S.chat);
     let amount = c.amount;
     if (lv) amount += (lv.prompt * c.pr.in + lv.comp * c.pr.out) / 1e6; // laufende Anfrage live einrechnen
@@ -741,7 +772,7 @@ function updateCtxMeter() {
   const box = $('#ctx-meter');
   const max = +S.settings.params.numCtx || 0;
   const t = S.chat ? chatTotals(S.chat) : { last: null };
-  const lv = runView() ? S.live : null;
+  const lv = (viewRun() || {}).live || null;
   const used = lv ? lv.prompt + lv.comp : t.last ? (t.last.promptTokens || 0) + (t.last.completionTokens || 0) : 0;
   box.classList.toggle('live', !!lv);
   const pct = max ? Math.min(100, (used / max) * 100) : 0;
@@ -767,7 +798,8 @@ function renderMessages() {
   }
   let lastAssistant = -1;
   msgs.forEach((m, i) => { if (m.role === 'assistant') lastAssistant = i; });
-  const atRun = !!(S.generating && S.runChat && S.runChat === S.chat);
+  const vr = viewRun();
+  const atRun = !!vr;
   const cs = ctxStart(S.chat);
 
   /* Fenster berechnen. Chat-Wechsel oder neu eingehende/entfernte Nachrichten setzen das Fenster
@@ -792,7 +824,7 @@ function renderMessages() {
   for (let i = von; i < msgs.length; i++) {
     const m = msgs[i];
     if (cs && i === cs) box.append(el('div', { class: 'ctx-divider' }, el('span', { html: icon('eraser', 14) + '<span>Kontext geleert – ab hier sieht die KI nur die Übergabe und was danach kommt</span>' })));
-    if (atRun && S.runNode && S.runAm === m) box.append(S.runNode); // gerade streamende Antwort: derselbe Knoten läuft weiter
+    if (atRun && vr.runNode && vr.runAm === m) box.append(vr.runNode); // gerade streamende Antwort: derselbe Knoten läuft weiter
     else if (i < vollAb && !aufgefaltet.has(i)) {
       const n = compactEl(m, i);                       // weiter zurueck: nur eine kompakte Zeile
       if (cs && i < cs) n.classList.add('ctx-old');
@@ -804,10 +836,10 @@ function renderMessages() {
     }
   }
   if (atRun) {
-    if (typeof TL !== 'undefined') for (const c of TL.cards.values()) box.append(c.node); // noch laufende Programme
-    if (S.pendingApproval && S.pendingApproval.card) box.append(S.pendingApproval.card); // offene Rückfrage / Freigabe
+    if (typeof TL !== 'undefined') for (const c of TL.cards.values()) if (c.run === vr) box.append(c.node); // noch laufende Programme
+    if (vr.pendingApproval && vr.pendingApproval.card) box.append(vr.pendingApproval.card); // offene Rückfrage / Freigabe
   }
-  if (!S.generating) {
+  if (!atRun) {
     const lastMsg = msgs[msgs.length - 1];
     if (S.chat.pendingContinue) box.append(continueNotice());
     else if (lastMsg && lastMsg.role === 'tool' && lastMsg.name !== 'propose_new_session') box.append(continueNotice('Die KI hat nach dem Werkzeug-Ergebnis nicht weitergearbeitet.'));
@@ -929,6 +961,7 @@ function messageEl(m, i, isLast) {
 function userEl(m, i) {
   const node = el('div', { class: 'msg user' });
   if (m.files && m.files.length) node.append(el('div', { class: 'chips' }, m.files.map((f) => fileChip(f))));
+  if (m.steer) node.append(el('div', { class: 'steer-tag', text: 'Hinweis während der Arbeit' }));
   if (m.content && m.handoff) node.append(el('details', { class: 'bubble handoff-msg' }, el('summary', { text: `${m.cleared ? 'Übergabe nach „Kontext leeren“' : 'Übergabe aus der vorherigen Sitzung'} (${fmt.num(m.content.length)} Zeichen)` }), el('pre', { text: m.content })));
   else if (m.content) node.append(el('div', { class: 'bubble', text: m.content }));
   node.append(el('div', { class: 'msg-actions' }, actionBtn('copy', 'Kopieren', () => copyText(m.content || '')), actionBtn('edit', 'Bearbeiten und neu senden', () => editMessage(i))));
@@ -1065,6 +1098,7 @@ function statsHtml(m) {
   ];
   if (S.settings.pricing.enabled && S.chat) {
     const conn = connOf(S.chat);
+    if (powerPrice() > 0 && fin(s.energyWh) > 0) out.push(stat('', 'Stromkosten dieser Antwort\n' + energyTip(s.energyWh) + (s.avgPowerW ? `\nDurchschnitt ${Math.round(s.avgPowerW)} W während der Anfrage` : ''), fmt.money(energyCost(s.energyWh), 'EUR'), 'Strom'));
     out.push(stat('', 'Kosten dieser Antwort (Vergleichswert zu Listenpreisen)\n' + moneyTip(pricesFor(conn)), t + fmt.money(costOfStats(s, conn), 'EUR'), 'Kosten'));
   }
   if (s.ttft !== null && s.ttft !== undefined) out.push(stat('', 'Zeit bis zum ersten Token' + (s.loadSec > 0.05 ? `\nModell laden: ${fmt.sec(s.loadSec)}` : ''), fmt.sec(s.ttft), 'bis erstes Token'));
@@ -1154,13 +1188,13 @@ function scrollBottom() {
 function updateSendBtn() {
   const b = $('#btn-send');
   const hasInput = !!($('#input').value.trim() || S.attachments.length);
-  const other = S.generating && !runView(); // anderer Chat als der laufende: der Knopf darf dessen Lauf nicht stoppen
-  const willStop = S.generating && !hasInput && !other;
+  const R = viewRun(); // arbeitet die KI im angezeigten Chat? (andere Chats laufen unabhängig weiter)
+  const willStop = !!R && !hasInput;
   b.classList.toggle('stop', willStop);
   b.innerHTML = icon(willStop ? 'stop' : 'send', 18, 2.2);
-  b.title = S.generating ? (willStop ? 'Stoppen' : other ? 'Vormerken – wird gesendet, sobald die Antwort im anderen Chat fertig ist' : 'Vormerken – wird gesendet, sobald die KI fertig ist') : 'Senden';
+  b.title = R ? (willStop ? 'Stoppen' : 'Nachricht an die laufende KI senden – sie wird nach dem aktuellen Schritt zugestellt') : 'Senden';
   b.disabled = false;
-  document.body.classList.toggle('gen', !!(S.generating && S.settings.appearance.calmDuringGen !== false)); // Sparmodus: keine Animationen/Unschärfe beim Antworten
+  document.body.classList.toggle('gen', RUNS.size > 0 && S.settings.appearance.calmDuringGen !== false); // Sparmodus: keine Animationen/Unschärfe beim Antworten
   updatePauseUI();
   if (typeof hoRefresh === 'function') hoRefresh();
 }
@@ -1171,48 +1205,53 @@ function updateSendBtn() {
    - Während ein Programm oder Unteragent läuft: Es wird nicht zerstört. Die Pause greift, sobald dieser Schritt fertig ist.
    - Offene Rückfragen und Freigaben bleiben offen.
    - „Stopp“ beendet den Auftrag auch aus der Pause heraus. */
-function pauseGate() {
-  if (!S.paused || S.stopRequested) return Promise.resolve();
-  return new Promise((resolve) => { S.pauseWaiters.push(resolve); updatePauseUI(); });
+function pauseGate(R) {
+  if (!R.paused || R.stopRequested) return Promise.resolve();
+  return new Promise((resolve) => { R.pauseWaiters.push(resolve); updatePauseUI(); });
 }
-function releasePause() {
-  S.paused = false;
-  const w = S.pauseWaiters.splice(0);
+function releasePause(R) {
+  R = R || viewRun();
+  if (!R) return;
+  R.paused = false;
+  const w = R.pauseWaiters.splice(0);
   w.forEach((f) => f());
   updatePauseUI();
 }
 function togglePause() {
-  if (!S.generating || !runView()) return;
-  if (S.paused) return releasePause();
-  S.paused = true;
-  if (S.streaming && S.run) { S.pauseAborted = true; S.run.abort(); }
+  const R = viewRun();
+  if (!R) return;
+  if (R.paused) return releasePause(R);
+  R.paused = true;
+  if (R.streaming && R.run) { R.pauseAborted = true; R.run.abort(); }
   updatePauseUI();
 }
 function updatePauseUI() {
   const b = $('#btn-pause');
   const strip = $('#pause-strip');
   if (!b || !strip) return;
-  const show = !!(S.generating && runView());
+  const R = viewRun();
+  const show = !!R;
   b.classList.toggle('hidden', !show);
-  b.classList.toggle('paused', show && S.paused);
-  b.innerHTML = icon(S.paused ? 'play' : 'pause', 16, 2);
-  b.title = S.paused ? 'Fortsetzen: die KI macht an derselben Stelle weiter' : 'Pausieren: die KI hält an und wartet';
+  b.classList.toggle('paused', show && R.paused);
+  b.innerHTML = icon(show && R.paused ? 'play' : 'pause', 16, 2);
+  b.title = show && R.paused ? 'Fortsetzen: die KI macht an derselben Stelle weiter' : 'Pausieren: die KI hält an und wartet';
   strip.innerHTML = '';
-  if (!(show && S.paused)) { strip.classList.add('hidden'); return; }
-  const waiting = S.pauseWaiters.length > 0;
+  if (!(show && R.paused)) { strip.classList.add('hidden'); return; }
+  const waiting = R.pauseWaiters.length > 0;
   strip.append(
     el('span', { class: 'queued-icon', html: icon('pause', 13, 2) }),
     el('span', { class: 'queued-hint', text: waiting ? 'Pausiert. Mit „Fortsetzen“ macht die KI an derselben Stelle weiter.' : 'Pause wird wirksam, sobald der laufende Schritt (Programm oder Unteragent) fertig ist …' }),
-    el('button', { class: 'btn primary sm', text: 'Fortsetzen', onclick: releasePause })
+    el('button', { class: 'btn primary sm', text: 'Fortsetzen', onclick: () => releasePause(R) })
   );
   strip.classList.remove('hidden');
 }
 
 async function send() {
-  if (S.generating) {
+  const R = viewRun();
+  if (R) { // die KI arbeitet in diesem Chat: Text = Hinweis an die laufende KI, leeres Feld = Stopp
     const text = $('#input').value.trim();
-    if (!text && !S.attachments.length) return runView() ? stopGeneration() : undefined; // nichts vorzumerken: der Knopf wirkt als Stopp (nur im laufenden Chat)
-    return queueMessage(text, S.attachments);
+    if (!text && !S.attachments.length) return stopGeneration(R);
+    return sendToRun(R, text, S.attachments);
   }
   const ta = $('#input');
   const text = ta.value.trim();
@@ -1238,20 +1277,22 @@ async function send() {
   S.stick = true;
   renderMessages();
   await Promise.race([refreshModelInfo(), new Promise((r) => setTimeout(r, 1500))]);
-  await generate();
+  await generate(chat); // ausdrücklich dieser Chat: in der Wartezeit kann der Nutzer woanders hingewechselt haben
 }
 
 /* Stopp = harter Abbruch: Alles, worauf die Schleife gerade wartet, wird sofort beendet oder übergangen
    (Modell-Stream, Programme, Dateiwerkzeuge, Unteragenten, offene Rückfragen/Freigaben, Pause). */
-function stopGeneration() {
-  S.stopRequested = true;
-  if (S.paused) releasePause(); // aus der Pause heraus beenden
-  if (S.pendingApproval) S.pendingApproval.resolve('deny');
-  try { if (S.run) S.run.abort(); } catch {}
-  if (S.execId) api.sys.abort(S.execId);
-  try { api.ws.abortAll(); } catch {}
-  abortSubagents();
-  if (S.stopResolve) S.stopResolve(); // die Schleife wartet nicht mehr auf ein hängendes Werkzeug
+function stopGeneration(R) {
+  R = R || viewRun();
+  if (!R) return;
+  R.stopRequested = true;
+  if (R.paused) releasePause(R); // aus der Pause heraus beenden
+  if (R.pendingApproval) R.pendingApproval.resolve('deny');
+  try { if (R.run) R.run.abort(); } catch {}
+  if (R.execId) api.sys.abort(R.execId);
+  try { api.ws.abortAll(R.chat.id); } catch {} // nur die Dateiwerkzeuge dieses Chats
+  abortSubagents(R.chat);
+  if (R.stopResolve) R.stopResolve(); // die Schleife wartet nicht mehr auf ein hängendes Werkzeug
 }
 
 /* Sprachschicht anwenden: Oberflaeche, Spracheingabe des Eingabefelds und
@@ -1452,10 +1493,11 @@ function permKeyLabel(k) {
   return `Werkzeug „${TOOL_LABEL[k] || k}“`;
 }
 // Wurde live auf „ohne Nachfrage“ umgestellt, während eine Karte offen ist: Karte sofort genehmigen.
-function resolvePendingIfAuto() {
-  const pa = S.pendingApproval;
+function resolvePendingIfAuto(chat) {
+  const rc = chat || S.chat;
+  const R = runOf(rc);
+  const pa = R && R.pendingApproval;
   if (!pa || pa.kind === 'ask') return;
-  const rc = S.runChat || S.chat;
   const p = permOf(rc);
   if (pa.kind === 'install' ? p.installs : pa.kind === 'run' ? permIsAuto(rc) : approvalMode(rc) === 'none') pa.resolve('allow');
 }
@@ -1484,14 +1526,14 @@ function continueNotice(text) {
   return el('div', { class: 'notice' },
     el('span', { text: text || `Die KI hat das Limit von ${+ws.maxSteps || 25} Werkzeug-Schritten erreicht und wurde angehalten. Sie ist noch nicht fertig.` }),
     el('span', { class: 'row-gap' },
-      el('button', { class: 'btn primary sm', text: 'Weitermachen', onclick: () => { if (!S.generating) { S.chat.pendingContinue = false; renderMessages(); generate(); } } }),
+      el('button', { class: 'btn primary sm', text: 'Weitermachen', onclick: () => { if (!viewRun()) { S.chat.pendingContinue = false; renderMessages(); generate(); } } }),
       text ? null : el('button', { class: 'btn sm', text: 'Schließen', onclick: () => { S.chat.pendingContinue = false; renderMessages(); saveChatSoon(); } })
     )
   );
 }
 
 function retryLast() {
-  if (S.generating || !S.chat) return;
+  if (viewRun() || !S.chat) return;
   const msgs = S.chat.messages;
   const last = msgs[msgs.length - 1];
   if (last && last.role === 'assistant' && last.error) msgs.pop();
@@ -1515,18 +1557,18 @@ function normalizeQuestions(args) {
   }).filter((q) => q.question);
 }
 
-async function runAskUser(tc, base) {
+async function runAskUser(tc, base, R) {
   const qs = normalizeQuestions(tc.args);
   if (!qs.length) return { ...base, ok: false, content: 'ask_user braucht "questions": eine Liste mit Objekten {question, options}. Stelle die Frage im Chat oder rufe das Werkzeug korrekt auf.' };
   tlState(tc.id, 'answer');
-  const ans = await requestAnswers(tc, qs);
+  const ans = await requestAnswers(tc, qs, R);
   tlState(tc.id, 'running');
   if (!ans) return { ...base, ok: true, content: 'Der Nutzer hat die Rückfragen übersprungen. Triff vernünftige Annahmen, nenne sie kurz und arbeite weiter.' };
   const lines = qs.map((q, i) => `${i + 1}. ${q.question}\n   Antwort: ${ans[i] && ans[i].length ? ans[i].join('; ') : '(keine Angabe)'}`);
   return { ...base, ok: true, content: 'Antworten des Nutzers:\n' + lines.join('\n') };
 }
 
-function requestAnswers(tc, qs) {
+function requestAnswers(tc, qs, R) {
   return new Promise((resolve) => {
     const state = qs.map(() => ({ sel: [], own: '' }));
     const answerOf = (i) => {
@@ -1534,7 +1576,7 @@ function requestAnswers(tc, qs) {
       return qs[i].multiple ? [...s.sel, ...(s.own ? [s.own] : [])] : s.own ? [s.own] : s.sel.slice(0, 1);
     };
     const complete = () => qs.every((_, i) => answerOf(i).length);
-    const done = (v) => { S.pendingApproval = null; card.remove(); resolve(v); renderChatList(); };
+    const done = (v) => { R.pendingApproval = null; card.remove(); resolve(v); renderChatList(); };
     const send = el('button', { class: 'btn primary', text: 'Antworten', disabled: true, onclick: () => done(qs.map((_, i) => answerOf(i))) });
     const refresh = () => { send.disabled = !complete(); };
     const blocks = qs.map((q, i) => {
@@ -1570,29 +1612,30 @@ function requestAnswers(tc, qs) {
       el('div', { class: 'ap-actions' }, send, el('button', { class: 'btn', text: 'Überspringen', title: 'Die KI trifft dann eigene Annahmen', onclick: () => done(null) }))
     );
     // „Stopp“ und Freigabe-Umstellungen: Stopp überspringt, Umstellungen lassen die Karte stehen (kind „ask“)
-    S.pendingApproval = { resolve: (d) => done(Array.isArray(d) ? d : null), kind: 'ask', card };
-    showLiveCard(card);
+    R.pendingApproval = { resolve: (d) => done(Array.isArray(d) ? d : null), kind: 'ask', card };
+    showLiveCard(card, R);
     if (!document.hasFocus()) { try { new Notification('LLM Box – Rückfrage', { body: qs[0].question }); } catch {} }
   });
 }
 
 /* Karte (Freigabe/Rückfrage) anzeigen: im laufenden Chat sichtbar, sonst vorgemerkt und in der Seitenleiste markiert */
-function showLiveCard(card) {
-  liveHost().append(card);
-  if (!runView()) {
+function showLiveCard(card, R) {
+  liveHost(R).append(card);
+  if (R && !isViewed(R)) {
     renderChatList();
-    toast(`In „${S.runChat.title}“ wartet die KI auf dich.`, 6000);
+    toast(`In „${R.chat.title}“ wartet die KI auf dich.`, 6000);
   } else if (S.stick) scrollBottom();
   else $('#scroll-down').classList.add('attn');
 }
 
-function requestApproval(tc, opt = {}) {
+function requestApproval(tc, opt, R) {
+  opt = opt || {};
   return new Promise((resolve) => {
     const a = tc.args || {};
     const target = opt.target || a.path || a.query || '';
     const content = String(a.content || '');
     const done = (d) => {
-      S.pendingApproval = null;
+      R.pendingApproval = null;
       card.remove();
       resolve(d);
       renderChatList();
@@ -1615,8 +1658,8 @@ function requestApproval(tc, opt = {}) {
         el('button', { class: 'btn danger', text: 'Ablehnen', onclick: () => done('deny') })
       )
     );
-    S.pendingApproval = { resolve: done, kind: opt.kind || 'tool', card };
-    showLiveCard(card); // Nutzer liest weiter oben: nicht wegscrollen, nur auffällig markieren
+    R.pendingApproval = { resolve: done, kind: opt.kind || 'tool', card };
+    showLiveCard(card, R); // Nutzer liest weiter oben: nicht wegscrollen, nur auffällig markieren
     allow.focus({ preventScroll: true });
     if (!document.hasFocus()) {
       try { new Notification('LLM Box – Freigabe nötig', { body: `${TOOL_LABEL[tc.name] || tc.name}: ${target}` }); } catch {}
@@ -1624,33 +1667,60 @@ function requestApproval(tc, opt = {}) {
   });
 }
 
-/* Echtzeit: fragt während einer Anfrage den Server (/slots) nach echter Prompt-Größe und Fenster */
-let livePoll = null;
-function startLivePoll(conn) {
-  if (livePoll) return;
+/* Echtzeit: fragt während einer Anfrage den Server (/slots) nach echter Prompt-Größe und Fenster (pro Lauf) */
+function startLivePoll(R, conn) {
+  if (R.livePoll) return;
   let busyFails = 0;
   const tick = async () => {
-    if (!S.live) return;
+    if (!R.live) return;
     let r = null;
     try { r = await LLM.slotInfo(conn); } catch { r = null; }
-    if (!r) { if (++busyFails >= 3) stopLivePoll(); return; } // Server kann es nicht: bei der Schätzung bleiben
+    if (!r) { if (++busyFails >= 3) stopLivePoll(R); return; } // Server kann es nicht: bei der Schätzung bleiben
     busyFails = 0;
     if (r.nCtx && S.settings.params.autoCtx !== false && conn.type !== 'ollama' && +S.settings.params.numCtx !== r.nCtx) {
       S.settings.params.numCtx = r.nCtx;
       saveSettings();
     }
-    if (S.live && r.nPrompt > 0 && (r.busy === true || S.live.comp > 0) && r.nPrompt !== S.live.stale) {
-      S.live.prompt = r.nPrompt;
-      S.live.real = true;
+    // Arbeiten mehrere Chats gleichzeitig, lässt sich ein Server-Slot keinem Chat zuordnen: dann bleibt es bei der Schätzung
+    if (RUNS.size <= 1 && R.live && r.nPrompt > 0 && (r.busy === true || R.live.comp > 0) && r.nPrompt !== R.live.stale) {
+      R.live.prompt = r.nPrompt;
+      R.live.real = true;
     }
-    updateCtxMeter();
-    renderStatus();
+    if (isViewed(R)) { updateCtxMeter(); renderStatus(); }
   };
-  livePoll = setInterval(tick, 2000);
+  R.livePoll = setInterval(tick, 2000);
 }
-function stopLivePoll() {
-  if (livePoll) clearInterval(livePoll);
-  livePoll = null;
+function stopLivePoll(R) {
+  if (R.livePoll) clearInterval(R.livePoll);
+  R.livePoll = null;
+}
+/* Strom-Messung: jede Sekunde die GPU-Leistung (Watt) des Servers lesen (nur mit eingetragenem Strompreis). Arbeiten
+   mehrere Chats gleichzeitig, wird die gemessene Leistung gleichmäßig auf sie verteilt, damit nichts doppelt zählt. */
+let powerPoll = null;
+function startPowerPoll(R, conn) {
+  R.powerOk = !!powerPrice() && svPowerEligible(conn);
+  if (!R.powerOk || powerPoll) return;
+  let busy = false, fails = 0;
+  powerPoll = setInterval(async () => {
+    const targets = [...RUNS].filter((r) => r.powerOk && r.live && r.live.en);
+    if (!targets.length || busy) return;
+    busy = true;
+    try {
+      const w = await svReadPower();
+      if (w !== null) {
+        const now = performance.now();
+        const share = w / targets.length;
+        for (const r of targets) if (r.live && r.live.en) enAdd(r.live.en, share, now);
+      }
+      fails = w === null ? fails + 1 : 0;
+    } catch { fails++; }
+    busy = false;
+    if (fails >= 5) stopPowerPoll(); // Server liefert keine Leistungswerte: nicht weiter fragen
+  }, 1000);
+}
+function stopPowerPoll() {
+  if (powerPoll) clearInterval(powerPoll);
+  powerPoll = null;
 }
 
 // Endet die Antwort ohne Werkzeugaufruf mit einer Ankündigung („Jetzt der Korrekturlauf am Gerät:“), hat das Modell den nächsten Schritt nur angekündigt
@@ -1686,26 +1756,19 @@ function effCtx() {
   return cap > 0 && max ? Math.min(max, cap) : max;
 }
 
-async function generate() {
+async function generate(chatArg) {
+  const chat = chatArg || S.chat;
+  if (runOf(chat)) return; // in diesem Chat arbeitet die KI schon
   trAbortAll(); // laufende Übersetzungen nicht mit dem Agenten konkurrieren lassen
-  const chat = S.chat;
   const conn = activeConn();
   const model = currentModel();
   const maxSteps = Math.max(1, +S.settings.workspace.maxSteps || 25);
-  S.generating = true;
-  S.runChat = chat;
-  S.runNode = null;
-  S.runAm = null;
-  GHOST.innerHTML = '';
-  S.stopRequested = false;
-  S.hardStop = new Promise((r) => { S.stopResolve = r; });
-  const hardStop = S.hardStop;
+  const R = newRun(chat); // eigener Lauf-Zustand dieses Chats (andere Chats laufen unabhängig)
+  RUNS.add(R);
+  R.hardStop = new Promise((r) => { R.stopResolve = r; });
+  const hardStop = R.hardStop;
   const STOPPED = Symbol('stopped');
   const orStop = (p) => Promise.race([p, hardStop.then(() => STOPPED)]); // wartet höchstens bis zum Stopp
-  S.paused = false;
-  S.pauseAborted = false;
-  S.pauseWaiters = [];
-  S.streaming = false;
   chat.pendingContinue = false;
   $$('.notice', $('#messages-inner')).forEach((n) => n.remove());
   updateSendBtn();
@@ -1717,22 +1780,35 @@ async function generate() {
   let nudgeNext = false;
   let nudgeText = '';
   let autoNudges = 0; // automatische Aufforderungen in Folge (nach einem Werkzeugaufruf wieder 0)
+  // Hinweise des Nutzers, die während der Arbeit eintrafen: als normale Nutzer-Nachricht in den Verlauf, die KI sieht sie im nächsten Schritt
+  const takeInbox = () => {
+    if (!R.inbox.length) return;
+    for (const q of R.inbox.splice(0)) {
+      const um = { id: uid(), role: 'user', content: q.text, files: q.attachments || [], ts: Date.now(), steer: true };
+      chat.messages.push(um);
+      liveHost(R).append(messageEl(um, chat.messages.length - 1, false));
+    }
+    if (isViewed(R)) renderQueuedStrip();
+    saveChatSoon(chat);
+    followBottom(R);
+  };
   const heartbeat = setInterval(() => saveChatNow(chat), 45000); // Lebenszeichen für andere Rechner (und Zwischenstand)
 
   try {
     for (let step = 0; step < maxSteps; step++) {
-      await pauseGate(); // Pause aus dem vorigen Schritt (z. B. während ein Programm lief)
-      if (S.stopRequested) { finished = true; break; }
+      await pauseGate(R); // Pause aus dem vorigen Schritt (z. B. während ein Programm lief)
+      if (R.stopRequested) { finished = true; break; }
+      takeInbox();
       const am = { id: uid(), role: 'assistant', content: '', thinking: '', model, ts: Date.now(), toolCalls: [] };
       chat.messages.push(am);
-      const box = liveHost();
+      const box = liveHost(R);
       box.querySelectorAll('.empty').forEach((n) => n.remove());
       const node = assistantEl(am, chat.messages.length - 1, false);
       renderAssistantParts(node, am, 'live');
       box.append(node);
-      S.runAm = am;
-      S.runNode = node;
-      followBottom();
+      R.runAm = am;
+      R.runNode = node;
+      followBottom(R);
 
       const live = { n: 0, t0: performance.now(), tFirst: 0 };
       const paint = () => {
@@ -1742,7 +1818,7 @@ async function generate() {
         node._r.stats.innerHTML =
           `<span class="st live" title="Live-Schätzung (1 Chunk ≈ 1 Token)"><b>${tps ? '~' + fmt.tps(tps) : '…'}</b> Tokens/s</span>` +
           `<span class="st live"><b>${fmt.num(live.n)}</b> Tokens</span><span class="st live"><b>${fmt.sec((now - live.t0) / 1000)}</b></span>`;
-        if (S.live) { S.live.comp = live.n; updateCtxMeter(); renderStatus(); }
+        if (R.live) { R.live.comp = live.n; if (isViewed(R)) { updateCtxMeter(); renderStatus(); } }
       };
       paint();
       ticker = setInterval(paint, 250);
@@ -1757,7 +1833,7 @@ async function generate() {
             node._raf = 0;
             node._last = performance.now();
             renderAssistantParts(node, am, 'live');
-            followBottom();
+            followBottom(R);
           });
         }, wait);
       };
@@ -1780,11 +1856,13 @@ async function generate() {
         toast('Achtung: Der Kontext ist trotz Verschlankung fast voll. Leere besser den Kontext (Knopf oben rechts), die Übergabe bleibt erhalten.', 8000);
       }
       const lastStats = chat.messages.slice(cs).reverse().find((m) => m.role === 'assistant' && m.stats);
-      S.live = { prompt: cmp.info.after, comp: 0, real: false, stale: lastStats ? lastStats.stats.promptTokens : 0, run: live }; // run: Zähler der laufenden Anfrage (Start, erstes Token, Anzahl) für die Statuszeile
+      const en = { ws: 0, w: null, t: performance.now(), n: 0 }; // Energie dieser Anfrage (Wattsekunden aus der GPU-Leistung)
+      R.live = { prompt: cmp.info.after, comp: 0, real: false, stale: lastStats ? lastStats.stats.promptTokens : 0, run: live, en }; // run: Zähler der laufenden Anfrage (Start, erstes Token, Anzahl) für die Statuszeile
       updateCtxMeter();
       renderStatus();
-      startLivePoll(conn);
-      S.run = LLM.streamChat({
+      startLivePoll(R, conn);
+      startPowerPoll(R, conn);
+      R.run = LLM.streamChat({
         conn,
         model,
         system: sysText,
@@ -1800,11 +1878,11 @@ async function generate() {
       });
 
       let res = null;
-      S.streaming = true;
+      R.streaming = true;
       try {
-        const r0 = await orStop(S.run.promise);
+        const r0 = await orStop(R.run.promise);
         if (r0 === STOPPED) {
-          S.run.promise.catch(() => {}); // späte Fehler des abgebrochenen Streams ignorieren
+          R.run.promise.catch(() => {}); // späte Fehler des abgebrochenen Streams ignorieren
           res = { content: am.content || '', thinking: am.thinking || '', toolCalls: [], images: am.images || [], stats: null, aborted: true, finishReason: 'abort' };
         } else res = r0;
       } catch (err) {
@@ -1817,27 +1895,31 @@ async function generate() {
           am.error += `\n\nDie Kontextlänge in der LLM Box wurde auf ${fmt.num(+cm[1])} gesetzt (Wert des Servers). Klicke „Erneut versuchen“: Alte Werkzeug-Ausgaben werden jetzt automatisch entfernt.`;
         }
       }
-      S.streaming = false;
+      R.streaming = false;
       clearInterval(ticker);
       ticker = null;
-      if (!res) S.live = null;
+      const tEndEn = performance.now();
+      enClose(en, tEndEn);
+      const steered = R.steerAbort; // Antwort wurde unterbrochen, um einen Hinweis sofort zuzustellen
+      R.steerAbort = false;
+      if (!res) R.live = null;
       if (node._raf) cancelAnimationFrame(node._raf);
       if (node._to) clearTimeout(node._to);
       node._raf = 0;
       node._to = 0;
 
       // Pause während des Schreibens: Der bisherige Text bleibt sichtbar, bis es weitergeht. Nach „Fortsetzen“ wird derselbe Schritt neu angefragt.
-      if (S.pauseAborted) {
-        S.pauseAborted = false;
-        if (!S.stopRequested && (!res || res.aborted)) {
+      if (R.pauseAborted) {
+        R.pauseAborted = false;
+        if (!R.stopRequested && (!res || res.aborted)) {
           if (res) { am.content = res.content; am.thinking = res.thinking; }
           am.paused = true;
           renderAssistantParts(node, am, 'live');
-          S.live = null;
+          R.live = null;
           updateCtxMeter();
           renderStatus();
-          await pauseGate();
-          if (S.stopRequested) { // aus der Pause heraus gestoppt: Teilantwort als abgebrochen behalten
+          await pauseGate(R);
+          if (R.stopRequested) { // aus der Pause heraus gestoppt: Teilantwort als abgebrochen behalten
             am.paused = false;
             am.aborted = true;
             renderAssistantParts(node, am, 'final');
@@ -1847,8 +1929,8 @@ async function generate() {
           }
           chat.messages.splice(chat.messages.indexOf(am), 1);
           node.remove();
-          S.runNode = null;
-          S.runAm = null;
+          R.runNode = null;
+          R.runAm = null;
           saveChatSoon(chat);
           step--;
           continue; // derselbe Schritt noch einmal
@@ -1858,9 +1940,14 @@ async function generate() {
       if (res) {
         am.content = res.content;
         am.thinking = res.thinking;
-        am.toolCalls = res.toolCalls;
+        am.toolCalls = steered ? [] : res.toolCalls; // unvollständige Werkzeugaufrufe einer unterbrochenen Antwort verwerfen
+        am.thinkBlocks = res.thinkBlocks || null; // Claude: Denk-Blöcke samt Signatur, werden im Werkzeug-Ablauf zurückgegeben
         am.stats = res.stats;
-        if (S.run && S.run.request) am.request = S.run.request;
+        if (am.stats && en.n > 0 && en.ws > 0) { // gemessener Stromverbrauch dieser Anfrage
+          am.stats.energyWh = en.ws / 3600;
+          am.stats.avgPowerW = en.ws / Math.max(0.5, (tEndEn - live.t0) / 1000);
+        }
+        if (R.run && R.run.request) am.request = R.run.request;
         // (c) Vom Server gemessene Geschwindigkeit nachladen (z. B. Strata), ohne den Ablauf aufzuhalten
         if (conn.type !== 'ollama' && res.stats && res.stats.completionTokens > 20) {
           const st = res.stats;
@@ -1874,7 +1961,7 @@ async function generate() {
         }
         if (res.images && res.images.length) am.images = res.images;
         am.finish = res.finishReason || '';
-        S.live = null;
+        R.live = null;
         updateCtxMeter();
         renderStatus();
         if (res.aborted) am.aborted = true;
@@ -1885,7 +1972,7 @@ async function generate() {
         }
         const empty = !am.content && !am.toolCalls.length && !am.aborted && !(am.images && am.images.length);
         const afterTool = chat.messages.length >= 2 && chat.messages[chat.messages.length - 2].role === 'tool';
-        if (empty && afterTool && !nudged && !S.stopRequested) {
+        if (empty && afterTool && !nudged && !R.stopRequested) {
           // Manche lokalen Modelle antworten nach einem Werkzeug-Ergebnis leer: einmal automatisch nachfassen
           nudged = true;
           nudgeNext = true;
@@ -1898,8 +1985,14 @@ async function generate() {
       renderAssistantParts(node, am, 'final');
       saveChatSoon(chat); // andere Rechner sehen jeden Schritt
 
+      // Es liegt ein Hinweis des Nutzers vor: nicht beenden, sondern im nächsten Schritt darauf eingehen (Werkzeugaufrufe laufen vorher zu Ende)
+      if (R.inbox.length && !R.stopRequested && !am.error && (steered || (!am.aborted && !am.toolCalls.length))) {
+        if (steered && !am.content && !am.thinking && !(am.images && am.images.length)) { chat.messages.splice(chat.messages.indexOf(am), 1); node.remove(); }
+        continue;
+      }
+
       // Nur angekündigt, nichts ausgeführt: höchstens dreimal in Folge automatisch zum Weitermachen auffordern, statt still zu enden
-      if (!am.error && !am.aborted && !S.stopRequested && !am.toolCalls.length && useTools() && autoNudges < 3 && am.finish !== 'length' && looksUnfinished(am.content)) {
+      if (!am.error && !am.aborted && !R.stopRequested && !am.toolCalls.length && useTools() && autoNudges < 3 && am.finish !== 'length' && looksUnfinished(am.content)) {
         autoNudges++;
         nudgeNext = true;
         nudgeText = NUDGE_TEXT[S.settings.uiLang] || NUDGE_TEXT.de;
@@ -1908,7 +2001,7 @@ async function generate() {
         saveChatSoon(chat);
         continue;
       }
-      if (am.error || am.aborted || S.stopRequested || !am.toolCalls.length) {
+      if (am.error || am.aborted || R.stopRequested || !am.toolCalls.length) {
         finished = true;
         break;
       }
@@ -1916,25 +2009,25 @@ async function generate() {
 
       // Unteragenten starten sofort und laufen gleichzeitig; die übrigen Werkzeuge laufen der Reihe nach
       // Für jeden Werkzeugaufruf sofort eine Live-Karte (Status + Ausgabe), damit man sieht, worauf die KI gerade wartet
-      for (const tc of am.toolCalls) tlStart(tc);
+      for (const tc of am.toolCalls) tlStart(tc, R);
       const stoppedTool = (tc) => ({ id: uid(), role: 'tool', name: tc.name, toolCallId: tc.id, args: tc.args, ts: Date.now(), ok: false, content: 'Vom Nutzer abgebrochen. Dieser Werkzeugaufruf wurde nicht (zu Ende) ausgeführt.' });
       const early = new Map();
       for (const tc of am.toolCalls) if (tc.name === 'delegate_task') early.set(tc.id, runTool(tc, chat));
       for (const tc of am.toolCalls) {
         let tm;
-        if (S.stopRequested) tm = stoppedTool(tc); // alle noch offenen Aufrufe bekommen ein Ergebnis, damit der Verlauf gültig bleibt
+        if (R.stopRequested) tm = stoppedTool(tc); // alle noch offenen Aufrufe bekommen ein Ergebnis, damit der Verlauf gültig bleibt
         else {
           const job = early.has(tc.id) ? early.get(tc.id) : runTool(tc, chat);
           const r = await orStop(job);
           if (r === STOPPED) { job.catch(() => {}); tm = stoppedTool(tc); } else tm = r;
         }
-        if (tm.name !== 'propose_new_session' && typeof tm.content === 'string' && !S.stopRequested) tm.content += hoModelHint(chat); // bei vollem Kontext: KI bitten, eine Übergabe vorzuschlagen
+        if (tm.name !== 'propose_new_session' && typeof tm.content === 'string' && !R.stopRequested) tm.content += hoModelHint(chat); // bei vollem Kontext: KI bitten, eine Übergabe vorzuschlagen
         chat.messages.push(tm);
         saveChatSoon(chat);
         tlFinish(tc.id, tm);
-        if (!S.stopRequested) await pauseGate();
+        if (!R.stopRequested) await pauseGate(R);
       }
-      if (S.stopRequested || am.toolCalls.some((t) => t.name === 'propose_new_session')) {
+      if (R.stopRequested || am.toolCalls.some((t) => t.name === 'propose_new_session')) {
         finished = true;
         break;
       }
@@ -1947,26 +2040,29 @@ async function generate() {
   } finally {
     if (ticker) clearInterval(ticker);
     clearInterval(heartbeat);
-    tlClear();
-    S.live = null;
-    stopLivePoll();
-    S.generating = false;
-    S.run = null;
-    S.hardStop = null;
-    S.stopResolve = null;
-    S.execId = null;
-    S.streaming = false;
-    S.paused = false;
-    S.pauseAborted = false;
-    S.pauseWaiters.splice(0).forEach((f) => f());
-    S.pendingApproval = null;
+    tlClear(R);
+    R.live = null;
+    stopLivePoll(R);
+    if (!RUNS.size) stopPowerPoll();
+    RUNS.delete(R);
+    const left = R.inbox.splice(0); // nicht mehr zugestellte Hinweise: kommen ins Eingabefeld zurück
+    if (left.length && !DELETED.has(chat)) UNSENT.set(chat, left);
+    R.run = null;
+    R.hardStop = null;
+    R.stopResolve = null;
+    R.execId = null;
+    R.streaming = false;
+    R.paused = false;
+    R.pauseAborted = false;
+    R.pauseWaiters.splice(0).forEach((f) => f());
+    R.pendingApproval = null;
     const wasViewing = S.chat === chat;
-    S.runChat = null;
-    S.runNode = null;
-    S.runAm = null;
-    GHOST.innerHTML = '';
+    R.runNode = null;
+    R.runAm = null;
+    R.ghost.innerHTML = '';
     updateSendBtn();
-    if (wasViewing) renderMessages();
+    if (DELETED.has(chat)) { /* Chat wurde gelöscht: nichts mehr anzeigen oder speichern */ }
+    else if (wasViewing) { renderMessages(); restoreUnsent(chat); }
     else {
       S.unread.add(chat.id);
       toast(`Antwort in „${chat.title}“ ist fertig.`, 5000);
@@ -1975,18 +2071,19 @@ async function generate() {
     renderStatus();
     updateCtxMeter();
     saveChatNow(chat);
-    trAuto(chat); // Gedankengänge im Hintergrund ins Deutsche übersetzen
-    submitQueuedMessageIfAny();
+    renderQueuedStrip();
+    if (!DELETED.has(chat)) trAuto(chat); // Gedankengänge im Hintergrund ins Deutsche übersetzen
   }
 }
 
 async function runTool(tc, chat) {
-  const rc = chat || S.runChat || S.chat;
+  const rc = chat || S.chat;
+  const R = runOf(rc) || newRun(rc); // Lauf dieses Chats (Freigaben, Programm-ID)
   const ws = S.settings.workspace;
   const base = { id: uid(), role: 'tool', name: tc.name, toolCallId: tc.id, args: tc.args, ts: Date.now() };
   tlState(tc.id, 'running');
-  if (tc.name === 'ask_user') return runAskUser(tc, base);
-  if (tc.name === 'delegate_task') return runSubagent(tc, base); // nur lesend: keine Freigabe nötig
+  if (tc.name === 'ask_user') return runAskUser(tc, base, R);
+  if (tc.name === 'delegate_task') return runSubagent(tc, base, rc); // nur lesend: keine Freigabe nötig
   if (EXEC_TOOLS.includes(tc.name)) return runExecTool(tc, base, rc);
   if (tc.name === 'propose_new_session') return { ...base, ok: true, content: 'Der Vorschlag wurde dem Nutzer mit einer Schaltfläche angezeigt. Beende deine Antwort jetzt (höchstens ein Satz) und rufe keine weiteren Werkzeuge auf.' };
   try {
@@ -1995,12 +2092,12 @@ async function runTool(tc, chat) {
     const key = tc.name;
     if (needs && !permHas(key, rc)) {
       tlState(tc.id, 'approval');
-      const d = await requestApproval(tc);
+      const d = await requestApproval(tc, undefined, R);
       tlState(tc.id, 'running');
       if (d === 'always') permAdd(key, rc);
       if (d === 'deny') return { ...base, ok: false, content: 'Der Benutzer hat die Ausführung abgelehnt. Frage nach, wie du stattdessen vorgehen sollst.' };
     }
-    const r = await api.ws.tool({ root: ws.path, name: tc.name, args: tc.args, maxKB: +ws.readKB || 40, ignore: ignoreList() });
+    const r = await api.ws.tool({ root: ws.path, name: tc.name, args: tc.args, maxKB: +ws.readKB || 40, ignore: ignoreList(), owner: rc.id });
     if ((tc.name === 'write_file' || tc.name === 'edit_file') && r.ok) renderFilePanel();
     return { ...base, ok: r.ok, content: r.result };
   } catch (e) {
@@ -2010,7 +2107,9 @@ async function runTool(tc, chat) {
 
 /* ═════════════ Programme auf dem Client ═════════════ */
 async function runExecTool(tc, base, rc) {
-  rc = rc || S.runChat || S.chat;
+  rc = rc || S.chat;
+  const R = runOf(rc) || newRun(rc);
+  const ask = (o) => requestApproval(tc, o, R);
   const ws = S.settings.workspace;
   const a = tc.args || {};
   if (!execOn()) return { ...base, ok: false, content: 'Das Ausführen von Programmen ist in den Einstellungen ausgeschaltet. Sage dem Nutzer, dass er es unter Einstellungen → Workspace & Dateien aktivieren kann.' };
@@ -2033,7 +2132,7 @@ async function runExecTool(tc, base, rc) {
       if (!(permIsAuto(rc) || progAllowed)) {
         tlState(tc.id, 'approval');
         const canProg = !!heads && heads.length === 1 && !INTERPRETERS.has(heads[0]) && !!prog;
-        const d = await requestApproval(tc, {
+        const d = await ask({
           kind: 'run',
           target: command,
           note: `Läuft auf deinem Rechner (${shellKind === 'powershell' ? 'PowerShell' : 'cmd'}) mit deinen Benutzerrechten, Arbeitsordner: ${a.cwd ? ws.path + ' / ' + a.cwd : ws.path}. Prüfe den Befehl, bevor du genehmigst.`,
@@ -2047,11 +2146,11 @@ async function runExecTool(tc, base, rc) {
         if (d === 'always' && canProg) permAdd(keyOf(heads[0]), rc);
         if (d === 'all') { permOf(rc).runAll = true; permChanged(rc); }
       }
-      S.execId = uid();
+      R.execId = uid();
       const tmo = +a.timeout > 0 ? Math.min(+a.timeout, 3600) : timeout;
-      tlExec(tc.id, S.execId, tmo);
-      const r = await api.sys.exec({ id: S.execId, root: ws.path, command, shell: shellKind, cwd: a.cwd || '', timeout: tmo }, (m) => tlAppend(tc.id, m.text));
-      S.execId = null;
+      tlExec(tc.id, R.execId, tmo);
+      const r = await api.sys.exec({ id: R.execId, root: ws.path, command, shell: shellKind, cwd: a.cwd || '', timeout: tmo }, (m) => tlAppend(tc.id, m.text));
+      R.execId = null;
       renderFilePanel();
       return { ...base, ok: r.ok, content: r.result };
     }
@@ -2062,7 +2161,7 @@ async function runExecTool(tc, base, rc) {
       if (c.error) return { ...base, ok: false, content: c.error };
       tlHead(tc.id, '> ' + c.command);
       if (!permOf(rc).installs) tlState(tc.id, 'approval');
-      const d = permOf(rc).installs ? 'allow' : await requestApproval(tc, {
+      const d = permOf(rc).installs ? 'allow' : await ask({
         kind: 'install',
         target: c.command,
         note: `${a.reason ? 'Grund: ' + a.reason + '. ' : ''}Die Installation ändert deinen Rechner. Je nach Paketmanager kann Windows eine Administrator-Abfrage (UAC) zeigen. Genehmige nur, wenn du dem Paket „${pkg}“ vertraust.`,
@@ -2071,21 +2170,21 @@ async function runExecTool(tc, base, rc) {
       });
       if (d !== 'allow') return { ...base, ok: false, content: 'Der Benutzer hat die Installation abgelehnt. Installiere nichts und frage, wie du ohne dieses Tool weitermachen sollst.' };
       tlState(tc.id, 'running');
-      S.execId = uid();
-      tlExec(tc.id, S.execId, 900);
-      const r = await api.sys.install({ id: S.execId, root: ws.path, manager, pkg, timeout: 900 }, (m) => tlAppend(tc.id, m.text));
-      S.execId = null;
+      R.execId = uid();
+      tlExec(tc.id, R.execId, 900);
+      const r = await api.sys.install({ id: R.execId, root: ws.path, manager, pkg, timeout: 900 }, (m) => tlAppend(tc.id, m.text));
+      R.execId = null;
       return { ...base, ok: r.ok, content: r.result + (r.ok ? '\nHinweis: Prüfe mit check_tool, ob das Programm jetzt gefunden wird. Manche Programme liegen nach der Installation nicht im PATH.' : '') };
     }
   } catch (e) {
-    S.execId = null;
+    R.execId = null;
     return { ...base, ok: false, content: 'Fehler: ' + e.message };
   }
   return { ...base, ok: false, content: 'Unbekanntes Werkzeug: ' + tc.name };
 }
 
 function regenerate() {
-  if (S.generating || !S.chat) return;
+  if (viewRun() || !S.chat) return;
   const msgs = S.chat.messages;
   let i = msgs.length - 1;
   while (i >= 0 && msgs[i].role !== 'user') i--;
@@ -2097,7 +2196,7 @@ function regenerate() {
 }
 
 function editMessage(i) {
-  if (S.generating) return toast('Bitte erst die Antwort stoppen.');
+  if (viewRun()) return toast('Bitte erst die Antwort stoppen.');
   const m = S.chat.messages[i];
   $('#input').value = m.content || '';
   S.attachments = (m.files || []).slice();
@@ -2115,8 +2214,10 @@ function editMessage(i) {
 
 /* ═════════════ Anhänge ═════════════ */
 /* ═════════════ Vorgemerkte Nachricht (während die KI noch arbeitet) ═════════════ */
-function queueMessage(text, attachments) {
-  S.queuedMessage = { text, attachments: (attachments || []).slice(), chatId: S.chat && S.chat.id };
+// Nachricht an die laufende KI: kommt in den Posteingang des Laufs und wird nach dem aktuellen Schritt als normale
+// Nutzer-Nachricht zugestellt (die KI sieht sie vor ihrem nächsten Schritt). Der Chat blockiert dabei nie.
+function sendToRun(R, text, attachments) {
+  R.inbox.push({ id: uid(), text, attachments: (attachments || []).slice(), ts: Date.now() });
   S.attachments = [];
   const ta = $('#input');
   ta.value = '';
@@ -2124,16 +2225,17 @@ function queueMessage(text, attachments) {
   renderAttachStrip();
   updateEstimate();
   renderQueuedStrip();
+  updateSendBtn();
 }
 
-function cancelQueuedMessage() {
-  if (!S.queuedMessage) return;
-  const q = S.queuedMessage;
-  S.queuedMessage = null;
-  // Zurück ins Eingabefeld legen, damit nichts verloren geht
+// Hinweis zurück ins Eingabefeld holen (noch nicht zugestellt)
+function cancelInboxItem(R, id) {
+  const k = R.inbox.findIndex((q) => q.id === id);
+  if (k < 0) return;
+  const [q] = R.inbox.splice(k, 1);
   const ta = $('#input');
-  ta.value = q.text;
-  S.attachments = q.attachments || [];
+  ta.value = [ta.value.trim(), q.text].filter(Boolean).join('\n\n');
+  S.attachments = [...S.attachments, ...(q.attachments || [])];
   autosize();
   renderAttachStrip();
   updateEstimate();
@@ -2142,43 +2244,53 @@ function cancelQueuedMessage() {
   ta.focus();
 }
 
+// Sofort zustellen: unterbricht die gerade laufende Antwort (der bisherige Text bleibt stehen) und die KI geht auf den Hinweis ein
+function steerNow(R) {
+  if (!R.inbox.length) return;
+  if (R.streaming && R.run) {
+    R.steerAbort = true;
+    try { R.run.abort(); } catch {}
+  } else toast('Die KI führt gerade ein Werkzeug aus oder wartet. Dein Hinweis kommt direkt danach.', 3500);
+}
+
+// Hinweise, die beim Ende des Laufs nicht mehr zugestellt wurden (Stopp, Fehler, Schritt-Limit): zurück ins Eingabefeld
+function restoreUnsent(chat) {
+  const left = UNSENT.get(chat);
+  if (!left || !left.length || S.chat !== chat) return;
+  UNSENT.delete(chat);
+  const ta = $('#input');
+  ta.value = [ta.value.trim(), ...left.map((q) => q.text)].filter(Boolean).join('\n\n');
+  for (const q of left) S.attachments.push(...(q.attachments || []));
+  autosize();
+  renderAttachStrip();
+  updateEstimate();
+  updateSendBtn();
+  toast('Dein Hinweis wurde nicht mehr zugestellt und steht wieder im Eingabefeld.', 5000);
+}
+
 function renderQueuedStrip() {
   const s = $('#queued-strip');
   s.innerHTML = '';
-  const mine = !!(S.queuedMessage && S.chat && S.queuedMessage.chatId === S.chat.id);
-  s.classList.toggle('hidden', !mine);
-  if (!mine) return;
-  const q = S.queuedMessage;
-  const n = (q.attachments || []).length;
-  const label = q.text || (n ? `${n} Datei(en)` : '');
-  s.append(
-    el('span', { class: 'queued-icon', html: icon('send', 13, 2) }),
-    el('span', { class: 'queued-text', text: label }),
-    el('span', { class: 'queued-hint', text: 'wird gesendet, sobald die KI fertig ist' }),
-    el('button', { class: 'queued-cancel', title: 'Zurück ins Eingabefeld holen', html: icon('x', 13), onclick: cancelQueuedMessage })
-  );
-}
-
-// Nachdem eine Antwort fertig ist (gleich welcher Auslöser: send(), „Weitermachen“, regenerate(), …):
-// eine zwischenzeitlich vorgemerkte Nachricht jetzt als neue, eigenständige Aufgabe abschicken.
-function submitQueuedMessageIfAny() {
-  if (S.generating || !S.queuedMessage) return;
-  if (!S.chat || S.queuedMessage.chatId !== S.chat.id) return; // anderer Chat gerade offen: wartet, bis man zurückwechselt
-  const q = S.queuedMessage;
-  S.queuedMessage = null;
-  renderQueuedStrip();
-  const ta = $('#input');
-  ta.value = q.text;
-  S.attachments = q.attachments || [];
-  renderAttachStrip();
-  autosize();
-  send();
+  const R = viewRun();
+  const items = R ? R.inbox : [];
+  s.classList.toggle('hidden', !items.length);
+  for (const q of items) {
+    const n = (q.attachments || []).length;
+    const label = q.text || (n ? `${n} Datei(en)` : '');
+    s.append(el('div', { class: 'queued-row' },
+      el('span', { class: 'queued-icon', html: icon('send', 13, 2) }),
+      el('span', { class: 'queued-text', text: label, title: label }),
+      el('span', { class: 'queued-hint', text: 'wird nach dem aktuellen Schritt zugestellt' }),
+      el('button', { class: 'queued-now', text: 'Jetzt', title: 'Unterbricht die laufende Antwort und stellt den Hinweis sofort zu', onclick: () => steerNow(R) }),
+      el('button', { class: 'queued-cancel', title: 'Zurück ins Eingabefeld holen', html: icon('x', 13), onclick: () => cancelInboxItem(R, q.id) })
+    ));
+  }
 }
 
 function renderAttachStrip() {
   const s = $('#attach-strip');
   s.innerHTML = '';
-  S.attachments.forEach((f, i) => s.append(fileChip(f, () => { S.attachments.splice(i, 1); renderAttachStrip(); updateEstimate(); if (S.generating) updateSendBtn(); })));
+  S.attachments.forEach((f, i) => s.append(fileChip(f, () => { S.attachments.splice(i, 1); renderAttachStrip(); updateEstimate(); if (viewRun()) updateSendBtn(); })));
 }
 
 function addAttachments(res) {
@@ -2193,7 +2305,7 @@ function addAttachments(res) {
   if (res.truncated) toast('Limit erreicht – nicht alle Dateien wurden angehängt (siehe Einstellungen → Workspace & Dateien).', 6000);
   renderAttachStrip();
   updateEstimate();
-  if (S.generating) updateSendBtn();
+  if (viewRun()) updateSendBtn();
   const tokens = attachTokens();
   const max = +S.settings.params.numCtx || 0;
   if (max && tokens > max * 0.8) toast(`Achtung: Anhänge ≈ ${fmt.num(tokens)} Tokens, Kontextlänge ist ${fmt.num(max)}. Erhöhe num_ctx oder hänge weniger an.`, 7000);
@@ -2372,7 +2484,7 @@ function chatToMarkdown(c) {
   }
   if (S.settings.pricing.enabled) {
     const t = chatTotals(c);
-    lines.push('---', `Gesamt: ${fmt.num(t.total)} Tokens (Prompt ${fmt.num(t.prompt)}, Antwort ${fmt.num(t.comp)}) · Dauer ${fmt.dur(t.duration)} · Kosten ca. ${fmt.money(chatCost(c).amount, 'EUR')} (Vergleichswert)`);
+    lines.push('---', `Gesamt: ${fmt.num(t.total)} Tokens (Prompt ${fmt.num(t.prompt)}, Antwort ${fmt.num(t.comp)}) · Dauer ${fmt.dur(t.duration)} ${powerPrice() > 0 && chatEnergy(c).any ? ` · Strom ca. ${fmt.money(energyCost(chatEnergy(c).wh), 'EUR')} (${fmtEnergy(chatEnergy(c).wh)})` : ''} · Kosten ca. ${fmt.money(chatCost(c).amount, 'EUR')} (Vergleichswert)`);
   }
   return lines.join('\n');
 }
@@ -2394,13 +2506,13 @@ function exportChat() {
 /* ═════════════ Events ═════════════ */
 function wireEvents() {
   const ta = $('#input');
-  ta.addEventListener('input', () => { autosize(); updateEstimate(); if (S.generating) updateSendBtn(); });
+  ta.addEventListener('input', () => { autosize(); updateEstimate(); if (viewRun()) updateSendBtn(); });
   ta.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing) return;
     const enterSends = S.settings.appearance.enterToSend;
     if ((enterSends && !e.shiftKey && !e.ctrlKey) || (!enterSends && e.ctrlKey)) {
       e.preventDefault();
-      // Arbeitet die KI noch und steht Text/ein Anhang im Feld, merkt send() es vor (siehe queueMessage);
+      // Arbeitet die KI noch und steht Text/ein Anhang im Feld, geht es als Hinweis an die laufende KI (siehe sendToRun);
       // ist das Feld leer, stoppt es die laufende Arbeit wie gewohnt.
       send();
     }

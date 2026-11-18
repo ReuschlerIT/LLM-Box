@@ -101,7 +101,7 @@ async function hoGenerate(chat) {
    mode: 'clear' | 'new' (ohne Angabe: Einstellung). srcMsg: Werkzeug-Nachricht der Karte (optional) */
 async function hoStart({ summary, next, srcMsg, mode } = {}) {
   if (hoBusy) return;
-  if (S.generating) return toast('Bitte erst die Antwort stoppen.');
+  if (viewRun()) return toast('Bitte erst die Antwort stoppen.');
   const old = S.chat;
   if (!old || !old.messages.length) return;
   if (!currentModel()) return toast('Bitte zuerst ein Modell wählen.');
@@ -176,7 +176,7 @@ function hoRefresh() {
     b.innerHTML = icon(clear ? 'eraser' : 'handoff', 17);
     b.title = clear ? 'Kontext leeren: Übergabe wird erstellt, der Chat bleibt (Umschalt+Klick: neue Session)' : 'Neue Session mit Übergabe starten (Umschalt+Klick: Kontext leeren)';
   }
-  $$('.handoff-go').forEach((x) => { x.disabled = hoBusy || S.generating; x.textContent = hoBusy ? 'Übergabe wird erstellt …' : x.dataset.label; });
+  $$('.handoff-go').forEach((x) => { x.disabled = hoBusy || !!viewRun(); x.textContent = hoBusy ? 'Übergabe wird erstellt …' : x.dataset.label; });
 }
 
 /* Die zwei Wege als Schaltflächen: der bevorzugte zuerst (hervorgehoben) */

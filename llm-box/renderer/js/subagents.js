@@ -45,8 +45,8 @@ function subFeedText(steps) {
 }
 
 /* Wird von runTool() aufgerufen */
-async function runSubagent(tc, base) {
-  const chat = S.runChat || S.chat;
+async function runSubagent(tc, base, rc) {
+  const chat = rc || S.chat;
   const a = tc.args || {};
   const task = String(a.task || '').trim();
   if (!task) return { ...base, ok: false, content: 'Fehler: Für den Unteragenten fehlt „task“.' };
@@ -56,7 +56,7 @@ async function runSubagent(tc, base) {
     status: 'running', startedAt: Date.now(), endedAt: null, steps: 0, activity: 'Startet …', prompt: 0, comp: 0, result: '', error: '',
   };
   (chat.subagents || (chat.subagents = [])).push(rec);
-  const ctl = { cancel: false, run: null };
+  const ctl = { cancel: false, run: null, chat };
   SUB.runs.set(rec.id, ctl);
   subRefresh();
 
@@ -122,7 +122,7 @@ async function runSubagent(tc, base) {
         rec.status = 'done';
         break;
       }
-      messages.push({ role: 'assistant', content, toolCalls: calls });
+      messages.push({ role: 'assistant', content, toolCalls: calls, model, thinkBlocks: res.thinkBlocks || null });
       for (const t of calls) {
         if (ctl.cancel) break;
         rec.activity = subToolLabel(t);
@@ -134,7 +134,7 @@ async function runSubagent(tc, base) {
         let out;
         if (!SUB_TOOLS.includes(t.name)) out = { ok: false, result: 'Dieses Werkzeug ist für Unteragenten nicht erlaubt (nur list_files, search_text, read_file).' };
         else {
-          try { out = await api.ws.tool({ root: ws.path, name: t.name, args: t.args, maxKB: +ws.readKB || 40, ignore: ignoreList() }); }
+          try { out = await api.ws.tool({ root: ws.path, name: t.name, args: t.args, maxKB: +ws.readKB || 40, ignore: ignoreList(), owner: chat.id }); }
           catch (e) { out = { ok: false, result: 'Fehler: ' + e.message }; }
         }
         curStep.tools[curStep.tools.length - 1] = `${tline.label} → ${out.ok ? 'ok' : 'Fehler'} (${fmt.num(String(out.result || '').length)} Zeichen)`;
@@ -154,7 +154,7 @@ async function runSubagent(tc, base) {
     rec.activity = '';
     SUB.runs.delete(rec.id);
     subRefresh();
-    saveChatSoon(S.runChat || S.chat);
+    saveChatSoon(chat);
   }
   const secs = (rec.endedAt - rec.startedAt) / 1000;
   const head = `Unteragent „${rec.label}“ ${SUB_STATUS[rec.status]} (${rec.steps} Schritte, ${fmt.dur(secs)})`;
@@ -162,8 +162,9 @@ async function runSubagent(tc, base) {
   return { ...base, ok: false, content: head + (rec.error ? '\nGrund: ' + rec.error : '') };
 }
 
-function abortSubagents() {
+function abortSubagents(chat) {
   for (const ctl of SUB.runs.values()) {
+    if (chat && ctl.chat !== chat) continue; // nur die Unteragenten dieses Chats
     ctl.cancel = true;
     if (ctl.run) ctl.run.abort();
   }

@@ -394,11 +394,45 @@ const SV_HIST_MAX = 90;
 function svPushHist(d) {
   const hw = d && d.hardware;
   if (!hw) return;
+  SV.dataTs = performance.now(); // Zeitpunkt der letzten Hardware-Werte (die Strom-Messung nutzt sie, wenn sie frisch sind)
   const live = d.live || {};
   const add = (k, v) => { if (!nn(v)) return; const a = SV_HIST[k] || (SV_HIST[k] = []); a.push(v); if (a.length > SV_HIST_MAX) a.shift(); };
   for (const k of ['gpu_util', 'gpu_mem_used', 'gpu_temp', 'gpu_power', 'cpu', 'ram_used', 'disk_read_mb', 'gpu_pcie_rx_mb']) add(k, hw[k]);
   add('tok_s', nn(live.tok_s) ? live.tok_s : hw.tok_s);
 }
+/* ───── Stromverbrauch aus der GPU-Leistung ─────
+   Während einer Antwort liest die LLM Box jede Sekunde gpu_power (Watt) aus dem Monitor des Servers und rechnet
+   Watt × Sekunden in Wattstunden um (Trapezregel). Das läuft unabhängig davon, ob der Monitor offen ist. */
+const svPowerPrice = () => +(S.settings.pricing && S.settings.pricing.powerPrice) || 0;
+// Nur messen, wenn der Chat auf demselben Server läuft, den der Monitor überwacht, und es kein Cloud-Dienst ist
+function svPowerEligible(conn) {
+  try { return !!conn && svDockEligible() && svRoot(conn) === svRoot(svConn()); } catch { return false; }
+}
+// Aktuelle GPU-Leistung in Watt oder null. Frische Monitor-Daten werden wiederverwendet, sonst fragt der Sampler selbst ab.
+async function svReadPower() {
+  const hw0 = SV.data && SV.data.hardware;
+  if (hw0 && nn(hw0.gpu_power) && SV.dataTs && performance.now() - SV.dataTs < 1500) return +hw0.gpu_power;
+  const r = await svReq('/metrics', { timeout: 3000 });
+  let j = r.ok ? svUnwrap(r.json) : null;
+  if (!(j && j.hardware) && (svIsHtml(r) || r.status === 404)) { const h = await svTryHost(); j = h && h.data; } // Strata-Desktop-App
+  const w = j && j.hardware ? j.hardware.gpu_power : null;
+  return nn(w) && +w >= 0 ? +w : null;
+}
+// Energie-Zähler einer Anfrage: ws = Wattsekunden, w/t = letzter Messwert, n = Anzahl Messwerte
+function enAdd(en, w, now) {
+  if (!en || !nn(w)) return;
+  const dt = Math.min(5, Math.max(0, (now - en.t) / 1000)); // eine Lücke zählt höchstens 5 s
+  en.ws += (en.w === null ? w : (en.w + w) / 2) * dt;
+  en.w = w;
+  en.t = now;
+  en.n++;
+}
+function enClose(en, now) { // Rest bis zum Ende der Anfrage mit dem letzten Messwert
+  if (!en || en.w === null) return;
+  en.ws += en.w * Math.min(5, Math.max(0, (now - en.t) / 1000));
+  en.t = now;
+}
+
 function svSeries(d, key) {
   const s = (d && d.history || {})[key];
   return Array.isArray(s) && s.filter(nn).length >= 2 ? s : (SV_HIST[key] || []);

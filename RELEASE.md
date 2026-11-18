@@ -1,10 +1,15 @@
-# LLM Box 1.0.67 (Windows und Android)
+# LLM Box 1.0.70 (Android) · Windows-Fassung 1.0.67
 
-**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.67** gebaut und liegen fertig im
-Ordner `download/` (Setup, portable EXE, APK). Die Android-Fassung trägt **1.0.67-android**
-(versionCode 69) und ist auf zwei Handys installiert. Beide Fassungen entstehen aus **derselben
+**Stand dieser Datei:** Die Android-Fassung ist auf **1.0.70** gebaut und als Datei am GitHub-Release
+[1.0.70](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70) eingestellt
+(`LLM-Box-1.0.70-android.apk`, versionCode 70). Die Desktop-Quelle steht ebenfalls auf 1.0.70; die
+zuletzt gebauten Windows-Programmdateien stammen von 1.0.67 und hängen als Assets am Release
+[1.0.67](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.67). Im Repository liegen sie nicht mehr – die Windows-Programme sind rund
+84 MB. Die Android-Fassung trägt **1.0.70-android**
+(versionCode 70). Beide Fassungen entstehen aus **derselben
 Quelle** (`llm-box/`), die Android-Oberfläche wird beim Bauen aus den Dateien von `llm-box/renderer/`
-erzeugt. Vorgängerversion auf GitHub: [v1.0.50](https://github.com/ReuschlerIT/LLM-Box/releases/tag/v1.0.50)
+erzeugt. Vorgängerversion auf GitHub: [1.0.65](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.65),
+[v1.0.50](https://github.com/ReuschlerIT/LLM-Box/releases/tag/v1.0.50)
 
 Die aktuelle Fassung bringt **Deutsch, English und Français** für die gesamte Oberfläche (mit
 Sprachabfrage beim allerersten Start), ein **Modellprofil für kleine, stark quantisierte Modelle (IQ3)**
@@ -14,13 +19,14 @@ und damit deutlich weniger vorzeitige Abbrüche im Werkzeugmodus. Die Vorgänger
 
 ## Programme
 
-Windows- und Android-Programme (Stand 1.0.67, alle aus derselben Quelle gebaut):
+Android-Programm der aktuellen Fassung und die zuletzt gebauten Windows-Programme
+(alle aus derselben Quelle, als Dateien am GitHub-Release):
 
-| Datei | Für | Größe |
-|---|---|---|
-| `LLM.Box.Setup.1.0.67.exe` | Windows 10/11, Installer | 84,0 MB |
-| `LLM.Box.1.0.67.portable.exe` | Windows 10/11, ohne Installation | 83,7 MB |
-| `LLM-Box-1.0.67-android.apk` | Android 8.0 oder neuer, Fassung 1.0.67-android | 11,0 MB |
+| Datei | Für | Größe | Release |
+|---|---|---|---|
+| `LLM-Box-1.0.70-android.apk` | Android 8.0 oder neuer, Fassung 1.0.70-android | 10,6 MB | 1.0.70 |
+| `LLM.Box.Setup.1.0.67.exe` | Windows 10/11, Installer | 84,0 MB | 1.0.67 |
+| `LLM.Box.1.0.67.portable.exe` | Windows 10/11, ohne Installation | 83,7 MB | 1.0.67 |
 
 Beide Fassungen haben dieselbe Oberfläche und dasselbe Chat-Format. Bestehende Einstellungen,
 Verbindungen und Chats bleiben beim Update erhalten.
@@ -236,6 +242,29 @@ Windows-Änderungen dieses Zeitraums stecken in 1.0.63.
   Satztrennung in `i18n.js`: sie zerteilte „1 Mio. Token“ am Punkt der Abkürzung, übersetzt wurde nur
   der zweite Teilsatz. Neu: `splitSentences()` mit Abkürzungsliste (`ABBREV_RE`).
 
+### Version 1.0.68
+- **Neu: Claude (Anthropic) als eigener Verbindungstyp** – Messages-API mit Streaming, Werkzeugen,
+  Bildern, Stop-Sequenzen, Denkaufwand („Adaptiv + effort" oder festes Budget) und Prompt-Caching;
+  eigene Diagnose mit Testanfrage von höchstens 16 Token.
+
+### Version 1.0.69 und 1.0.70 (gemeinsamer Abschnitt)
+- **Neu: Stromverbrauch.** Einstellung „Strompreis (€ je kWh)" unter *Einstellungen → Kosten*,
+  sekundliche GPU-Leistungsmessung des überwachten Servers, Anzeige „Strom ≈ … €" in der Statuszeile
+  und Stromkosten pro Antwort.
+- **Neu: Hinweise an die laufende KI.** Eingaben während einer Antwort gehen als Hinweis in den
+  laufenden Auftrag (`inbox`) und werden nach dem aktuellen Schritt zugestellt; der Knopf „Jetzt"
+  unterbricht die Antwort sofort. Nicht zugestellte Hinweise kommen ins Eingabefeld zurück.
+- **Neu: mehrere Aufträge pro Chat** (`RUNS`, `viewRun()`, `discardAllRuns`), Werkzeugkarten an den
+  Auftrag gebunden (`tlClear(R)`), Unteragenten an den Chat (`owner: chat.id`).
+- **Behoben:** unübersetzter Platzhalter „(Fortsetzung des Gesprächs)"; zwei veraltete
+  Wörterbuch-Einträge zum alten Vormerken entfernt.
+- **Android-Bau:** mehrzeilige Suchtexte der Build-Patches werden an die Zeilenenden der Quelle
+  angepasst (die Quelle liefert CRLF, die Skript-Here-Strings sind LF – sonst findet der
+  Statuszeilen-Patch seinen Text nicht). Neue Stromangabe zusätzlich in eine eigene
+  Statuszeilen-Zeile verpackt. Zwei neue Prüfläufe: `tools-android\patch-check.js` (alle
+  Patch-Suchtexte gegen die Quelle, ohne zu bauen) und `tools-android\bruecken-check.js`
+  (verweist die Android-Brücke noch auf existierende Interna der Desktop-Seite).
+
 ---
 
 ## Geprüft
@@ -257,9 +286,16 @@ Belege für die Performance-Angaben stammen aus Messungen an echten Chat-Dateien
 einzelnen Sitzungen stehen in `llm-box/UPDATE.md` zusammengefasst, jede Version dort als eigener
 Abschnitt seit 1.0.36.
 
+**Android-Fassung 1.0.70-android (versionCode 70):** gebaut aus einer bereinigten Kopie mit
+`build-now.ps1`, APK 11.084.346 B. Alle 16 Android-Anpassungen griffen (2 meldeten „bereits
+gepatcht", weil die Desktop-Quelle inzwischen selbst mit hellem Design startet). Alle 11 Prüfläufe
+mit 0 Fehlern, Übersetzungsprüfung jetzt wieder 24 Prüfungen, 0 Fehler. **Am Gerät wurde diese
+Fassung nicht geprüft** – die beiden bekannten Testhandys waren nicht erreichbar. Die neuen
+Funktionen (Strom, Hinweise, mehrere Aufträge) sind nur in der simulierten WebView-Oberfläche geprüft.
+
 **Windows-Fassung 1.0.67:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
-aus derselben Quelle wie die APK. Beide Programmdateien und die APK wurden vor dem Einstellen in
-`download/` mit `tools-android\scan-persoenlich.js` geprüft: keine echten personenbezogenen Werte
+aus derselben Quelle wie die damalige APK. Beide Programmdateien und die APK wurden vor dem Einstellen am
+GitHub-Release mit `tools-android\scan-persoenlich.js` geprüft: keine echten personenbezogenen Werte
 (keine internen IP-Adressen, Laufwerksbuchstaben, Freigabenamen, Rechner- oder Gerätenamen). Die
 Quelldateien im Repository nutzen durchgehend Beispielwerte aus dem Testnetz nach RFC 5737
 (`192.0.2.x`) und den Beispielordner `D:\MeinProjekt`.

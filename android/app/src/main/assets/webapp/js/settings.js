@@ -64,7 +64,7 @@ kein Mittel für Zugriff auf fremde, nicht dir gehörende Konten/Server.`,
     target: { mode: 'local', bin: 'strata', host: '', user: '', port: 22, key: '', remoteOs: 'linux' },
     launch: { preset: '', family: '', model: '', modelPath: '', dataDir: '', context: '', kv: '', vision: '', parallel: '', mtp: '', tune: '', gpu: '', access: '', port: '', apiKey: '', noApiKey: false, extra: '', savePreset: '', restart: false },
   },
-  pricing: { enabled: true, eur: true, preset: 'avg', priceIn: 1.8, priceOut: 9.6, usdToEur: 0.9 },
+  pricing: { enabled: true, eur: true, preset: 'avg', priceIn: 1.8, priceOut: 9.6, usdToEur: 0.9, powerPrice: 0 },
   workspace: { path: '', toolsEnabled: false, askUser: true, askUserAlways: false, subagents: true, subagentSteps: 12, handoff: true, handoffMode: 'clear', handoffPct: 70, handoffAutoSend: true, approval: 'write', execEnabled: false, execTimeout: 120, maxSteps: 25, readKB: 40, autoCompact: true, ctxBudgetPct: 80, keepToolResults: 3, maxFileKB: 512, maxFiles: 60, maxTotalKB: 1024, ignore: 'node_modules,.git,.venv,__pycache__,dist,build,.next,.idea,.vscode' },
 };
 
@@ -188,6 +188,7 @@ const PRESETS = [
   { name: 'llama.cpp / llamafile', type: 'openai', baseUrl: 'http://localhost:8080/v1', extraParams: true, thinkMode: 'template' },
   { name: 'vLLM', type: 'openai', baseUrl: 'http://localhost:8000/v1', extraParams: true, thinkMode: 'template' },
   { name: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1' },
+  { name: 'Anthropic (Claude)', type: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', thinkMode: 'adaptive', samplingMode: 'server' },
   { name: 'OpenRouter', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1', thinkMode: 'openrouter' },
   { name: 'Groq', type: 'openai', baseUrl: 'https://api.groq.com/openai/v1' },
   { name: 'Eigene (OpenAI-kompatibel)', type: 'openai', baseUrl: 'http://localhost:5000/v1' },
@@ -317,7 +318,7 @@ function tabConnections() {
         s.addEventListener('change', () => {
           if (s.value === '') return;
           const p = PRESETS[+s.value];
-          const c = { id: uid(), name: p.name, type: p.type, baseUrl: p.baseUrl, apiKey: '', extraParams: !!p.extraParams, thinkMode: p.thinkMode || 'effort' };
+          const c = { id: uid(), name: p.name, type: p.type, baseUrl: p.baseUrl, apiKey: '', extraParams: !!p.extraParams, thinkMode: p.thinkMode || 'effort', ...(p.samplingMode ? { samplingMode: p.samplingMode } : {}) };
           conns.push(c);
           if (!S.settings.activeConnection) S.settings.activeConnection = c.id; // erste Verbindung wird automatisch die aktive
           sel = c.id;
@@ -332,18 +333,32 @@ function tabConnections() {
     if (conn) {
       const nameIn = el('input', { type: 'text', value: conn.name });
       nameIn.addEventListener('input', () => { conn.name = nameIn.value; changed(); });
-      const typeSel = el('select', {}, el('option', { value: 'ollama', text: 'Ollama (native API)' }), el('option', { value: 'openai', text: 'OpenAI-kompatibel' }));
+      const typeSel = el('select', {}, el('option', { value: 'ollama', text: 'Ollama (native API)' }), el('option', { value: 'openai', text: 'OpenAI-kompatibel' }), el('option', { value: 'anthropic', text: 'Anthropic (Claude API)' }));
       typeSel.value = conn.type;
-      typeSel.addEventListener('change', () => { conn.type = typeSel.value; changed(); render(); });
+      typeSel.addEventListener('change', () => {
+        conn.type = typeSel.value;
+        if (conn.type === 'anthropic') {
+          // Sinnvolle Voreinstellungen für Claude: Adresse, adaptives Denken, keine Sampling-Werte (neuere Modelle lehnen sie ab)
+          if (!conn.baseUrl || /localhost|127\.0\.0\.1/i.test(conn.baseUrl)) conn.baseUrl = 'https://api.anthropic.com/v1';
+          conn.thinkMode = 'adaptive';
+          conn.samplingMode = 'server';
+          conn.extraParams = false;
+        } else if (conn.thinkMode === 'adaptive' || conn.thinkMode === 'budget') conn.thinkMode = 'effort';
+        changed();
+        render();
+      });
       const urlIn = el('input', { type: 'text', value: conn.baseUrl, placeholder: 'http://localhost:11434' });
       urlIn.addEventListener('input', () => { conn.baseUrl = urlIn.value.trim(); changed(); });
-      const keyIn = el('input', { type: 'password', value: conn.apiKey || '', placeholder: 'optional bei lokalen Servern' });
+      const keyIn = el('input', { type: 'password', value: conn.apiKey || '', placeholder: conn.type === 'anthropic' ? 'sk-ant-…' : 'optional bei lokalen Servern' });
       keyIn.addEventListener('input', () => { conn.apiKey = keyIn.value.trim(); changed(); });
       const extra = el('input', { type: 'checkbox' });
       extra.checked = !!conn.extraParams;
       extra.addEventListener('change', () => { conn.extraParams = extra.checked; changed(); });
 
-      const thinkSel = el('select', {}, [['effort', 'reasoning_effort (OpenAI, LM Studio, vLLM)'], ['template', 'Chat-Template (llama.cpp, vLLM, Qwen3)'], ['openrouter', 'reasoning (OpenRouter)'], ['none', 'Nicht senden']].map(([v, l]) => el('option', { value: v, text: l })));
+      const thinkOpts = conn.type === 'anthropic'
+        ? [['adaptive', 'Adaptiv + effort (Claude Opus/Sonnet 4.6 und neuer)'], ['budget', 'Festes Token-Budget (ältere Modelle, 4.5 und früher)'], ['none', 'Nicht senden']]
+        : [['effort', 'reasoning_effort (OpenAI, LM Studio, vLLM)'], ['template', 'Chat-Template (llama.cpp, vLLM, Qwen3)'], ['openrouter', 'reasoning (OpenRouter)'], ['none', 'Nicht senden']];
+      const thinkSel = el('select', {}, thinkOpts.map(([v, l]) => el('option', { value: v, text: l })));
       thinkSel.value = LLM.thinkModeOf(conn);
       thinkSel.addEventListener('change', () => { conn.thinkMode = thinkSel.value; changed(); });
 
@@ -354,6 +369,10 @@ function tabConnections() {
       const sampSel = el('select', {}, [['app', 'Von der App senden (Temperatur, Top-P, Top-K, Penalty … aus „Modell & Parameter“)'], ['server', 'Dem Server überlassen (nichts davon senden)']].map(([v, l]) => el('option', { value: v, text: l })));
       sampSel.value = conn.samplingMode || 'app';
       sampSel.addEventListener('change', () => { conn.samplingMode = sampSel.value; changed(); });
+
+      const cacheIn = el('input', { type: 'checkbox' });
+      cacheIn.checked = conn.promptCache !== false;
+      cacheIn.addEventListener('change', () => { conn.promptCache = cacheIn.checked; changed(); });
 
       const pIn = el('input', { type: 'number', min: 0, step: 0.01, value: conn.priceIn ?? '', placeholder: 'global' });
       const pOut = el('input', { type: 'number', min: 0, step: 0.01, value: conn.priceOut ?? '', placeholder: 'global' });
@@ -386,13 +405,14 @@ function tabConnections() {
           const mid = (conn.id === S.settings.activeConnection && S.settings.model && models.some((m) => m.id === S.settings.model)) ? S.settings.model : (models[0] && models[0].id);
           if (mid) {
             const inf = await LLM.modelInfo(conn, mid, models);
+            if (conn.type === 'anthropic') { if (inf.ctx) result.textContent += `\nEingabe-Limit laut Anthropic: ${fmt.num(inf.ctx)} Tokens (${mid}).`; } else
             result.textContent += inf.ctx
               ? `\nKontext laut Server: ${fmt.num(inf.ctx)} Tokens (${inf.ctxKey} aus ${inf.ctxSource}${inf.runtime ? '' : ', Trainings-Maximum'}).`
               : `\nKeine Kontextgröße gefunden. Antwortende Endpunkte: ${inf.answered.join(', ') || 'keine'}. Felder von /models: ${inf.entryKeys.join(', ') || '–'}. Trage die Kontextlänge dann unter „Modell & Parameter“ von Hand ein oder wähle die Strata-Konfigdatei.${inf.cfgError ? ' Konfigdatei: ' + inf.cfgError : ''}`;
           }
         } catch (e) {
           result.className = 'test-result err';
-          result.textContent = e.message + (conn.type === 'ollama' ? '\nLäuft Ollama? Starte es mit „ollama serve“.' : '') + '\n\nTipp: „Verbindung genau prüfen“ zeigt, woran es liegt.';
+          result.textContent = e.message + (conn.type === 'ollama' ? '\nLäuft Ollama? Starte es mit „ollama serve“.' : conn.type === 'anthropic' ? '\nStimmt der API-Schlüssel (console.anthropic.com), und ist Guthaben vorhanden?' : '') + '\n\nTipp: „Verbindung genau prüfen“ zeigt, woran es liegt.';
         }
       } });
       const delBtn = el('button', { class: 'btn danger', text: 'Entfernen', onclick: async () => {
@@ -406,14 +426,15 @@ function tabConnections() {
 
       editor.append(
         frow('Name', null, nameIn),
-        frow('Typ', 'Ollama nutzt /api/chat. Alles andere (LM Studio, llama.cpp, vLLM, OpenAI …) nutzt /chat/completions.', typeSel),
-        frow('Basis-Adresse', conn.type === 'ollama' ? 'Ohne /api am Ende.' : 'Inklusive /v1.', urlIn),
-        frow('API-Schlüssel', 'Wird lokal im Datenordner gespeichert.', keyIn),
+        frow('Typ', 'Ollama nutzt /api/chat. Anthropic (Claude) nutzt /v1/messages. Alles andere (LM Studio, llama.cpp, vLLM, OpenAI …) nutzt /chat/completions.', typeSel),
+        frow('Basis-Adresse', conn.type === 'ollama' ? 'Ohne /api am Ende.' : conn.type === 'anthropic' ? 'Standard: https://api.anthropic.com/v1 (ein fehlendes /v1 wird ergänzt).' : 'Inklusive /v1.', urlIn),
+        frow('API-Schlüssel', conn.type === 'anthropic' ? 'Pflicht. Erzeuge ihn unter console.anthropic.com → API Keys. Er wird lokal im Datenordner gespeichert. Die Abrechnung läuft über dein Anthropic-Konto, nicht über ein Claude-Abo. Chat-Inhalte und Dateien, die die KI liest, werden an Anthropic gesendet.' : 'Wird lokal im Datenordner gespeichert.', keyIn),
         conn.type === 'openai' ? frow('Erweiterte Parameter senden', 'top_k und repeat_penalty mitschicken. Für llama.cpp, LM Studio, vLLM. Bei OpenAI ausschalten.', el('label', { class: 'switch' }, extra, el('span'))) : null,
         frow('Eigener Preis (€ je 1 Mio. Token)', 'Optional. Leer = globale Preise aus dem Tab „Kosten“. Links Eingabe, rechts Ausgabe.', [pIn, pOut]),
         frow('Sampling-Parameter', 'Die App sendet standardmäßig Temperatur, Top-P, Top-K und Wiederholungs-Strafe mit. Die Weboberfläche eines Servers (z. B. Strata) schickt meist weniger oder andere Werte. Abweichende Werte können Qualität und Geschwindigkeit verändern, besonders bei spekulativem Decodieren (MTP). Mit „Dem Server überlassen“ gelten seine Standardwerte. Unter jeder Antwort zeigt „Anfrage“ genau, was gesendet wurde.', sampSel),
         conn.type === 'openai' ? frow('Bildausgabe', 'Damit ein Modell Bilder erzeugen darf, muss die Anfrage das ausdrücklich verlangen (modalities: image, text). Ohne das antwortet auch ein bildfähiges Modell nur mit Text und sagt, es könne keine Bilder erzeugen. „Immer anfordern“ nur für Modelle, die Bilder ausgeben können, sonst lehnt der Server die Anfrage ab.', imgSel) : null,
-        conn.type === 'openai' ? frow('Denkaufwand senden als', 'Bestimmt, wie die Auswahl „Denken“ im Eingabefeld an den Server geht. Bei llama.cpp mit Qwen3 und ähnlichen Modellen: Chat-Template.', thinkSel) : null,
+        conn.type !== 'ollama' ? frow('Denkaufwand senden als', 'Bestimmt, wie die Auswahl „Denken“ im Eingabefeld an den Server geht. Bei llama.cpp mit Qwen3 und ähnlichen Modellen: Chat-Template.', thinkSel) : null,
+        conn.type === 'anthropic' ? frow('Prompt-Caching', 'Markiert System-Prompt, Werkzeuge und den bisherigen Verlauf zum Zwischenspeichern. Zwischengespeicherte Token kosten beim Lesen nur etwa ein Zehntel, das erste Schreiben etwas mehr. Lohnt sich bei langen Arbeits-Sitzungen mit Werkzeugen. Ausschalten für einzelne Fragen ohne Verlauf.', el('label', { class: 'switch' }, cacheIn, el('span'))) : null,
         conn.type === 'openai' ? frow('Strata-Konfigdatei (optional)', 'Falls der Server die Kontextgröße nicht meldet (Strata tut das bei der „native“-Instanz nicht): Datei „strata-….json“ wählen. Die App liest daraus „--max-context“. Beispiel: die Datei, die du mir gezeigt hast.', (() => {
           const inp = el('input', { type: 'text', value: conn.configPath || '', placeholder: 'C:\\…\\strata-iq3_s.json' });
           inp.addEventListener('input', () => { conn.configPath = inp.value.trim(); changed(); });
@@ -801,6 +822,17 @@ function tabCosts() {
       if (p.preset !== 'custom') { applyPreset(); commit(); render(); rate.focus(); } else commit();
     });
 
+    // Strompreis (€ je kWh): 0 = Stromkosten aus. Die Energie wird aus der GPU-Leistung des Monitors (gpu_power) berechnet.
+    const powerBox = el('div', { class: 'font-sample' });
+    function powerExample() {
+      const pp = +p.powerPrice || 0;
+      powerBox.textContent = pp > 0
+        ? `Beispiel: GPU mit 300 W über 1 Stunde = 0,3 kWh ≈ ${fmt.money(0.3 * pp, 'EUR')}`
+        : 'Strompreis 0 = Stromkosten werden nicht angezeigt.';
+    }
+    const powerIn = el('input', { type: 'number', min: 0, step: 0.01, value: p.powerPrice || '', placeholder: '0,35' });
+    powerIn.addEventListener('input', () => { p.powerPrice = powerIn.value === '' ? 0 : Math.max(0, +powerIn.value || 0); commit(); powerExample(); });
+
     const exampleBox = el('div', { class: 'font-sample' });
     function example() {
       const v = (25000 * (+p.priceIn || 0) + 1000 * (+p.priceOut || 0)) / 1e6;
@@ -815,9 +847,12 @@ function tabCosts() {
       frow('Preis Ausgabe (€ je 1 Mio. Token)', 'Von der KI erzeugte Tokens, inklusive Gedankengang.', num('priceOut')),
       frow('Wechselkurs für Vorlagen (1 USD in €)', 'Die Vorlagen sind US-Listenpreise und werden mit diesem Kurs in € umgerechnet. Ungefährer Wert, bitte bei Bedarf anpassen.', rate),
       exampleBox,
+      frow('Strompreis (€ je kWh)', 'Optional. Die LLM Box liest während jeder Antwort die GPU-Leistung (Watt) aus dem Server-Monitor, rechnet sie über die Zeit in Kilowattstunden um und zeigt die Stromkosten vor den Gesamtkosten unter dem Eingabefeld und unter jeder Antwort. Leer oder 0 = aus. Gemessen wird nur die GPU des Strata-Servers, den der Monitor überwacht (Verbindung im Fenster „Server“), ohne CPU, Netzteil-Verluste und den übrigen Rechner.', powerIn),
+      powerBox,
       el('div', { class: 'fhint', style: { marginTop: '14px', color: 'var(--text-faint)', fontSize: '12.5px', lineHeight: 1.55 }, text: 'Das ist ein Vergleichswert: Er zeigt, was dieselbe Nutzung bei einem Cloud-Anbieter zu Listenpreisen kosten würde. Lokale Modelle verursachen keine API-Kosten. Zwischengespeicherte Tokens (Cache), Rabatte und Steuern sind nicht berücksichtigt, die Anzeige ist eine Schätzung. Für einzelne Verbindungen kannst du unter „Verbindungen“ eigene Preise in € eintragen.' })
     );
     example();
+    powerExample();
   }
   render();
   return wrap;
@@ -1052,6 +1087,7 @@ function tabData() {
       } })),
       frow('Alle Chats löschen', 'Unwiderruflich.', el('button', { class: 'btn sm danger', text: 'Löschen …', onclick: async () => {
         if (!(await confirmModal('Alle Chats löschen', 'Alle gespeicherten Unterhaltungen werden unwiderruflich gelöscht.', { okLabel: 'Alles löschen', danger: true }))) return;
+        discardAllRuns(); // laufende Antworten beenden, ohne dass sie ihre Chats wieder anlegen
         await api.chats.deleteAll();
         await loadChatList();
         newChat();
@@ -1208,12 +1244,65 @@ async function runSpeedTest(conn, show) {
 }
 
 
+/* ═════════════ Verbindung genau prüfen: Anthropic (Claude) ═════════════
+   Modellliste und eine winzige Testanfrage (Bruchteil eines Cents): trennt falschen Schlüssel, falsche Adresse, Netzwerkproblem und fehlendes Guthaben. */
+async function diagnoseAnthropic(conn, out) {
+  const base = LLM.anthropicBase(conn);
+  const key = String(conn.apiKey || '').trim();
+  out(`Adresse: ${base}`);
+  out(`Typ: Anthropic (Claude API) · API-Schlüssel: ${key ? 'eingetragen und wird gesendet' : 'keiner eingetragen'}`);
+  out();
+  if (!key) return out('Ohne API-Schlüssel lehnt die Claude-API jede Anfrage ab. Erzeuge einen unter console.anthropic.com → API Keys und trage ihn oben ein.');
+  if (!/^sk-ant-/.test(key)) out('Hinweis: Schlüssel von Anthropic beginnen normalerweise mit „sk-ant-“. Stammt er von einem anderen Anbieter, wähle den Typ „OpenAI-kompatibel“.\n');
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': key };
+  const msgOf = (r) => { try { const j = JSON.parse(r.text); return (j.error && j.error.message) || j.message || ''; } catch { return String(r.text || '').replace(/\s+/g, ' ').slice(0, 160); } };
+  const call = async (url, method, body, timeout) => {
+    const t0 = performance.now();
+    let r;
+    try { r = await api.fetch({ url, method, headers, body, timeout }); } catch (e) { r = { ok: false, status: 0, error: e.message }; }
+    return { ...r, ms: Math.round(performance.now() - t0) };
+  };
+  const why = (r) => {
+    if (r.status === 0) {
+      const c = String(r.error || '');
+      if (/ENOTFOUND|EAI_AGAIN/i.test(c)) return 'Der Rechnername ist nicht auflösbar: kein Internet, DNS- oder Proxy-Problem.';
+      if (/ETIMEDOUT|Zeit/i.test(c)) return 'Keine Antwort innerhalb der Zeit: Firewall, Proxy oder keine Internetverbindung.';
+      if (/CERT|SSL|TLS/i.test(c)) return 'Zertifikatsfehler: Ein Proxy oder Virenscanner greift in die verschlüsselte Verbindung ein.';
+      return 'Keine Verbindung zum Server.';
+    }
+    if (r.status === 401) return 'Der API-Schlüssel wurde abgelehnt (ungültig, widerrufen oder falsch kopiert, z. B. mit Leerzeichen).';
+    if (r.status === 403) return 'Zugriff verweigert: Der Schlüssel darf das nicht, oder das Land bzw. Netzwerk ist gesperrt.';
+    if (r.status === 404) return 'Adresse oder Modell nicht gefunden. Die Basis-Adresse sollte https://api.anthropic.com/v1 sein.';
+    if (r.status === 429) return 'Anfragelimit erreicht. Kurz warten und erneut versuchen.';
+    if (r.status === 529) return 'Anthropic ist gerade überlastet. Später erneut versuchen.';
+    if (/credit balance|billing/i.test(msgOf(r))) return 'Kein Guthaben: Unter console.anthropic.com → Plans & Billing Guthaben aufladen oder eine Zahlungsart hinterlegen.';
+    return `Status ${r.status}: ${msgOf(r)}`;
+  };
+  const m = await call(base + '/models?limit=1000', 'GET', undefined, 10000);
+  let models = [];
+  try { models = (JSON.parse(m.text).data || []).map((x) => x.id).filter(Boolean); } catch {}
+  out(`1) Modellliste  GET /models  →  ${m.status || 'keine Antwort'} (${m.ms} ms)${m.error ? '  Fehler: ' + m.error : ''}`);
+  if (!m.ok) return out('\nErgebnis: ' + why(m));
+  out(`   ${models.length} Modell${models.length === 1 ? '' : 'e'}: ${models.slice(0, 6).join(', ') || '–'}`);
+  if (!models.length) return out('\nErgebnis: Der Schlüssel ist gültig, sieht aber kein Modell.');
+  const test = models.find((x) => /haiku/i.test(x)) || models[0];
+  out();
+  out(`2) Testanfrage  POST /messages (${test}, höchstens 16 Token) …`);
+  const r = await call(base + '/messages', 'POST', JSON.stringify({ model: test, max_tokens: 16, messages: [{ role: 'user', content: 'Antworte nur mit: OK' }] }), 30000);
+  let answer = '';
+  try { answer = ((JSON.parse(r.text).content || []).find((b) => b.type === 'text') || {}).text || ''; } catch {}
+  out(`   →  ${r.status || 'keine Antwort'} (${r.ms} ms)${r.ok ? '  Antwort: „' + answer.trim().slice(0, 60) + '“' : r.error ? '  Fehler: ' + r.error : ''}`);
+  out();
+  out(r.ok ? 'Ergebnis: Alles in Ordnung. Schlüssel, Adresse, Netzwerk und Guthaben funktionieren.' : 'Ergebnis: ' + why(r));
+}
+
 /* ═════════════ Verbindung genau prüfen ═════════════
    Fragt die wichtigen Adressen einzeln ab und erklärt Statuscode und Fehler. Hilft, wenn „Verbindung testen“ scheitert oder die App
    ein geladenes Modell nicht sieht (falsche Adresse, fehlender oder veralteter API-Schlüssel, Firewall, anderer Port). */
 async function diagnoseConnection(conn, show) {
   const lines = [];
   const out = (t = '') => { lines.push(t); show(lines.join('\n')); };
+  if (conn.type === 'anthropic') return diagnoseAnthropic(conn, out);
   const base = String(conn.baseUrl || '').trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(base)) return out('Die Basis-Adresse muss mit http:// oder https:// beginnen, z. B. http://localhost:8080/v1');
   const hasKey = !!conn.apiKey;
