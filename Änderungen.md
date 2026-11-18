@@ -2696,3 +2696,31 @@ ausgefuehrt.**
   Funktionen sind ausschliesslich in der simulierten WebView geprueft, (b) Claude-Anbindung mit
   echtem Schluessel testen, (c) entscheiden, ob die alten Commits bei GitHub gemeldet werden sollen.
 
+## 115. Windows-Setup und portable EXE zu 1.0.70 gebaut (Release vervollstaendigt)
+
+- **Fund:** Der Nutzer wies darauf hin, dass im Release 1.0.70 die beiden Windows-Programme fehlen.
+  Bestaetigt: es war nur die APK gebaut, `llm-box\dist` war bei der Bereinigung der Kopie geloescht.
+- **Gebaut:** `cd C:\LLM-Box-build\llm-box && npm run dist` (electron-builder 25.1.8,
+  electron 33.4.11) -> `LLM Box Setup 1.0.70.exe` **84.000.391 B** (SHA256 `1d546bde...89f46`) und
+  `LLM Box 1.0.70.exe` **83.758.160 B** (SHA256 `be6c0741...398a`). Log `tmp-win-dist70.txt`.
+  Kein Signaturzertifikat vorhanden - electron-builder meldet "signing is skipped" (wie bei 1.0.67).
+- **Endscan:** `scan-persoenlich.js` braucht zwingend `--max`, sonst ueberspringt es die EXEs
+  ("uebersprungen: 2", 0 Treffer - ein leicht zu uebersehender Scheinerfolg). Mit `--max 200000000`:
+  je **4 Fundstellen** pro EXE, alles Zufallsbytefolgen im komprimierten Code (identische Muster wie
+  bei 1.0.67). Entpacktes `app.asar` mit `tools-android\asar-read.js --out` (427 Dateien):
+  **5 Fundstellen** - Urheberangabe "Timothy J Fontaine <tjfontaine@gmail.com>" in
+  `node_modules\fast-xml-parser\src\cli\read.js` plus vier UAC-Wortmeldungen. Veroeffentlichbar.
+- **Release aktualisiert:** https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70 heisst jetzt
+  "LLM Box 1.0.70 (Windows und Android)" und hat drei Assets (APK 11.084.346 B, portable
+  83.758.160 B, Setup 84.000.391 B). Release-Text (`tmp-release-70.md`) neu gefasst:
+  Datentabelle ohne den Hinweis "kein Windows-Setup gebaut", Gepraeft-Teil um die EXE- und
+  asar-Scans ergaenzt.
+- **Doku nachgezogen:** `README.md` (Download-Tabelle auf 1.0.70 fuer alle drei), `RELEASE.md`
+  (Titel, Kopf, Programmtabelle, Gepraeft-Abschnitt "Windows-Fassung 1.0.70"),
+  `llm-box\UPDATE.md` und die Root-Kopie (Gepraeft-Teil). Repo-Abgleich gefahren
+  (`tmp-repo-apply-70b.txt`), Commit **`f4dd60f`** (4 Dateien, 33+/27-), gepusht, Tag `1.0.70`
+  nachgezogen (`42e2556...f4dd60f`). `main` == `origin/main` == `f4dd60f`, Arbeitsverzeichnis sauber.
+  Die EXEs liegen weiterhin **nur am Release**, nicht im Repo.
+- **Naechster Schritt:** Windows-Programm installieren und starten (bislang nur gebaut und gescannt,
+  nie ausgefuehrt), Claude-Anbindung mit echtem Schluessel testen, Geraetetest der APK.
+
