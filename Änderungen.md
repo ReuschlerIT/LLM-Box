@@ -2631,3 +2631,68 @@ ausgefuehrt.**
   ergaenzen, (d) 1.0.70 in `UPDATE.md` dokumentieren, (e) Repo-Stand und Release auf 1.0.70 ziehen -
   zusammen mit dem offenen force push aus Abschnitt 112.
 
+## 114. force push ausgefuehrt, Release 1.0.70 eingestellt, i18n repariert
+
+- **i18n repariert (beides, wie gewuenscht):** In `llm-box\renderer\js\i18n-lex.js` Zeile 111/112
+  standen zwei Woerterbuch-Schluessel, die in keinem Quelltext mehr vorkamen ("wird gesendet, sobald
+  die KI fertig ist" und "Vormerken – wird gesendet, sobald die KI fertig ist") - 1.0.70 hat den
+  Hinweis-Mechanismus (`inbox`, "wird nach dem aktuellen Schritt zugestellt", "Jetzt") eingefuehrt,
+  dessen Texte bereits in `i18n-lex-settings.js` uebersetzt sind. Beide Eintraege entfernt, dafuer
+  der bisher unuebersetzte Platzhalter "(Fortsetzung des Gespraechs)" ergaenzt (Fundstelle:
+  `llm.js:336`). `test-i18n.js` damit wieder **24 bestanden, 0 Fehler** (vorher 23/1).
+  Neues Werkzeug `tools-android\claude-strom-i18n.js` prueft die deutschen Beschriftungen des Diffs
+  gegen alle sieben Woerterbuch-Dateien: 4 geprueft, 1 fehlte (genau der Platzhalter).
+  **Wichtig:** `test-i18n.js` prueft in Pruefung 1 nur fuenf Woerterbuch-Dateien, laedt
+  `i18n-lex-full.js` aber erst in Pruefung 7 - ein Schluessel, der nur dort steht, gilt in Pruefung 1
+  als "erfunden". Daserklaert einen Teil der 783 "noch ohne Uebersetzung" in `i18n-fehlt.js`.
+- **Doku-Luecke geschlossen:** `llm-box\UPDATE.md` (und die Root-Kopie) bekamen den Abschnitt
+  "1.0.69 und 1.0.70 (gemeinsamer Abschnitt)" - begruendet damit, dass die Quelle 1.0.70 nennt, aber
+  keinen eigenen Abschnitt fuer 1.0.69 enthaelt. Chronik-Tabelle bis 1.0.70 ergaenzt.
+  **Beide `UPDATE.md` waren vorher uneins:** Root endete bei 1.0.67, `llm-box\UPDATE.md` bei 1.0.68.
+  Jetzt identisch (73.843 B).
+- **Drei Doku-Fehler der vorigen Sitzung gefunden:** (1) Die README-Umstellung auf GitHub-Releases
+  war in der vorigen Sitzung nur in einer Temp-Datei (`tmp-head-readme.md`) gelandet, nie in
+  Workspace oder Repo - die Repo-README verwies weiter auf `download/` mit 1.0.67. (2) Die
+  Workspace-`RELEASE.md` (17.761 B) war eine **aeltere** Fassung als die im Repo (19.131 B).
+  (3) `tmp-repo-apply.ps1` kopierte **kein README.md** in den Repo-Stamm - deshalb blieb die Repo-
+  README unveraendert. Skript ergaenzt (Zeile 35), Aenderungen-Datei bewusst ausgenommen (Name mit
+  Aenderungszeichen, kommt fertig aus der bereinigten Zwischenfassung).
+- **README/RELEASE auf 1.0.70 umgestellt:** Download-Tabelle zeigt jetzt die APK 1.0.70 am Release
+  1.0.70 und die Windows-EXEs am Release 1.0.67. Woerterbuch-Zahl von 1.036/150 auf **1.063/156**
+  berichtigt (gemessen mit `i18n-check.js`). README neuer Abschnitt "Claude-Anbindung (ab 1.0.68)",
+  "Stromverbrauch (ab 1.0.70)", "Hinweise an die laufende KI (ab 1.0.70)". RELEASE.md neuer
+  Gepraeft-Teil: APK 11.084.346 B, 16 Anpassungen, ausdruecklich "am Geraet nicht geprueft".
+- **Repo-Abgleich und Commit:** `tmp-repo-apply.ps1` gefahren (Log `tmp-repo-apply-70.txt`),
+  Aenderungen.md bereinigt aus der Zwischenfassung (198.094 B) eingesetzt. Commit **`4c83103`**:
+  51 Dateien, 5.683+/915-. Neu: `patch-check.js`, `bruecken-check.js`, `claude-strom-i18n.js`,
+  `Änderungen.md`. Die Android-Webapp im Repo ist aktuell (11 Dateien, 818+/290-).
+- **force push ausgefuehrt:** `git push --force-with-lease origin main` ->
+  `+ 0594e2c...4c83103 main -> main (forced update)`. Vorher Sicherungs-Vollklon
+  `C:\GIT-LLM-BOX\LLM-Box-backup-vor-filter.git`. `git filter-repo` hatte `origin` entfernt ->
+  Remote neu gesetzt.
+- **Tags korrigiert (wichtiger Fund):** Die Tags `1.0.65` und `1.0.67` zeigten nach dem filter-repo
+  lokal auf `3c5fd5b`, **auf GitHub aber weiterhin auf `f3bba74`** - einem Commit ausserhalb von
+  `main`, der die **unbereinigte** Aenderungen-Datei enthaelt. Ohne Tag-Push haette jeder, der
+  `1.0.67` herunterlaedt, die belastete Fassung bekommen. `git push --force origin 1.0.65 1.0.67`
+  gesetzt: beide zeigen jetzt auf `3c5fd5b`. Neuer Tag `1.0.70` -> `4c83103`.
+- **Geschichte geprueft:** `git grep` ueber **alle 9 Commits**: 0 Treffer fuer den Projektordner des
+  Nutzers, interne LAN-Adressen (`192.168.` als Suchmuster), Geraet-Seriennummer und Rechnername.
+  Repo-Arbeitsstand gescannt
+  (`tmp-scan-repo70.txt`): 49 Funde, alles Wortmeldungen ("Administratorrechte", UAC), die
+  Suchmuster der eigenen Scan-Werkzeuge und ein Treffer im lokalen Git-Pack.
+- **NICHT erledigt / ehrliche Grenze:** Die alten Commits `0594e2c` und `f3bba74` sind auf GitHub
+  **weiterhin über ihre direkte SHA abrufbar** (geprueft mit `gh api`: Aenderungen.md 187.095 B bzw.
+  181.044 B). Kein Branch und kein Tag zeigt mehr darauf, aber GitHub loescht unerreichte Commits
+  nicht sofort. Wer die Werte endgueltig loswerden will, muss GitHub bitten, die Commits aus dem
+  Cache zu nehmen, oder das Repo neu anlegen.
+- **Release 1.0.70 angelegt:** https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70
+  ("LLM Box 1.0.70 (Android)", Latest). Asset `LLM-Box-1.0.70-android.apk` 11.084.346 B,
+  SHA256 `542558fa...81b26`. Erster Upload hiess `tmp-...` (Temp-Dateiname) - Asset geloescht und
+  unter korrektem Namen neu hochgeladen. Windows-EXEs bleiben am Release 1.0.67, fuer 1.0.70 wurde
+  kein Windows-Setup gebaut.
+- **APK erneut gebaut:** Der `app_build`-Ordner war beim Bereinigungs-Scan geloescht worden;
+  `build-now.ps1` erneut gefahren (25 s, BUILD SUCCESSFUL). Gleiche Groesse wie zuvor.
+- **Naechster Schritt:** (a) Geraet an ADB bringen und die 1.0.70-APK installieren - die neuen
+  Funktionen sind ausschliesslich in der simulierten WebView geprueft, (b) Claude-Anbindung mit
+  echtem Schluessel testen, (c) entscheiden, ob die alten Commits bei GitHub gemeldet werden sollen.
+
