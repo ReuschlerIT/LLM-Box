@@ -20,12 +20,12 @@ Die fertigen Programme hängen als Dateien am jeweiligen GitHub-Release, nicht m
 
 | Datei | Für |
 |---|---|
+| `LLM.Box.Setup.1.0.70.exe` | Windows 10/11 (Installer) |
+| `LLM.Box.1.0.70.portable.exe` | Windows 10/11 (portable, ohne Installation) |
 | `LLM-Box-1.0.70-android.apk` | Android 8.0 oder neuer |
-| `LLM.Box.Setup.1.0.67.exe` | Windows 10/11 (Installer, letzte Windows-Veröffentlichung) |
-| `LLM.Box.1.0.67.portable.exe` | Windows 10/11 (portable, ohne Installation) |
 
-Ältere Versionen stehen unter [Releases](https://github.com/ReuschlerIT/LLM-Box/releases)
-(1.0.67 mit Windows-Programmdateien, 1.0.65, 1.0.50).
+Alle drei Programme entstehen aus derselben Quelle. Ältere Versionen stehen unter
+[Releases](https://github.com/ReuschlerIT/LLM-Box/releases) (1.0.67, 1.0.65, 1.0.50).
 
 Beide Versionen haben dieselbe Oberfläche und dasselbe Chat-Format, der Austausch zwischen PC und
 Handy funktioniert in beide Richtungen (QR-Code, WLAN oder JSON-Datei – siehe unten).

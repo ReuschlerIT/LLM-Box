@@ -1161,8 +1161,10 @@ was der Vergleich der Oberfläche 1.0.67 → 1.0.70 zeigt (10 Dateien, 812 Zeile
 
 ## Geprüft und nicht geprüft
 - **Geprüft:** alle bisherigen Prüfläufe (306 Einzelprüfungen, 0 Fehler), Übersetzungsprüfung
-  (24 Prüfungen, 0 Fehler), Bau der Android-APK mit allen 16 Anpassungen, Endscan der fertigen APK.
+  (24 Prüfungen, 0 Fehler), Bau der Android-APK mit allen 16 Anpassungen, Bau der Windows-Programme
+  (NSIS-Setup und portable EXE) aus derselben Quelle, Endscan der fertigen APK, beider EXEs und des
+  entpackten `app.asar`.
 - **Nicht geprüft:** die Strommessung an einem echten Server mit `gpu_power`, ein echter Aufruf gegen
   `api.anthropic.com` (kein Schlüssel), und die neuen Hinweis- und Lauf-Mechanismen an einem echten
-  Handy. Die in 1.0.68 angekündigten Tests `test-anthropic-llm.js` und `test-anthropic-ui.js` wurden
-  nie geliefert und existieren nicht.
+  Handy oder in einem gestarteten Windows-Fenster. Die in 1.0.68 angekündigten Tests
+  `test-anthropic-llm.js` und `test-anthropic-ui.js` wurden nie geliefert und existieren nicht.

@@ -1,10 +1,8 @@
-# LLM Box 1.0.70 (Android) · Windows-Fassung 1.0.67
+# LLM Box 1.0.70 (Windows und Android)
 
-**Stand dieser Datei:** Die Android-Fassung ist auf **1.0.70** gebaut und als Datei am GitHub-Release
-[1.0.70](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70) eingestellt
-(`LLM-Box-1.0.70-android.apk`, versionCode 70). Die Desktop-Quelle steht ebenfalls auf 1.0.70; die
-zuletzt gebauten Windows-Programmdateien stammen von 1.0.67 und hängen als Assets am Release
-[1.0.67](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.67). Im Repository liegen sie nicht mehr – die Windows-Programme sind rund
+**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.70** gebaut und als Dateien am
+GitHub-Release [1.0.70](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70) eingestellt
+(Setup, portable EXE, APK). Im Repository liegen sie nicht mehr – die Windows-Programme sind rund
 84 MB. Die Android-Fassung trägt **1.0.70-android**
 (versionCode 70). Beide Fassungen entstehen aus **derselben
 Quelle** (`llm-box/`), die Android-Oberfläche wird beim Bauen aus den Dateien von `llm-box/renderer/`
@@ -22,11 +20,11 @@ und damit deutlich weniger vorzeitige Abbrüche im Werkzeugmodus. Die Vorgänger
 Android-Programm der aktuellen Fassung und die zuletzt gebauten Windows-Programme
 (alle aus derselben Quelle, als Dateien am GitHub-Release):
 
-| Datei | Für | Größe | Release |
-|---|---|---|---|
-| `LLM-Box-1.0.70-android.apk` | Android 8.0 oder neuer, Fassung 1.0.70-android | 10,6 MB | 1.0.70 |
-| `LLM.Box.Setup.1.0.67.exe` | Windows 10/11, Installer | 84,0 MB | 1.0.67 |
-| `LLM.Box.1.0.67.portable.exe` | Windows 10/11, ohne Installation | 83,7 MB | 1.0.67 |
+| Datei | Für | Größe |
+|---|---|---|
+| `LLM.Box.Setup.1.0.70.exe` | Windows 10/11, Installer | 84,0 MB |
+| `LLM.Box.1.0.70.portable.exe` | Windows 10/11, ohne Installation | 83,8 MB |
+| `LLM-Box-1.0.70-android.apk` | Android 8.0 oder neuer, Fassung 1.0.70-android | 10,6 MB |
 
 Beide Fassungen haben dieselbe Oberfläche und dasselbe Chat-Format. Bestehende Einstellungen,
 Verbindungen und Chats bleiben beim Update erhalten.
@@ -293,12 +291,16 @@ mit 0 Fehlern, Übersetzungsprüfung jetzt wieder 24 Prüfungen, 0 Fehler. **Am 
 Fassung nicht geprüft** – die beiden bekannten Testhandys waren nicht erreichbar. Die neuen
 Funktionen (Strom, Hinweise, mehrere Aufträge) sind nur in der simulierten WebView-Oberfläche geprüft.
 
-**Windows-Fassung 1.0.67:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
-aus derselben Quelle wie die damalige APK. Beide Programmdateien und die APK wurden vor dem Einstellen am
-GitHub-Release mit `tools-android\scan-persoenlich.js` geprüft: keine echten personenbezogenen Werte
-(keine internen IP-Adressen, Laufwerksbuchstaben, Freigabenamen, Rechner- oder Gerätenamen). Die
-Quelldateien im Repository nutzen durchgehend Beispielwerte aus dem Testnetz nach RFC 5737
-(`192.0.2.x`) und den Beispielordner `D:\MeinProjekt`.
+**Windows-Fassung 1.0.70:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
+aus derselben bereinigten Quelle wie die APK – Setup 84.000.391 B, portable 83.758.160 B. Beide
+Programmdateien und die APK wurden vor dem Einstellen am GitHub-Release mit
+`tools-android\scan-persoenlich.js` geprüft: im Setup und im portablen Programm je 4 Fundstellen,
+ausschließlich Zufallsbytefolgen im komprimierten Code. Das entpackte `app.asar` (427 Dateien)
+liefert 5 Fundstellen: eine Urheberangabe der mitgelieferten Bibliothek `fast-xml-parser` und vier
+Wortmeldungen („Administrator-Abfrage", „ohne Administratorrechte"). Keine internen IP-Adressen,
+Laufwerksbuchstaben, Freigabenamen, Rechner- oder Gerätenamen. Die Quelldateien im Repository nutzen
+durchgehend Beispielwerte aus dem Testnetz nach RFC 5737 (`192.0.2.x`) und den Beispielordner
+`D:\MeinProjekt`. **Installiert und gestartet wurden die Windows-Programme nicht.**
 
 ## Bekannte Grenzen
 
