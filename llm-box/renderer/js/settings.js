@@ -5,6 +5,14 @@ const DEFAULTS = {
     { id: 'strata_api', name: 'Strata_API', type: 'openai', baseUrl: 'http://localhost:8080/v1', apiKey: '', extraParams: true, thinkMode: 'template' },
   ],
   activeConnection: 'strata_api',
+  // Live-Ansicht (Chats geräteübergreifend in Echtzeit): Quelle = dieser Rechner bietet an, Empfänger = zeigt einen anderen Rechner
+  live: { host: { enabled: false, port: 45460, remote: false }, client: { enabled: false, url: '', follow: true, autoOpen: false } },
+  // Module: id -> an/aus. Fehlt ein Eintrag, gilt die Voreinstellung aus modules.js
+  modules: {},
+  // Open-WebUI-Funktionen (owui.js): Prompt-Bibliothek, Assistenten, Gedächtnis, Websuche, Vorlesen, Chat-Ordnung
+  // Autonomer Modus (auto.js): Grenzen und Schutz
+  auto: { maxHours: 8, maxSteps: 3000, maxResets: 40, forcePct: 85, retries: 6, keepAwake: true, notify: true, blockDanger: true, allowInstalls: false, useLog: true },
+  prompts: [], personas: [], memory: [], web: { url: '', results: 5, lang: 'de' }, tts: { rate: 1 }, org: { pins: {}, archived: {}, tags: {} },
   // Sprache der gesamten Oberflaeche und der KI-Antworten: de | en | fr.
   // Absichtlich HIER (nicht in appearance): der Android-Build patcht Zeilen aus
   // appearance (enterToSend, theme) mit exaktem Suchtext - neue Felder daneben
@@ -65,7 +73,7 @@ kein Mittel für Zugriff auf fremde, nicht dir gehörende Konten/Server.`,
     launch: { preset: '', family: '', model: '', modelPath: '', dataDir: '', context: '', kv: '', vision: '', parallel: '', mtp: '', tune: '', gpu: '', access: '', port: '', apiKey: '', noApiKey: false, extra: '', savePreset: '', restart: false },
   },
   pricing: { enabled: true, eur: true, preset: 'avg', priceIn: 1.8, priceOut: 9.6, usdToEur: 0.9, powerPrice: 0 },
-  workspace: { path: '', toolsEnabled: false, askUser: true, askUserAlways: false, subagents: true, subagentSteps: 12, handoff: true, handoffMode: 'clear', handoffPct: 70, handoffAutoSend: true, approval: 'write', execEnabled: true, execTimeout: 120, maxSteps: 25, readKB: 40, autoCompact: true, ctxBudgetPct: 80, keepToolResults: 3, maxFileKB: 512, maxFiles: 60, maxTotalKB: 1024, ignore: 'node_modules,.git,.venv,__pycache__,dist,build,.next,.idea,.vscode' },
+  workspace: { path: '', fileClick: 'open', toolsEnabled: false, askUser: true, askUserAlways: false, subagents: true, subagentSteps: 12, handoff: true, handoffMode: 'clear', handoffPct: 70, handoffAutoSend: true, approval: 'write', execEnabled: true, execTimeout: 120, maxSteps: 25, readKB: 40, autoCompact: true, ctxBudgetPct: 80, keepToolResults: 3, maxFileKB: 512, maxFiles: 60, maxTotalKB: 1024, ignore: 'node_modules,.git,.venv,__pycache__,dist,build,.next,.idea,.vscode' },
 };
 
 /* ───── Modellprofile (V65) ─────
@@ -152,6 +160,9 @@ function showLanguageChooser() {
   const choose = (lang) => {
     S.settings.uiLang = lang;
     S.settings.langChosen = true;
+    // Rechtschreibprüfung passend zur gewählten Sprache (nur solange sie noch auf dem Standard steht)
+    if (S.settings.spell && S.settings.spell.lang === 'de-en') { if (lang === 'fr') S.settings.spell.lang = 'fr-en'; else if (lang === 'en') S.settings.spell.lang = 'en'; }
+    if (typeof applySpell === 'function') applySpell();
     syncDefaultPrompt();                         // Standard-Prompt in der gewaehlten Sprache
     applyLanguage(lang);
     api.store.set('settings', S.settings);       // sofort sichern (nicht erst nach der Verzoegerung von saveSettings)
@@ -679,7 +690,7 @@ function tabAppearance() {
     wrap.append(frow('Fenstermaterial (Windows 11)', 'Damit Transparenz den Desktop durchscheinen lässt: „Acrylic“ (unscharf) oder „Mica“. Senke dann die Deckkraft von „Chat-Hintergrund“ und „Seitenleisten“. Ohne Material scheint nur das Hintergrundbild bzw. die Fensterfarbe durch. Benötigt Windows 11 22H2 oder neuer.', bindSelect('appearance.winMaterial', [{ value: 'none', label: 'Aus' }, { value: 'acrylic', label: 'Acrylic (unscharf)' }, { value: 'mica', label: 'Mica' }, { value: 'tabbed', label: 'Mica (getönt)' }])));
 
     wrap.append(frow('Rechtschreibprüfung', 'Falsch geschriebene Wörter im Eingabefeld werden rot wellig unterstrichen. Rechtsklick auf das Wort zeigt Vorschläge und „Zum Wörterbuch hinzufügen“. Beim ersten Mal lädt die App die Wörterbücher selbst herunter (Internet nötig).', bindSwitch('spell.enabled')));
-    wrap.append(frow('Sprachen der Rechtschreibprüfung', '„Deutsch und Englisch“ markiert ein Wort nur, wenn es in keiner der beiden Sprachen vorkommt. Das vermeidet falsche Markierungen bei englischen Fachwörtern.', bindSelect('spell.lang', [{ value: 'de-en', label: 'Deutsch und Englisch' }, { value: 'de', label: 'Deutsch' }, { value: 'en', label: 'Englisch' }])));
+    wrap.append(frow('Sprachen der Rechtschreibprüfung', '„Deutsch und Englisch“ markiert ein Wort nur, wenn es in keiner der beiden Sprachen vorkommt. Das vermeidet falsche Markierungen bei englischen Fachwörtern.', bindSelect('spell.lang', [{ value: 'de-en', label: 'Deutsch und Englisch' }, { value: 'de', label: 'Deutsch' }, { value: 'en', label: 'Englisch' }, { value: 'fr', label: 'Französisch' }, { value: 'fr-en', label: 'Französisch und Englisch' }, { value: 'de-fr', label: 'Deutsch und Französisch' }, { value: 'de-en-fr', label: 'Deutsch, Englisch und Französisch' }])));
     wrap.append(frow('Sparmodus beim Antworten', 'Während die KI antwortet, schaltet die Oberfläche Animationen und Unschärfe-Effekte ab. Das schont die Grafikkarte, die gerade das Modell rechnet (besonders wenn Modell und LLM Box auf demselben Rechner laufen).', bindSwitch('appearance.calmDuringGen')));
     {
       const gi = el('input', { type: 'checkbox' });
@@ -953,6 +964,12 @@ function tabWorkspace() {
         s.addEventListener('change', () => { w.approval = s.value; changed(); });
         return s;
       })()),
+      frow('Klick auf eine Datei im Workspace', 'Was passiert, wenn du im Workspace-Panel rechts eine Datei anklickst. „Öffnen“ startet sie im Standardprogramm von Windows. Über das Plus-Symbol in der Zeile lässt sich eine Datei immer an die Nachricht anhängen.', (() => {
+        const s = el('select', {}, [['open', 'Öffnen (Standardprogramm)'], ['attach', 'An die Nachricht anhängen'], ['ask', 'Jedes Mal nachfragen'], ['reveal', 'Im Ordner anzeigen (Explorer)']].map(([v, l]) => el('option', { value: v, text: l })));
+        s.value = w.fileClick || 'open';
+        s.addEventListener('change', () => { w.fileClick = s.value; changed(); });
+        return s;
+      })()),
       frow('KI darf Programme ausführen', 'Die KI kann Programme auf diesem Rechner starten (z. B. apktool, jadx, git, python), prüfen, ob ein Tool vorhanden ist, und fehlende Tools installieren. Je nach Freigabe-Einstellung erscheint vor jedem Programmstart eine Karte mit dem genauen Befehl; Installationen fragen immer nach, außer du erlaubst sie im Chat ausdrücklich. Läuft mit deinen Benutzerrechten, Arbeitsordner ist der Workspace.', bindSwitch('workspace.execEnabled')),
       frow('Zeitlimit pro Programm (Sekunden)', 'Danach wird das Programm beendet. Installationen dürfen bis zu 15 Minuten dauern.', bindNumber('workspace.execTimeout', { min: 5, max: 3600, placeholder: '120' })),
       frow('Max. Werkzeug-Schritte am Stück', 'Danach hält die KI an und du kannst mit „Weitermachen“ fortfahren.', bindNumber('workspace.maxSteps', { min: 1, max: 200, placeholder: '25' })),
@@ -1109,27 +1126,40 @@ function tabData() {
 
 function tabAbout() {
   const wrap = el('div', { class: 'about' });
-  wrap.innerHTML = brandMark('brand-mark') + '<br>' + brandWord('brand-word') + '<h2>LLM Box</h2><p>Lokaler KI-Chat für Ollama, LM Studio, llama.cpp und OpenAI-kompatible Server.</p><p class="ver"></p><p class="copy">© 2026 Reuschler-IT. Alle Rechte vorbehalten.</p>';
+  wrap.innerHTML = brandMark('brand-mark') + '<br>' + brandWord('brand-word') + '<h2>LLM Box</h2><p>Lokaler KI-Chat für Ollama, LM Studio, llama.cpp und OpenAI-kompatible Server.</p><p class="ver"></p><p class="copy">© 2026 Reuschler-IT. Veröffentlicht unter der MIT-Lizenz.</p><p class="copy">Verwendete Open-Source-Bausteine und ihre Lizenzen: THIRD-PARTY-NOTICES.md im Programmordner.</p>';
   api.appInfo().then((i) => { wrap.querySelector('.ver').textContent = `Version ${i.version} · Electron ${i.electron}`; });
   return wrap;
 }
 
 function openSettings(tab = 'conn') {
-  const tabs = [
-    { id: 'conn', label: 'Verbindungen', ic: 'plug', fn: tabConnections },
-    { id: 'model', label: 'Modell & Parameter', ic: 'cpu', fn: tabModel },
-    { id: 'look', label: 'Darstellung', ic: 'palette', fn: tabAppearance },
-    { id: 'cost', label: 'Kosten', ic: 'euro', fn: tabCosts },
-    { id: 'ws', label: 'Workspace & Dateien', ic: 'folder', fn: tabWorkspace },
-    { id: 'data', label: 'Daten', ic: 'db', fn: tabData },
-    { id: 'transfer', label: 'Übertragung', ic: 'upload', fn: tabTransfer },
-    { id: 'about', label: 'Über', ic: 'box', fn: tabAbout },
+  // Reihenfolge = Reihenfolge der Einrichtung: erst verbinden, dann arbeiten, dann Module, Geräte und Daten, zuletzt Verwaltung.
+  const all = [
+    { g: 'Einrichten', id: 'conn', label: 'Verbindungen', ic: 'plug', fn: tabConnections },
+    { g: 'Einrichten', id: 'model', label: 'Modell & Parameter', ic: 'cpu', fn: tabModel },
+    { g: 'Arbeiten', id: 'look', label: 'Darstellung', ic: 'palette', fn: tabAppearance },
+    { g: 'Arbeiten', id: 'ws', label: 'Workspace & Dateien', ic: 'folder', fn: tabWorkspace },
+    { g: 'Arbeiten', id: 'auto', label: 'Autonomer Modus', ic: 'zap', fn: typeof tabAuto === 'function' ? tabAuto : null },
+    { g: 'Arbeiten', id: 'prompts', label: 'Prompts & Assistenten', ic: 'sparkle', fn: typeof tabPrompts === 'function' ? tabPrompts : null },
+    { g: 'Arbeiten', id: 'know', label: 'Gedächtnis & Wissen', ic: 'db', fn: typeof tabKnowledge === 'function' ? tabKnowledge : null },
+    { g: 'Arbeiten', id: 'web', label: 'Websuche & Sprache', ic: 'search', fn: typeof tabWebSearch === 'function' ? tabWebSearch : null },
+    { g: 'Module', id: 'modules', label: 'Funktionen & Ansicht', ic: 'sliders', fn: typeof tabModules === 'function' ? tabModules : null },
+    { g: 'Geräte und Daten', id: 'live', label: 'Live-Ansicht', ic: 'zap', fn: typeof tabLive === 'function' ? tabLive : null },
+    { g: 'Geräte und Daten', id: 'transfer', label: 'Übertragung', ic: 'upload', fn: tabTransfer },
+    { g: 'Geräte und Daten', id: 'data', label: 'Daten', ic: 'db', fn: tabData },
+    { g: 'Verwaltung', id: 'cost', label: 'Kosten', ic: 'euro', fn: tabCosts },
+    { g: 'Verwaltung', id: 'about', label: 'Über', ic: 'box', fn: tabAbout },
   ];
+  const tabs = all.filter((t) => t.fn);
+  if (!tabs.some((t) => t.id === tab)) tab = tabs[0].id;
   const pane = el('div', { class: 'pane' });
   const nav = el('nav');
   function show(id) {
     nav.innerHTML = '';
-    tabs.forEach((t) => nav.append(el('button', { class: t.id === id ? 'active' : '', html: icon(t.ic, 16) + '<span>' + t.label + '</span>', onclick: () => show(t.id) })));
+    let lastG = '';
+    tabs.forEach((t) => {
+      if (t.g !== lastG) { lastG = t.g; nav.append(el('div', { class: 'nav-group', text: t.g })); }
+      nav.append(el('button', { class: t.id === id ? 'active' : '', html: icon(t.ic, 16) + '<span>' + t.label + '</span>', onclick: () => show(t.id) }));
+    });
     pane.innerHTML = '';
     pane.append(tabs.find((t) => t.id === id).fn());
   }

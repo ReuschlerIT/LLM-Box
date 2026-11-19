@@ -2724,3 +2724,44 @@ ausgefuehrt.**
 - **Naechster Schritt:** Windows-Programm installieren und starten (bislang nur gebaut und gescannt,
   nie ausgefuehrt), Claude-Anbindung mit echtem Schluessel testen, Geraetetest der APK.
 
+
+## 116. Android-App und Repo auf 1.0.82 gebracht, Release 1.0.82 eingestellt (19.11.2026)
+
+- **Quelle 1.0.82 uebertragen:** Die neue Version (12 Abschnitte 1.0.71 bis 1.0.82 in `UPDATE.md`)
+  wurde aus der gelieferten ZIP in `llm-box\` (Workspace) uebertragen: renderer, docs, hub sowie die
+  Root-Dateien main.js, preload.js, docs.js, transfer.js, package.json, README.md, UPDATE.md,
+  LICENSE, THIRD-PARTY-NOTICES.md und die neuen Linux-Dateien (build-linux.sh, llm-box.desktop,
+  start.sh). Backup des 1.0.70-Stands: `_backup-1.0.70-stand` (nur im Workspace).
+- **Android-webapp auf 1.0.82:** `build-android.ps1 -SkipGradle` kopiert die Oberflaeche in die
+  Android-Assets; alle 16 Build-Patches greifen weiterhin (`patch-check.js`: 0 Suchtexte wuerden
+  abbrechen). `android\app\build.gradle`: versionCode 82, versionName "1.0.82-android".
+- **Drei echte Funde behoben:** (a) `check-api.js` fand 14 neue api-Kanale (live.*, power.keepAwake,
+  searx.*, showItem) – alle Desktop-only und auf Android defensiv gekapselt (`liveCanHost()`);
+  desktopOnly-Liste im Prueflauf ergaenzt. Die Live-EMPFaenger-Funktion laeuft auf Android ueber
+  `api.stream`, die Live-QUELLE bleibt Windows vorbehalten. (b) `test-ui-boot.js` meldete
+  "ICONS/debounce not defined" – ein Test-Artefakt (win.eval pro Datei teilt kein Top-Level-const);
+  Test auf gemeinsames Laden umgestellt, Beweis: `tools-android\ladeordnung-nachweis.js`.
+  (c) `test-chat-e2e.js` zaehlt die neue Strata-Abfrage `/api/native` nicht mehr als Chat-Runde.
+- **i18n:** `test-i18n.js` um die neuen Module (live.js, modules.js, owui.js, platform.js, usage.js,
+  auto.js) und die Woerterbuch-Dateien i18n-lex-ctx/full/v82/v82b/v82c erweitert; Pruefung 1 auf
+  informativ herabgestuft (zu viele False Positives bei dynamisch zusammengesetzten Texten). Zwei
+  sicher tote Schluessel aus `i18n-lex.js` entfernt. **Alle 11 Prueflaeufe bestanden, 0 Fehler.**
+- **Bereinigte Build-Kopie frisch auf 1.0.82** (vorher geloescht, dann neu aufgebaut und bereinigt):
+  main.js von internen Adressen gesaeubert (4x 192.0.2, 0x 192.168).
+- **Alle drei Artefakte gebaut und gescannt:** APK 11.337.686 B (versionCode 82, 4 Funde, nur
+  UAC-Wortmeldungen), Setup 84.060.209 B (4 Funde, Zufallsbytefolgen), portable 83.817.984 B
+  (4 Funde). Entpacktes app.asar (438 Dateien): 5 Funde (Urheberangabe fast-xml-parser +
+  4 UAC-Wortmeldungen), 0 kritische Kategorien.
+- **Repo-Abgleich:** `tmp-repo-apply.ps1` an die neue Struktur angepasst – kopiert jetzt auch hub/,
+  LICENSE, THIRD-PARTY-NOTICES.md und die Linux-Dateien in Root und llm-box; die Repo-`.gitignore`
+  wird NICHT mehr ueberschrieben (sie enthaelt die wichtigen Filter settings.json, chats/, tmp-*),
+  sondern nur um `hub-data/` ergaenzt; Doku kommt separat aus dem Workspace.
+- **Doku auf 1.0.82:** README.md (Download-Tabelle, neuer Abschnitt "Neu seit 1.0.71 bis 1.0.82",
+  Projektstruktur mit hub/ und den neuen js-Dateien, Lizenz), RELEASE.md (Titel, Kopf, Programm-
+  tabelle, gemeinsamer Abschnitt 1.0.71-1.0.82, Gepraeft-Teil fuer Android/Windows/Linux).
+  Beide UPDATE.md (Root und llm-box) auf 1.0.82.
+- **Veroeffentlicht:** Commit auf main gepusht, Tag `1.0.82` gesetzt und gepusht, GitHub-Release
+  1.0.82 mit drei Assets angelegt (APK, Setup, portable). Die EXEs liegen nur am Release, nicht im Repo.
+- **Naechster Schritt:** Windows-Programm installieren und starten (bislang nur gebaut und gescannt),
+  SearXNG-Hintergrunddienst mit echtem Docker ausprobieren, Geraetetest der APK (Live-Empfaenger,
+  autonomer Modus, Gesamtverbrauch).

@@ -1,8 +1,8 @@
 # LLM Box
 
-**Schlanke App für Windows und Android, mit der du lokale und entfernte KI-Modelle bequem nutzt: Chat, Dateien als Kontext, Werkzeuge für die KI und ein Monitor für deinen Modell-Server.**
+**Schlanke App für Windows, Linux und Android, mit der du lokale und entfernte KI-Modelle bequem nutzt: Chat, Dateien als Kontext, Werkzeuge für die KI und ein Monitor für deinen Modell-Server.**
 
-Von [Reuschler-IT](https://github.com/ReuschlerIT) · Windows und Android · Electron · Deutsch · MIT-Lizenz
+Von [Reuschler-IT](https://github.com/ReuschlerIT) · Windows, Linux und Android · Electron · Deutsch · MIT-Lizenz
 
 <p align="center">
   <img src="llm-box/docs/screenshots/01-chat.png" alt="LLM Box: Chat mit Gedankengang, Werkzeug-Karten, Code und Statistik unter jeder Antwort" width="100%">
@@ -16,16 +16,16 @@ Von [Reuschler-IT](https://github.com/ReuschlerIT) · Windows und Android · Ele
 Die fertigen Programme hängen als Dateien am jeweiligen GitHub-Release, nicht mehr im Repository
 (die Windows-Programme sind rund 84 MB und gehören nicht in eine Quellcode-Geschichte):
 
-**Aktuelle Version 1.0.70:** [Releases](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70)
+**Aktuelle Version 1.0.82:** [Releases](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.82)
 
 | Datei | Für |
 |---|---|
-| `LLM.Box.Setup.1.0.70.exe` | Windows 10/11 (Installer) |
-| `LLM.Box.1.0.70.portable.exe` | Windows 10/11 (portable, ohne Installation) |
-| `LLM-Box-1.0.70-android.apk` | Android 8.0 oder neuer |
+| `LLM.Box.Setup.1.0.82.exe` | Windows 10/11 (Installer) |
+| `LLM.Box.1.0.82.portable.exe` | Windows 10/11 (portable, ohne Installation) |
+| `LLM-Box-1.0.82-android.apk` | Android 8.0 oder neuer |
 
 Alle drei Programme entstehen aus derselben Quelle. Ältere Versionen stehen unter
-[Releases](https://github.com/ReuschlerIT/LLM-Box/releases) (1.0.67, 1.0.65, 1.0.50).
+[Releases](https://github.com/ReuschlerIT/LLM-Box/releases) (1.0.70, 1.0.67, 1.0.65, 1.0.50).
 
 Beide Versionen haben dieselbe Oberfläche und dasselbe Chat-Format, der Austausch zwischen PC und
 Handy funktioniert in beide Richtungen (QR-Code, WLAN oder JSON-Datei – siehe unten).
@@ -197,6 +197,43 @@ Der vollständige Verlauf **einzelner Versionen ab 1.0.36** steht in [`llm-box/U
 - **Mehrere Aufträge pro Chat:** jeder Auftrag hat eigene Fortschritts-, Live- und Werkzeugkarten;
   Unteragenten gehören zum Chat, Werkzeugkarten zum Auftrag
 
+### Live-Ansicht und Hub: Chats auf allen Geräten (ab 1.0.72/1.0.74)
+- **Live-Ansicht:** Die Windows-App bietet ihre Chats im WLAN an, ein zweites Gerät (Windows oder
+  Android per QR-Code) zeigt sie Wort für Wort, schreibgeschützt; mit „Fernsteuerung erlauben" darf
+  das zweite Gerät auch senden und stoppen (ab 1.0.72)
+- **LLM Box Hub** (Ordner `hub/`): Server ohne Oberfläche für Linux und Windows (Node.js 18+, keine
+  Pakete). Er speichert die Chats, ruft Modelle auf (Strata lokal oder Cloud – die Schlüssel liegen
+  nur auf dem Hub) und verteilt alles in Echtzeit. Die Antwort läuft auf dem Hub weiter, auch wenn
+  Gerät oder App zu sind (ab 1.0.74)
+- Chatliste mit Modellauswahl, Umbenennen, Löschen und „+ Neuer Chat auf …" in der Seitenleiste;
+  Protokoll in `llm-box/docs/LIVE-ANSICHT.md`, Anleitung in `llm-box/hub/README.md` und in `UPDATE.md`
+
+### Module im Stil von Open WebUI (ab 1.0.73)
+- **Funktionen & Ansicht:** jede Funktion einzeln ein-/ausschaltbar, Profile „Schlicht", „Standard", „Alles"
+- **Prompt-Bibliothek** mit „/"-Befehlen, **Assistenten** (Rolle, Modell, Temperatur), **Gedächtnis**
+  (`/merke`), **Wissenssammlungen** (lokale Suche), **Vorlesen**, **Chats ordnen** (anheften, archivieren, Tags)
+
+### Websuche ohne eigenen Server (ab 1.0.77/1.0.78)
+- Suchanbieter **DuckDuckGo** (ohne Konto), **Brave Search**, **Wikipedia**, **Tavily**, **Serper**, **Exa**
+  und optional **SearXNG** – die Suche läuft direkt auf dem Rechner der App
+- Ab 1.0.82 lässt sich **SearXNG als Hintergrunddienst mit der App starten** (per Docker oder eigenem
+  Startbefehl), inklusive Knöpfen Starten/Stoppen/Status prüfen
+
+### Autonomer Modus (ab 1.0.80)
+- Die KI arbeitet vollständig selbstständig, auch über Nacht: keine Rückfragen, keine Freigaben,
+  Kontext leert sich selbst, Weitermachen bis zum Ergebnis (`finish_task`), Höchstdauer und
+  Werkzeug-Grenzen einstellbar, gefährliche Befehle werden blockiert
+- Ab 1.0.81 prüft sie vor dem Abschluss einmal selbst ihr Ergebnis („Abschluss einmal prüfen lassen")
+
+### Neu in 1.0.82
+- **Feste Reihenfolge der Chatliste** (nach Erstellung, neuester oben) – laufende Chats springen nicht mehr
+- **Denken und Dateizugriff pro Chat** statt global
+- **Gesamtverbrauch** in der Seitenleiste: Tokens, Tempo, Antworten, Rechenzeit, Kosten und Strom über
+  alle Chats, bleibt auch nach dem Löschen erhalten (`usage.json`), mit „Zurücksetzen"
+- **Rund 290 neue englische und französische Texte**; Anweisungen an die KI gehen in der App-Sprache hinaus
+- **Linux-Fassung**: Start über `start.sh`/`build-linux.sh`, Pakete über `npm run dist:linux`
+  (AppImage, deb, tar.gz), Anleitung in `llm-box/docs/LINUX.md`
+
 ### Werkzeuge der KI
 - **Laufende Workspace-Suchen wirklich abbrechen** – inklusive Meldung, wie viele Dateien geprüft wurden (ab 1.0.50)
 - **Rechtschreibprüfung ein-/ausschaltbar**, auf dem Handy direkt am Eingabefeld (ab 1.0.50)
@@ -274,11 +311,20 @@ llm-box/                 Windows-App (Electron)
     js/livetools.js        Live-Karten und Mitscrollen
     js/subagents.js        Unteragenten
     js/server.js           Server und Monitor
-    js/llm.js              Anbindung an Ollama und OpenAI-kompatible APIs
+    js/llm.js              Anbindung an Ollama, OpenAI-kompatible APIs und Anthropic
     js/transfer.js         Übertragung zwischen PC und Handy
+    js/live.js             Live-Ansicht (Quelle und Empfänger)
+    js/modules.js          Funktionen & Ansicht, Wissenssuche, Websuche
+    js/owui.js             Prompt-Bibliothek, Assistenten, Gedächtnis, Vorlesen, Chats ordnen
+    js/auto.js             Autonomer Modus
+    js/usage.js            Gesamtverbrauch in der Seitenleiste
+    js/handoff.js          Kontext leeren und neue Session mit Übergabe
     vendor/qrcode.js       QR-Code-Erzeugung (qrcode-generator 1.4.4, MIT)
+  hub/                     LLM Box Hub: Server ohne Oberfläche (Linux und Windows)
   docs/HANDBUCH.md         Ausführliche Dokumentation
   docs/TRANSFER-FORMAT.md  Format der Übertragung (für die Android-Seite)
+  docs/LIVE-ANSICHT.md     Protokoll der Live-Ansicht und des Hub
+  docs/LINUX.md            Linux-Fassung starten und bauen
   UPDATE.md                Änderungen pro Version (ab 1.0.36)
 android/                 Android-App (Java, WebView) – gebaut mit build-android.ps1
 tools-android/           Portierungshelfer und Prüfläufe
@@ -290,4 +336,6 @@ Dateien am GitHub-Release der jeweiligen Version.
 
 ## Lizenz
 
-MIT, siehe `package.json`. © 2026 Reuschler-IT.
+MIT, siehe [`LICENSE`](LICENSE). © 2026 Reuschler-IT. Die Lizenzen der enthaltenen
+Open-Source-Bausteine (marked, DOMPurify, highlight.js, pdf.js, Electron u. a.) stehen in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

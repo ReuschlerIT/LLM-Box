@@ -1,0 +1,26 @@
+# systemd-Dienst: Hub dauerhaft im Hintergrund (Linux)
+# Einrichten (als root), Pfade anpassen:
+#   cp llm-box-hub.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now llm-box-hub
+#   journalctl -u llm-box-hub -f      (Adresse mit Schlüssel steht beim Start im Log)
+[Unit]
+Description=LLM Box Hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=llmbox
+WorkingDirectory=/opt/llm-box/hub
+Environment=LLMBOX_HUB_DATA=/var/lib/llm-box-hub
+ExecStart=/usr/bin/node /opt/llm-box/hub/hub.js
+Restart=on-failure
+RestartSec=3
+# Der Hub braucht nur Netz und seinen Datenordner
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/llm-box-hub
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

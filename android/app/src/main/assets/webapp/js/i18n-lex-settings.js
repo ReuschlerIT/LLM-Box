@@ -243,3 +243,104 @@ I18N_PAT.push(
   [/^(\d+) Antworten laufen im Hintergrund weiter\.$/, '$1 answers keep running in the background.', '$1 réponses continuent en arrière-plan.'],
   [/^Die Antwort in „(.*)“ läuft im Hintergrund weiter\.$/, 'The answer in “$1” keeps running in the background.', 'La réponse dans « $1 » continue en arrière-plan.']
 );
+
+Object.assign(I18N_LEX, {
+  'Klick auf eine Datei im Workspace': ['Click on a file in the workspace', 'Clic sur un fichier de l’espace de travail'],
+  'Was passiert, wenn du im Workspace-Panel rechts eine Datei anklickst. „Öffnen“ startet sie im Standardprogramm von Windows. Über das Plus-Symbol in der Zeile lässt sich eine Datei immer an die Nachricht anhängen.': ['What happens when you click a file in the workspace panel on the right. “Open” starts it in the Windows default program. The plus icon in the row always attaches a file to the message.', 'Ce qui se passe quand vous cliquez sur un fichier du panneau de l’espace de travail. « Ouvrir » le lance dans le programme par défaut de Windows. L’icône plus de la ligne joint toujours le fichier au message.'],
+  'Öffnen (Standardprogramm)': ['Open (default program)', 'Ouvrir (programme par défaut)'],
+  'An die Nachricht anhängen': ['Attach to the message', 'Joindre au message'],
+  'Jedes Mal nachfragen': ['Ask every time', 'Demander à chaque fois'],
+  'Im Ordner anzeigen (Explorer)': ['Show in folder (Explorer)', 'Afficher dans le dossier (Explorateur)'],
+  'Im Ordner zeigen': ['Show in folder', 'Afficher dans le dossier'],
+  'Was soll mit der Datei geschehen?': ['What should happen with the file?', 'Que faire du fichier ?'],
+  'Öffnen': ['Open', 'Ouvrir'],
+  'Anhängen': ['Attach', 'Joindre'],
+  'Datei ausführen?': ['Run file?', 'Exécuter le fichier ?'],
+  'klicken zum Öffnen': ['click to open', 'cliquer pour ouvrir'],
+  'klicken zum Anhängen': ['click to attach', 'cliquer pour joindre'],
+  'klicken für Optionen': ['click for options', 'cliquer pour les options'],
+  'klicken zum Anzeigen im Ordner': ['click to show in folder', 'cliquer pour afficher dans le dossier'],
+  '(installiert, nicht geladen)': ['(installed, not loaded)', '(installé, non chargé)'],
+  'Modell laden': ['Load model', 'Charger le modèle'],
+});
+
+Object.assign(I18N_LEX, {
+  'Live-Ansicht': ['Live view', 'Vue en direct'],
+  'Zeigt Chats eines anderen Geräts in Echtzeit, ähnlich wie Open WebUI denselben Chat in mehreren Fenstern. Die Quelle (Windows) bietet ihre Chats an, der Empfänger (Windows oder Android) zeigt sie schreibgeschützt an.': ['Shows chats from another device in real time, much like Open WebUI shows the same chat in several windows. The source (Windows) offers its chats, the receiver (Windows or Android) shows them read-only.', 'Affiche en temps réel les discussions d’un autre appareil, comme Open WebUI affiche la même discussion dans plusieurs fenêtres. La source (Windows) propose ses discussions, le récepteur (Windows ou Android) les affiche en lecture seule.'],
+  'Live-Ansicht empfangen': ['Receive live view', 'Recevoir la vue en direct'],
+  'Adresse der Quelle': ['Address of the source', 'Adresse de la source'],
+  'Verbinden': ['Connect', 'Connecter'],
+  'Trennen': ['Disconnect', 'Déconnecter'],
+  'Status': ['Status', 'État'],
+  'Beim Start automatisch verbinden': ['Connect automatically at startup', 'Se connecter automatiquement au démarrage'],
+  'Aktiven Chat automatisch anzeigen': ['Show the active chat automatically', 'Afficher automatiquement la discussion active'],
+  'Beim Verbinden gleich den aktiven Chat öffnen': ['Open the active chat right after connecting', 'Ouvrir la discussion active dès la connexion'],
+  'Dieses Gerät als Live-Quelle': ['This device as live source', 'Cet appareil comme source en direct'],
+  'Live-Quelle anbieten': ['Offer live source', 'Proposer la source en direct'],
+  'Neuen Schlüssel erzeugen': ['Create a new key', 'Créer une nouvelle clé'],
+  'Eigener Chat': ['My own chat', 'Ma discussion'],
+  'QR-Code scannen …': ['Scan QR code …', 'Scanner le code QR …'],
+  'Nicht verbunden.': ['Not connected.', 'Non connecté.'],
+  'Verbinde …': ['Connecting …', 'Connexion …'],
+  'Verbunden': ['Connected', 'Connecté'],
+  'Getrennt': ['Disconnected', 'Déconnecté'],
+  'Live-Ansicht: nur lesen': ['Live view: read only', 'Vue en direct : lecture seule'],
+});
+
+Object.assign(I18N_LEX, {
+  'Einrichten': ['Set up', 'Configurer'], 'Arbeiten': ['Work', 'Travailler'], 'Module': ['Modules', 'Modules'], 'Geräte und Daten': ['Devices and data', 'Appareils et données'], 'Verwaltung': ['Administration', 'Administration'],
+  'Prompts & Assistenten': ['Prompts & assistants', 'Prompts et assistants'], 'Gedächtnis & Wissen': ['Memory & knowledge', 'Mémoire et connaissances'], 'Websuche & Sprache': ['Web search & speech', 'Recherche web et voix'], 'Funktionen & Ansicht': ['Features & view', 'Fonctions et affichage'],
+  'Profile': ['Profiles', 'Profils'], 'Schlicht': ['Simple', 'Simple'], 'Standard': ['Standard', 'Standard'], 'Alles': ['Everything', 'Tout'],
+  'Obere Leiste': ['Top bar', 'Barre supérieure'], 'Eingabefeld': ['Input field', 'Zone de saisie'], 'Seitenleisten und Anzeigen': ['Side panels and displays', 'Panneaux latéraux et affichages'], 'Erweiterungen': ['Extensions', 'Extensions'],
+  'Prompt-Bibliothek': ['Prompt library', 'Bibliothèque de prompts'], 'Assistenten': ['Assistants', 'Assistants'], 'Gedächtnis': ['Memory', 'Mémoire'], 'Wissenssammlungen': ['Knowledge collections', 'Collections de connaissances'], 'Websuche': ['Web search', 'Recherche web'], 'Vorlesen': ['Read aloud', 'Lecture à voix haute'], 'Chats ordnen': ['Organize chats', 'Organiser les discussions'],
+  'Fernsteuerung erlauben': ['Allow remote control', 'Autoriser la commande à distance'], 'Angeheftet': ['Pinned', 'Épinglé'],
+  'Assistent': ['Assistant', 'Assistant'], 'Wissen': ['Knowledge', 'Connaissances'], 'Neue Vorlage': ['New template', 'Nouveau modèle'], 'Neuer Assistent': ['New assistant', 'Nouvel assistant'], 'Neue Sammlung': ['New collection', 'Nouvelle collection'],
+  'Bearbeiten': ['Edit', 'Modifier'], 'Löschen': ['Delete', 'Supprimer'], 'Hinzufügen': ['Add', 'Ajouter'], 'Testen': ['Test', 'Tester'], 'Speichern': ['Save', 'Enregistrer'],
+  'SearXNG-Adresse': ['SearXNG address', 'Adresse SearXNG'], 'Anzahl Treffer': ['Number of results', 'Nombre de résultats'], 'Suchsprache': ['Search language', 'Langue de recherche'], 'Sprechgeschwindigkeit': ['Speech rate', 'Vitesse de parole'],
+});
+Object.assign(I18N_LEX, {
+  'Französisch': ['French', 'Français'],
+  'Französisch und Englisch': ['French and English', 'Français et anglais'],
+  'Deutsch und Französisch': ['German and French', 'Allemand et français'],
+  'Deutsch, Englisch und Französisch': ['German, English and French', 'Allemand, anglais et français'],
+});
+Object.assign(I18N_LEX, {
+  '© 2026 Reuschler-IT. Veröffentlicht unter der MIT-Lizenz.': ['© 2026 Reuschler-IT. Released under the MIT License.', '© 2026 Reuschler-IT. Publié sous licence MIT.'],
+  'Verwendete Open-Source-Bausteine und ihre Lizenzen: THIRD-PARTY-NOTICES.md im Programmordner.': ['Open-source components used and their licenses: THIRD-PARTY-NOTICES.md in the program folder.', 'Composants open source utilisés et leurs licences : THIRD-PARTY-NOTICES.md dans le dossier du programme.'],
+});
+Object.assign(I18N_LEX, {
+  'Suchanbieter': ['Search provider', 'Moteur de recherche'],
+  'DuckDuckGo (eingebaut, ohne Konto)': ['DuckDuckGo (built in, no account)', 'DuckDuckGo (intégré, sans compte)'],
+  'Brave Search (eigener API-Schlüssel)': ['Brave Search (own API key)', 'Brave Search (clé API personnelle)'],
+  'Wikipedia (eingebaut, nur Wikipedia)': ['Wikipedia (built in, Wikipedia only)', 'Wikipédia (intégré, Wikipédia uniquement)'],
+  'SearXNG (eigener Server)': ['SearXNG (own server)', 'SearXNG (serveur personnel)'],
+  'Brave API-Schlüssel': ['Brave API key', 'Clé API Brave'],
+  'Suchsprache und Region': ['Search language and region', 'Langue et région de recherche'],
+  'Verbindung prüfen': ['Test connection', 'Tester la connexion'],
+});
+Object.assign(I18N_LEX, {
+  'Tavily (für KI gebaut, API-Schlüssel)': ['Tavily (built for AI, API key)', 'Tavily (conçu pour l’IA, clé API)'],
+  'Brave Search (eigener Index, API-Schlüssel)': ['Brave Search (own index, API key)', 'Brave Search (index propre, clé API)'],
+  'Serper (Google-Ergebnisse, API-Schlüssel)': ['Serper (Google results, API key)', 'Serper (résultats Google, clé API)'],
+  'Exa (semantische Suche, API-Schlüssel)': ['Exa (semantic search, API key)', 'Exa (recherche sémantique, clé API)'],
+});
+Object.assign(I18N_LEX, {
+  'Autonomer Modus': ['Autonomous mode', 'Mode autonome'],
+  'Autonom': ['Autonomous', 'Autonome'],
+  'Autonom: an': ['Autonomous: on', 'Autonome : activé'],
+  'Jetzt weitermachen': ['Continue now', 'Continuer maintenant'],
+  'Fortsetzen': ['Resume', 'Reprendre'],
+  'Autonomer Lauf erledigt': ['Autonomous run finished', 'Exécution autonome terminée'],
+  'Autonomer Lauf angehalten': ['Autonomous run stopped', 'Exécution autonome arrêtée'],
+  'Grenzen (Notbremse)': ['Limits (emergency brake)', 'Limites (frein d’urgence)'],
+  'Höchstdauer (Stunden)': ['Maximum duration (hours)', 'Durée maximale (heures)'],
+  'Gefährliche Befehle blockieren': ['Block dangerous commands', 'Bloquer les commandes dangereuses'],
+  'Rechner wach halten': ['Keep computer awake', 'Garder l’ordinateur éveillé'],
+  'Automatisch (autonomer Modus)': ['Automatic (autonomous mode)', 'Automatique (mode autonome)'],
+  'Aufgabe abschließen': ['Finish task', 'Terminer la tâche'],
+});
+Object.assign(I18N_LEX, {
+  'Grenzen': ['Limits', 'Limites'],
+  'Grenzen für diesen Lauf': ['Limits for this run', 'Limites pour cette exécution'],
+  'Auf Standard zurücksetzen': ['Reset to default', 'Rétablir la valeur par défaut'],
+});

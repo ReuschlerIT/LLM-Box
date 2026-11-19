@@ -58,11 +58,34 @@ function lookup(obj, dotted) {
   return { ok: true, value: cur };
 }
 
+/* Bekannte Desktop-only-Kanäle (seit 1.0.72-1.0.82). Diese ruft die gemeinsame
+   Oberflaeche zwar an, aber ausschliesslich hinter einer Android-Absicherung, auf dem
+   Gerat also nie:
+   - live.* (Host-Seite): live.js prueft liveCanHost() = !window.IS_ANDROID. Der
+     Live-EMPFaenger auf Android laeuft ueber api.stream, nicht ueber api.live.
+   - searx.*: SearXNG laeuft als Docker/Kindprozess am PC; owui.js kuemmert sich in
+     try/catch, auf dem Handy gibt es keinen Docker.
+   - power.keepAwake: "Rechner wach halten" (Autonom-Modus) am PC; auto.js prueft
+     typeof api.power und faengt Fehler ab. Das Handy hat eigene Wakelocks.
+   - showItem: "im Ordner zeigen" (Explorer); app.js faellt ohne api.showItem auf
+     wsOpenFile zurueck.
+   Diese Kanadle werden separat gemeldet und zaehlen NICHT als Fehler. Ein NEUER
+   api-Aufruf, der nicht in dieser Liste steht, bleibt ein harter Fehler. */
+const desktopOnly = [
+  'live', 'live.config', 'live.onCmd', 'live.onResync', 'live.push', 'live.start',
+  'live.status', 'live.stop', 'power', 'power.keepAwake',
+  'searx.start', 'searx.status', 'searx.stop', 'showItem'
+];
+
 let missing = [];
+let erwartetDesktopOnly = [];
 let extra = [];
 for (const [key, where] of [...used.entries()].sort()) {
   const r = lookup(api, key);
-  if (!r.ok) missing.push(`${key}  (benutzt in ${where.slice(0, 3).join(', ')})  fehlt ab: ${r.missingAt}`);
+  if (!r.ok) {
+    if (desktopOnly.includes(key)) erwartetDesktopOnly.push(`${key}  (benutzt in ${where.slice(0, 2).join(', ')})`);
+    else missing.push(`${key}  (benutzt in ${where.slice(0, 3).join(', ')})  fehlt ab: ${r.missingAt}`);
+  }
 }
 
 // Umgekehrt: was bietet die Bridge, das die Oberflaeche nie anfasst?
@@ -79,11 +102,15 @@ for (const p of [...provided].sort()) if (!used.has(p)) extra.push(p);
 
 console.log('Benutzte api-Aufrufe in der Oberflaeche: ' + used.size);
 console.log('Gelieferte api-Funktionen der Bridge   : ' + provided.size);
+if (erwartetDesktopOnly.length) {
+  console.log('\nDesktop-only-Kanale, auf Android erwartungsgemaess nicht geliefert (' + erwartetDesktopOnly.length + '):');
+  for (const e of erwartetDesktopOnly) console.log('  . ' + e);
+}
 if (missing.length) {
   console.log('\nFEHLENDE FUNKTIONEN (' + missing.length + '):');
   for (const m of missing) console.log('  - ' + m);
 } else {
-  console.log('\nAlle benutzten api-Aufrufe sind implementiert.');
+  console.log('\nAlle benutzten api-Aufrufe sind implementiert oder bewusst Desktop-only.');
 }
 if (extra.length) {
   console.log('\nvon der Bridge angeboten, aber nie benutzt (' + extra.length + '):');

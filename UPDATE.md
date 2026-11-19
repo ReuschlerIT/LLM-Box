@@ -84,9 +84,8 @@ Bestehende Einstellungen, Verbindungen und Chats bleiben erhalten. Neu ist nur d
 # Update-Chronik ab Version 1.0.37
 
 Die folgenden Abschnitte setzen die obige Beschreibung (Version 1.0.36) fort und führen jede
-veröffentlichte Version bis zur aktuellen **1.0.70** auf – chronologisch aufsteigend, damit zu jeder
-Version nachvollziehbar ist, was sich geändert hat. 1.0.69 und 1.0.70 teilen sich einen Abschnitt
-(begründet dort).
+veröffentlichte Version bis zur aktuellen **1.0.80** auf – chronologisch aufsteigend, damit zu jeder
+Version nachvollziehbar ist, was sich geändert hat.
 
 Hinweise zur Lesart:
 - „Windows“ = die Desktop-Anwendung, „Android“ = die Handy-App (eigene Versionsnummern mit dem
@@ -94,6 +93,8 @@ Hinweise zur Lesart:
 - Beispiele sind neutral gehalten (`D:\MeinProjekt`, `192.0.2.x` – Dokumentationsadresse nach RFC 5737).
 - „Nicht bestätigt“ bedeutet: der Stand wurde nur mit Syntaxprüfung oder Simulation geprüft, nicht in
   einer echten Fenster-Oberfläche bzw. nicht am Gerät.
+- **1.0.69 und 1.0.70** haben keinen Änderungsabschnitt: Beide Stände existierten (die Datei `package.json` trug 1.0.70), ihre Änderungen wurden hier nicht festgehalten und lassen sich aus dem Stand allein nicht rekonstruieren.
+- **1.0.71 und 1.0.72** wurden als Zwischenstände ausgeliefert (`LLM-BoxV71.zip`, `LLM-BoxV72.zip`), trugen aber noch 1.0.70 in `package.json` und in der Titelleiste. Die Versionsnummer wurde erst mit 1.0.73 auf den tatsächlichen Stand gesetzt.
 - Zwei Nummern sind Lücken, und das ist so richtig so: **1.0.53** hat keinen eigenen Änderungsabschnitt
   (nur Nachweise, dass dieser Stand existierte) und **1.0.64** wurde nie als Windows-Version gebaut –
   die Nummer gibt es nur auf dem Handy. Beide sind der Vollständigkeit halber aufgeführt.
@@ -132,8 +133,19 @@ Hinweise zur Lesart:
 | 1.0.66 | Sprachen Deutsch/Englisch/Französisch vollständig, weniger Abbrüche der KI, Modellprofil für IQ3/Q3, neues Raster der Einstellungen |
 | 1.0.67 | Sprachauswahl beim allerersten Start |
 | 1.0.68 | Claude-Anbindung (Anthropic-API) als eigener Verbindungstyp |
-| 1.0.69 | (keine eigene Quelle – siehe gemeinsamer Abschnitt 1.0.69/1.0.70) |
-| 1.0.70 | Stromverbrauch in der Statuszeile, Hinweise an die laufende KI, Läufe pro Chat |
+| 1.0.69 | (nicht dokumentiert, siehe „Hinweise zur Lesart“) |
+| 1.0.70 | (nicht dokumentiert, siehe „Hinweise zur Lesart“) |
+| 1.0.71 | Modellauswahl zeigt alle installierten Strata-Modelle; Klick auf Dateien im Workspace-Panel einstellbar (öffnen, anhängen, nachfragen, im Ordner zeigen) |
+| 1.0.72 | Live-Ansicht: Chats in Echtzeit auf einem zweiten Gerät (Windows und Android), schreibgeschützt |
+| 1.0.73 | Funktionen & Ansicht (alles ein-/ausschaltbar), neu gegliederte Einstellungen, Prompts, Assistenten, Gedächtnis, Wissenssammlungen, Websuche, Vorlesen, Chats ordnen; Live-Ansicht mit Long-Polling und Fernsteuerung |
+| 1.0.74 | LLM Box Hub: Chats und Antworten auf einem Linux-/Windows-Server |
+| 1.0.75 | Rechtschreibprüfung Französisch |
+| 1.0.76 | MIT-Lizenz, Drittanbieter-Hinweise, Bezug zu anderen Projekten in der README |
+| 1.0.77 | Websuche ohne eigenen Server (DuckDuckGo, Brave, Wikipedia, SearXNG) |
+| 1.0.78 | Websuche mit Tavily, Serper, Exa |
+| 1.0.79 | Fehler behoben: Suchanbieter und Live-Schalter sprangen zurück |
+| 1.0.80 | Autonomer Modus (auch über Nacht), Grenzen einstellbar |
+| 1.0.81 | Eingabeleiste: gleich große einzeilige Knöpfe, Autonom-Leiste oben im Chat, Abschluss-Prüfung (finish_task), kein falscher „nicht weitergearbeitet“-Hinweis |
 
 ---
 
@@ -1100,71 +1112,326 @@ Kein Java-, `main.js`- oder `native-main.js`-Code geändert: beide Netzwerkwege 
 
 ---
 
-# Update: Version 1.0.69 und 1.0.70 (gemeinsamer Abschnitt)
+# Update: Version 1.0.71
 
-Vorgängerversion: 1.0.68 · Windows und Android (gemeinsame Oberfläche)
-
-**Warum ein gemeinsamer Abschnitt:** Die Quelle der Desktop-App nennt die Version 1.0.70
-(`package.json`), enthält aber keinen eigenen Änderungsabschnitt für 1.0.69. Was zwischen 1.0.68 und
-1.0.70 geändert wurde, lässt sich nicht mehr in zwei Versionen trennen. Aufgeführt ist deshalb alles,
-was der Vergleich der Oberfläche 1.0.67 → 1.0.70 zeigt (10 Dateien, 812 Zeilen hinzu, 288 gelöscht).
-
-## Neu
-
-### Stromverbrauch messen und ausweisen
-- **Neues Feld „Strompreis (€ je kWh)“** unter *Einstellungen → Kosten* (Beispielwert 0,35).
-- **GPU-Leistung wird gemessen:** jede Sekunde die Wattzahl des überwachten Servers, aufsummiert je
-  Anfrage (`server.js`: `svReadPower`, `svPowerPrice`, `enAdd`/`enClose`).
-- **Statuszeile:** bei eingetragenem Strompreis erscheint „Strom ≈ … €“ neben Tokens, Dauer und Kosten.
-- **Pro Antwort** zeigen die Statistik und der Markdown-Export die Stromkosten dieser Antwort samt
-  durchschnittlicher Leistung.
-- Ohne erreichbaren Monitor oder ohne `gpu_power` des Server-Monitors bleibt die Angabe „–“.
-
-### Hinweise an die laufende KI
-- **Eingabe während einer Antwort** ist kein blockiertes Vormerken mehr, sondern ein Hinweis an den
-  laufenden Auftrag (`inbox`). Er wird **nach dem aktuellen Schritt** zugestellt.
-- **Knopf „Jetzt“** unterbricht die laufende Antwort und stellt den Hinweis sofort zu
-  („Unterbricht die laufende Antwort und stellt den Hinweis sofort zu“).
-- Zugestellte Hinweise tragen in der Chat-Liste das Kennzeichnungsfeld **„Hinweis während der Arbeit“**.
-- **Nicht mehr zugestellte Hinweise** wandern zurück ins Eingabefeld
-  („Dein Hinweis wurde nicht mehr zugestellt und steht wieder im Eingabefeld.“), der Knopf
-  „Zurück ins Eingabefeld holen“ holt sie bewusst zurück.
-
-### Mehrere Aufträge pro Chat
-- **Läufe pro Chat** (`RUNS`): Jeder Auftrag hat eigenen Fortschritt, eigene Live-Werte und eigene
-  Werkzeugkarten. Der angezeigte Auftrag läuft über `viewRun()`, nicht mehr über das globale
-  `S.generating`.
-- **Werkzeugkarten gehören zum Auftrag** (`livetools.js`: `tlClear(R)` löscht nur die Karten dieses
-  Laufes), **Unteragenten zum Chat** (`subagents.js`: `owner: chat.id`).
-- **Einen laufenden Chat verwerfen** (`discardAllRuns`) bricht alle Aufträge dieses Chats ab.
+Zwei Korrekturen am Wunsch des Nutzers (Zwischenstand, `package.json` trug noch 1.0.70).
 
 ## Behoben
-- Der Platzhalter für fortgesetzte Gespräche („(Fortsetzung des Gesprächs)“) war unübersetzt;
-  er hat jetzt Einträge für Englisch und Französisch.
-- Zwei veraltete Wörterbuch-Einträge zum alten Vormerken („Vormerken – wird gesendet, sobald die KI
-  fertig ist“) standen in keinem Quelltext mehr und sind entfernt.
+- **Modellauswahl oben zeigte nur ein Modell** (vermutlich das geladene). Ursache: Die App fragte bei Strata nur `/v1/models` ab, das nur das geladene Modell nennt. Jetzt liest sie zusätzlich die installierten Modelle aus dem Host der Strata-App (`/api/native`, Feld `installed`) und zeigt sie als „(installiert, nicht geladen)“. Wählt man so ein Modell, fragt die App nach, entlädt das aktuelle Modell und lädt das gewählte über die Strata-App. Die Zusatzabfrage läuft nur bei lokalen/privaten Adressen oder Verbindungen mit „Strata“ im Namen, nie bei Cloud-Diensten.
+
+## Neu
+- **Klick auf eine Datei im Workspace-Panel** öffnet sie jetzt im Standardprogramm, statt sie an die Nachricht zu hängen. Einstellbar unter Einstellungen → Workspace & Dateien („Klick auf eine Datei im Workspace“): öffnen (Standard), anhängen, jedes Mal nachfragen, im Ordner zeigen (Explorer). Das Plus-Symbol in der Zeile hängt weiterhin immer an. Ausführbare Dateitypen (`.exe`, `.bat`, `.ps1`, `.js` u. a.) fragen vor dem Öffnen nach.
 
 ## Geänderte Dateien
-`renderer/js/app.js`, `llm.js`, `settings.js`, `server.js`, `livetools.js`, `subagents.js`,
-`handoff.js`, `i18n-lex.js`, `i18n-lex-hints.js`, `i18n-lex-settings.js`, `styles.css`
-(jeweils in `renderer/`, `llm-box/renderer/` und der Android-Webapp).
-
-## Android: zwei Stellen, die der Bau sonst stillschweigend falsch macht
-- **Zeilenenden:** die Desktop-Quelle liefert CRLF, die mehrzeiligen Suchtexte des Bau-Skripts sind LF.
-  Der Patch für die Statuszeile findet seinen Suchtext sonst nicht. Das Bau-Skript setzt mehrzeilige
-  Such- und Ersatztexte jetzt an die Zeilenenden der Datei um.
-- **Statuszeile auf dem Handy:** Tokens, Dauer, Kosten und jetzt auch Strom stehen in je einer eigenen
-  Zeile (`<span class="st-line">`), damit auf dem schmalen Bildschirm nichts abgeschnitten wird.
-- **Neue Prüfläufe:** `tools-android/patch-check.js` prüft alle Patch-Suchtexte gegen die Quelle, ohne
-  zu bauen; `tools-android/bruecken-check.js` prüft, ob die Android-Brücke weiterhin an die Interna der
-  Desktop-Seite passt (z. B. `S.generating` → `viewRun()`).
+`renderer/js/llm.js` (Modellliste), `renderer/js/app.js` (Auswahlfeld, Laden, Datei-Klick), `renderer/js/server.js` (Laden über die Strata-App), `renderer/js/settings.js`, `main.js` und `preload.js` (Schnittstelle „im Ordner zeigen“), `renderer/js/i18n-lex-settings.js`.
 
 ## Geprüft und nicht geprüft
-- **Geprüft:** alle bisherigen Prüfläufe (306 Einzelprüfungen, 0 Fehler), Übersetzungsprüfung
-  (24 Prüfungen, 0 Fehler), Bau der Android-APK mit allen 16 Anpassungen, Bau der Windows-Programme
-  (NSIS-Setup und portable EXE) aus derselben Quelle, Endscan der fertigen APK, beider EXEs und des
-  entpackten `app.asar`.
-- **Nicht geprüft:** die Strommessung an einem echten Server mit `gpu_power`, ein echter Aufruf gegen
-  `api.anthropic.com` (kein Schlüssel), und die neuen Hinweis- und Lauf-Mechanismen an einem echten
-  Handy oder in einem gestarteten Windows-Fenster. Die in 1.0.68 angekündigten Tests
-  `test-anthropic-llm.js` und `test-anthropic-ui.js` wurden nie geliefert und existieren nicht.
+Geprüft: Syntax aller geänderten Dateien; die Modellabfrage mit einem simulierten Strata-Server (geladenes Modell plus zwei installierte, Cloud-Verbindung bleibt unberührt). Nicht geprüft: die echte Strata-App (Aufbau von `/api/native` nur aus dem bestehenden Code abgeleitet), die Fenster-Oberfläche unter Windows.
+
+---
+
+# Update: Version 1.0.72
+
+Zwischenstand (`package.json` trug noch 1.0.70).
+
+## Neu: Live-Ansicht
+Chats lassen sich geräteübergreifend in Echtzeit anzeigen, Wort für Wort, ähnlich wie bei Open WebUI.
+- **Quelle (nur Windows):** Einstellungen → Live-Ansicht → „Live-Quelle anbieten“. Adresse mit geheimem Schlüssel und QR-Code erscheinen. Standard: aus. Der Dienst läuft im Hauptprozess (HTTP mit Server-Sent-Events), Zugriff nur mit Schlüssel.
+- **Empfänger (Windows und Android):** Adresse einfügen (Android: QR-Code scannen), „Verbinden“. In der Seitenleiste erscheint der Kasten „Live“ mit den Chats der Quelle; ein Klick zeigt den Chat schreibgeschützt, die Antwort läuft mit. „Aktiven Chat automatisch anzeigen“ folgt der Quelle. Das Banner über dem Eingabefeld führt mit „Eigener Chat“ zurück. Die Chats des Empfängers werden dabei nie verändert oder gespeichert.
+- Neue Datei `docs/LIVE-ANSICHT.md` (Protokoll).
+
+## Geänderte Dateien
+`renderer/js/live.js` (neu), `main.js` (Live-Dienst), `preload.js` (`api.live`), `renderer/js/app.js` (Schutz gegen Speichern/Senden in der Live-Ansicht, Einbindung), `renderer/js/settings.js` (Reiter), `renderer/js/transfer.js` (QR-Scan erkennt Live-Adressen), `renderer/index.html`, `renderer/styles.css`, `docs/LIVE-ANSICHT.md`, Übersetzungen.
+
+## Geprüft und nicht geprüft
+Geprüft: Hub-Code und Empfänger gemeinsam in einer Simulation über echtes HTTP (Verbinden, Streaming, Chat-Wechsel, falscher Schlüssel, Trennen). Nicht geprüft: Fenster-Oberfläche unter Windows, Android-App (der Android-Quelltext lag nicht vor).
+
+---
+
+# Update: Version 1.0.73
+
+Neu gedacht: Funktionsumfang im Stil von Open WebUI, alles einzeln ein- und ausschaltbar.
+
+## Neu
+- **Funktionen & Ansicht** (Einstellungen): jede Funktion und jedes Bedienelement einzeln schaltbar (obere Leiste, Eingabefeld, Seitenleisten, Erweiterungen), dazu die Profile „Schlicht“, „Standard“, „Alles“.
+- **Einstellungen neu gegliedert** in der Reihenfolge der Einrichtung: Einrichten, Arbeiten, Module, Geräte und Daten, Verwaltung.
+- **Prompt-Bibliothek** mit „/“-Befehlen, **Assistenten** (Rolle, Modell, Temperatur), **Gedächtnis** (`/merke`), **Wissenssammlungen** (lokale BM25-Suche), **Websuche** (SearXNG, `web_search`/`fetch_url`), **Vorlesen**, **Chats ordnen** (anheften, archivieren, Tags).
+- **Live-Ansicht erweitert:** Long-Polling als Ersatzweg, wenn ein Gerät keine Datenströme durchlässt; **Fernsteuerung** (Nachrichten senden, stoppen, neuer Chat), auf der Quelle standardmäßig aus.
+
+## Geändert
+- Neue Dateien: `renderer/js/modules.js`, `renderer/js/owui.js`. Neue Einstellungs-Schlüssel: `live`, `modules`, `prompts`, `personas`, `memory`, `web`, `tts`, `org`, `workspace.fileClick`.
+- Versionsnummer in `package.json` auf 1.0.73 gesetzt (vorher 1.0.70).
+
+## Grenzen
+- Ordnung (anheften, archivieren, Tags) und Gedächtnis gelten pro Gerät.
+- Wissenssuche ist eine Stichwortsuche, keine Bedeutungssuche.
+- Mehrmodell-Chat, Sprachdiktat, Bildgenerierung über die Oberfläche, Kanäle, Notizen und Mehrbenutzer-Verwaltung aus Open WebUI sind nicht enthalten.
+
+## Geänderte Dateien
+`renderer/js/modules.js`, `renderer/js/owui.js` (neu), `renderer/js/live.js`, `main.js`, `preload.js`, `renderer/js/app.js` (Einbindung, neue Chatliste), `renderer/js/settings.js` (Gliederung, Vorgaben), `renderer/index.html`, `renderer/styles.css`, `docs/HANDBUCH.md`, `docs/LIVE-ANSICHT.md`, Übersetzungen, `package.json`.
+
+## Geprüft und nicht geprüft
+Geprüft: die echte Oberfläche in einer Testumgebung mit simuliertem Backend (Start ohne Fehler, Module, Prompts, Gedächtnis, Assistent, Wissenssuche, Websuche-Werkzeug im kompletten Chat-Durchlauf, Chats ordnen, alle Einstellungsseiten); Live-Dienst mit Long-Polling und Fernsteuerung gegen echtes HTTP. Nicht geprüft: echtes Electron-Fenster (Aussehen), Android.
+
+---
+
+# Update: Version 1.0.74
+
+## Neu: LLM Box Hub (Ordner `hub/`)
+- **Server ohne Oberfläche für Linux und Windows** (Node.js 18+, keine Pakete): speichert die Chats, ruft Modelle auf (Strata lokal oder Cloud mit Schlüsseln, die nur auf dem Hub liegen) und verteilt alles in Echtzeit an Windows und Android. Die Antwort läuft auf dem Hub weiter, auch wenn Gerät oder App zu sind.
+- Gleiches Protokoll wie die Live-Ansicht, dazu `/models`, `/delete`, `/rename`. Die Apps zeigen den Kasten **Hub** mit Modellauswahl, Umbenennen, Löschen und „+ Neuer Chat auf …“.
+- Start: `node hub/hub.js` (`npm run hub`); Verbindungen per `--add-connection`, Standard per `--set-default`, Adresse per `--show`. systemd-Datei, Start-Skripte, Anleitung in `hub/README.md` und unten in dieser Datei.
+- Absicherung: Schlüssel, Sperre nach 20 Fehlversuchen, Konfiguration nur für den Besitzer lesbar.
+
+## Grenzen
+- Hub-Chats sind reine Chats (Text, Denkmodus). Werkzeuge, Websuche, Wissenssuche und Assistenten bleiben in der App auf dem Gerät.
+- Keine automatische Kürzung langer Verläufe auf dem Hub. Kein TLS (hinter WireGuard/Tailscale oder einem Reverse-Proxy betreiben).
+
+## Geänderte Dateien
+`hub/hub.js`, `hub/README.md`, `hub/start-hub.sh`, `hub/start-hub.bat`, `hub/llm-box-hub.service` (alle neu), `renderer/js/live.js` (Hub-Modus), `renderer/styles.css`, `package.json` (Skript `hub`), `.gitignore`, `docs/HANDBUCH.md`, `docs/LIVE-ANSICHT.md`.
+
+## Geprüft und nicht geprüft
+Geprüft: Hub als echter Prozess gegen einen simulierten Modell-Server (Zugriffsschlüssel, Streaming, Stopp, 409 bei paralleler Nachricht, Neustart, Long-Polling, Umbenennen, Löschen); die echte Oberfläche gegen den echten Hub. Nicht geprüft: echte Modelle (Strata, Cloud), Android, TLS.
+
+---
+
+# Update: Version 1.0.75
+
+## Neu
+- **Rechtschreibprüfung auf Französisch.** Einstellungen → Darstellung → „Sprachen der Rechtschreibprüfung“ kennt jetzt Französisch, Französisch und Englisch, Deutsch und Französisch sowie Deutsch, Englisch und Französisch. Bei Mehrfachwahl gilt ein Wort nur als falsch, wenn es in keiner der gewählten Sprachen vorkommt. Wählst du beim ersten Start Französisch (oder Englisch) als Sprache, stellt die App die Prüfung passend ein. Die Wörterbücher lädt Windows beim ersten Mal selbst (Internet nötig). Auf Android prüft die Tastatur des Geräts.
+- Anleitung zu Hub und Live-Ansicht am Ende dieser Datei.
+
+## Geänderte Dateien
+`main.js`, `renderer/js/settings.js`, `renderer/js/i18n-lex-settings.js`, `docs/HANDBUCH.md`.
+
+## Geprüft und nicht geprüft
+Geprüft: Auswahl der Wörterbücher im Hauptprozess (mit simuliertem Chromium), Einstellungsseite, Sprachdialog beim ersten Start. Nicht geprüft: echte Wörterbücher unter Windows.
+
+---
+
+# Update: Version 1.0.76
+
+## Lizenz
+- **MIT-Lizenz** hinzugefügt (`LICENSE`, © 2026 Reuschler-IT). Passt zum Eintrag `license` in `package.json`.
+- **`THIRD-PARTY-NOTICES.md`**: alle enthaltenen Open-Source-Bausteine (marked, DOMPurify, highlight.js, qrcode-generator, fast-xml-parser, JSZip, pdf.js, Electron, electron-builder; Android: jsQR) mit Version, Lizenz, Urheber, Projektadresse und Lizenztexten. Beide Dateien kommen jetzt auch in die gebaute Programmdatei.
+- **README.md**: neue Abschnitte „Lizenz“ und „Verwendete Projekte und Bezug zu anderen Repositories“ (u. a. Strata, llama.cpp, Ollama, SearXNG, Open WebUI als Vorbild ohne übernommenen Quelltext).
+- In der App steht statt „Alle Rechte vorbehalten“ jetzt „Veröffentlicht unter der MIT-Lizenz“ (Seitenleiste und Über-Reiter), dazu ein Hinweis auf die Drittanbieter-Datei.
+
+## Hinweis für das Git-Repository
+`LICENSE` und `THIRD-PARTY-NOTICES.md` liegen im Ordner `llm-box/`. Liegt der Repository-Stamm eine Ebene darüber, `LICENSE` zusätzlich dorthin kopieren und die beiden neuen README-Abschnitte übernehmen.
+
+## Geänderte Dateien
+`LICENSE`, `THIRD-PARTY-NOTICES.md` (neu), `README.md`, `hub/README.md`, `package.json` (Dateiliste der Programmdatei), `renderer/index.html`, `renderer/js/settings.js`, `renderer/js/i18n-lex-settings.js`, `docs/HANDBUCH.md`.
+
+---
+
+# Update: Version 1.0.77
+
+## Websuche ohne eigenen Server
+- Die Websuche läuft jetzt **direkt von dem Rechner, auf dem die App läuft** (über den Hauptprozess). Ein SearXNG-Server ist nicht mehr nötig.
+- **Suchanbieter** (Einstellungen → Websuche & Sprache): DuckDuckGo (Standard, ohne Konto), Brave Search (API-Schlüssel), Wikipedia, SearXNG (jetzt optional). Fällt DuckDuckGo aus oder blockiert es, antwortet ersatzweise Wikipedia, mit Hinweis an die KI.
+- „Verbindung prüfen“ testet den gewählten Anbieter; klarere Fehlermeldungen (z. B. SearXNG ohne Port). Bestehende Einstellungen mit SearXNG-Adresse werden als Anbieter „SearXNG“ übernommen.
+- Das Modul „Websuche“ bleibt standardmäßig aus, weil Suchtexte den Rechner verlassen.
+
+## Grenzen
+- DuckDuckGo hat keine offizielle Schnittstelle für Programme. Die App wertet die Ergebnisseite aus; ändert sich deren Aufbau, muss der Auswerter angepasst werden.
+- Hub-Chats haben noch keine Werkzeuge, also auch keine Websuche.
+
+## Geänderte Dateien
+`renderer/js/owui.js`, `renderer/js/modules.js`, `renderer/js/i18n-lex-settings.js`, `docs/HANDBUCH.md`, `THIRD-PARTY-NOTICES.md`, `README.md`.
+
+## Geprüft und nicht geprüft
+Geprüft mit nachgebauten Antworten (DuckDuckGo-Seite, Brave, Wikipedia, Ausfall, Blockade). Nicht geprüft: gegen die echten Dienste.
+
+---
+
+# Update: Version 1.0.78
+
+## Leistungsfähigere Suchdienste für die Websuche
+- Neue Anbieter: **Tavily** (für KI gebaut, längere Textstellen), **Serper** (Google-Ergebnisse samt Direktantwort), **Exa** (semantische Suche). **Brave Search** bleibt.
+- Je Anbieter ein eigenes Schlüsselfeld mit Link zur Anmeldung. Ein früher eingetragener Brave-Schlüssel wird übernommen.
+- Klare Fehlermeldungen je Anbieter (Schlüssel abgelehnt, Kontingent aufgebraucht, Anfragelimit). Bei Anbietern mit Schlüssel wechselt die App bei Fehlern nicht heimlich zu einem anderen Anbieter (Datenschutz). Nur DuckDuckGo fällt auf Wikipedia zurück.
+- Treffer von Tavily und Exa sind bis 800 Zeichen lang, die übrigen bis 300.
+
+## Geänderte Dateien
+`renderer/js/owui.js`, `renderer/js/i18n-lex-settings.js`, `docs/HANDBUCH.md`, `THIRD-PARTY-NOTICES.md`, `README.md`.
+
+## Geprüft und nicht geprüft
+Die Schnittstellen von Tavily, Serper und Brave sind gegen deren Dokumentation gebaut, die von Exa nach Kenntnisstand. Alle wurden mit nachgebauten Antworten getestet, nicht gegen die echten Dienste.
+
+---
+
+# Update: Version 1.0.79
+
+## Behoben
+- **Suchanbieter ließ sich nicht umstellen** (Einstellungen → Websuche & Sprache): Das Auswahlfeld sprang auf den vorigen Anbieter zurück (seit 1.0.77). Ursache: Die Einstellungen der Websuche wurden bei jedem Zugriff durch eine Kopie ersetzt; griff im Hintergrund etwas darauf zu, schrieb die Auswahl in ein veraltetes Objekt. Die Einstellungen bleiben jetzt dasselbe Objekt.
+- Dasselbe Muster steckte in den **Live-Einstellungen** („Fernsteuerung erlauben“, „Live-Quelle anbieten“) und bei der Sprechgeschwindigkeit. Ebenfalls behoben.
+
+## Geänderte Dateien
+`renderer/js/live.js` (Hilfsfunktion `ensureObj`), `renderer/js/owui.js`.
+
+## Geprüft und nicht geprüft
+Geprüft: Fehler zuerst in der Testumgebung nachgestellt, dann behoben; Test mit echtem Auswahlwechsel bei Hintergrundzugriffen. Nicht geprüft: echtes Windows-Fenster.
+
+---
+
+# Update: Version 1.0.80
+
+## Neu: Autonomer Modus
+Die KI arbeitet vollständig selbstständig, auch über Nacht. Einschalten über den Knopf **„Autonom“** im Eingabefeld (pro Chat) oder unter **Einstellungen → Autonomer Modus**; Aufgabe beschreiben, senden, laufen lassen. Ausführlich: Handbuch, Abschnitt „Autonomer Modus“.
+
+- **Keine Rückfragen, keine Freigaben:** `ask_user` entfällt, Datei-Werkzeuge und Befehle laufen ohne Nachfrage. Dazu ein Sicherheitshinweis in der Leiste über dem Eingabefeld, der **nicht bestätigt werden muss**.
+- **Kontext leert sich selbst:** Die KI schreibt bei ca. 70 % Füllstand eine Übergabe, die ohne Klick übernommen wird; sonst schreibt die App sie ab 85 % selbst. Ein Fehler „Kontext zu groß“ löst dasselbe aus.
+- **Weitermachen:** Das Schrittlimit pro Lauf hält nicht mehr an; bei reinem Text ohne Werkzeug fordert die App bis zu dreimal zum Weitermachen auf.
+- **Ende:** `finish_task` der KI, „Stopp“/„Aus“, Höchstdauer (8 h), Höchstzahl Werkzeugaufrufe (3000) oder Kontext-Leerungen (40), erkannte Schleife, wiederholte Fehler. Ergebnis über dem Eingabefeld, dazu eine Windows-Meldung.
+- **Fehler:** Wiederholung mit Wartezeit (20 s … 15 min).
+- **Rechner wach halten** während eines Laufs (Windows).
+- **Schutz:** gefährliche Befehle werden blockiert (rm -rf /, Laufwerke, Herunterfahren, Registry/Dienste/Firewall, `git push`, Download-und-Ausführen), Installationen sind aus, solange sie nicht erlaubt werden. Kein vollständiger Schutz.
+- Optional führt die KI `AUTONOM-LOG.md` im Workspace als Gedächtnis über das Leeren des Kontexts hinweg.
+- **Grenzen einstellbar:** Standardwerte in den Einstellungen (Höchstdauer, Werkzeugaufrufe, Kontext-Leerungen, Fehler-Wiederholungen, Zwangs-Leeren), leer oder 0 = keine Grenze. Zusätzlich pro Chat über den Knopf „Grenzen“ in der Leiste über dem Eingabefeld, auch während eines Laufs (z. B. verlängern). Geprüft wird vor jedem Schritt.
+- Modul „Autonomer Modus“ unter Funktionen & Ansicht abschaltbar.
+
+## Grenzen
+- Der Lauf setzt sich nach einem Neustart der App nicht selbst fort („Jetzt weitermachen“). Rechner und App müssen an bleiben.
+- Gilt für Chats mit Werkzeugen in der App, nicht für Hub-Chats.
+
+## Geänderte Dateien
+`renderer/js/auto.js` (neu), `renderer/js/app.js` (Einbindung in Werkzeuge, Systemprompt, Freigaben, Chat-Schleife), `renderer/js/settings.js`, `renderer/js/modules.js`, `main.js` und `preload.js` (Rechner wach halten), `renderer/index.html`, `renderer/styles.css`, `renderer/js/i18n-lex-settings.js`, `docs/HANDBUCH.md`.
+
+## Geprüft und nicht geprüft
+Geprüft mit einem simulierten Modell: kompletter Lauf (ohne Freigabe-Karte, gefährlicher Befehl blockiert, Schrittlimit übergangen, Kontext selbst geleert, Ende per `finish_task`), Fehlerwiederholung, „steckt fest“, Schleifenerkennung, Stopp, abgelehnte Installation, Grenzen pro Chat. Nicht geprüft: ein echter Lauf über Nacht mit einem echten Modell.
+
+---
+
+# Anleitung: LLM Box Hub und Live-Ansicht (seit Version 1.0.72/1.0.74)
+
+## Wozu?
+Der **Hub** ist ein kleines Programm ohne Oberfläche, das auf einem Linux- oder Windows-Rechner läuft (z. B. neben Strata). Er speichert die Chats, ruft das Modell auf (Strata lokal oder Cloud) und zeigt jede Änderung in Echtzeit in der Windows- und der Android-App. Die Antwort läuft weiter, auch wenn PC oder Handy aus sind. API-Schlüssel für Cloud-Modelle liegen nur auf dem Hub.
+
+## 1. Hub installieren (einmalig)
+1. Node.js 18 oder neuer auf dem Server installieren (Linux: Paketverwaltung oder nodejs.org; Windows: Installer von nodejs.org).
+2. Den Ordner `hub/` zusammen mit `renderer/js/llm.js` auf den Server kopieren. Die Lage `hub/` neben `renderer/` beibehalten, oder `llm.js` direkt neben `hub.js` legen.
+3. Starten:
+   - Linux: `./start-hub.sh` (oder `node hub/hub.js`)
+   - Windows: `start-hub.bat`
+   Beim ersten Start legt der Hub seine Konfiguration an (`~/.llm-box-hub/config.json`, Windows: `%USERPROFILE%\.llm-box-hub`) und zeigt die **Adresse mit Schlüssel** an.
+
+## 2. Verbindungen eintragen
+```
+# lokaler Server, z. B. Strata (Standard ist schon eingetragen: http://localhost:8080/v1)
+node hub/hub.js --add-connection Strata openai http://localhost:8080/v1 DEIN_STRATA_KEY
+
+# Cloud
+node hub/hub.js --add-connection Claude anthropic https://api.anthropic.com/v1 sk-ant-...
+node hub/hub.js --add-connection OpenAI openai https://api.openai.com/v1 sk-...
+
+# Standard-Verbindung und Modell
+node hub/hub.js --set-default strata MODELLNAME
+
+# Adresse mit Schlüssel erneut anzeigen
+node hub/hub.js --show
+```
+Nach Änderungen an `config.json` den Hub neu starten.
+
+## 3. Dauerhaft im Hintergrund
+- **Linux:** `hub/llm-box-hub.service` nach `/etc/systemd/system/` kopieren (Pfade und Benutzer anpassen), dann `systemctl daemon-reload && systemctl enable --now llm-box-hub`. Die Adresse steht im Log: `journalctl -u llm-box-hub`.
+- **Windows:** `start-hub.bat` über die Aufgabenplanung („Beim Systemstart“) oder mit NSSM als Dienst starten.
+
+## 4. In der App verbinden (Windows und Android)
+1. **Einstellungen → Live-Ansicht → Adresse der Quelle:** die Adresse aus Schritt 1 oder `--show` einfügen (Android: „QR-Code scannen“), **Verbinden**. Auf dem Server-PC mit Windows-App zeigt „Live-Quelle anbieten“ ebenfalls einen QR-Code.
+2. In der Seitenleiste erscheint der Kasten **Hub** mit Verbindungs- und Modellauswahl und der Chatliste.
+3. **„+ Neuer Chat auf …“** beginnt einen Chat auf dem Hub. Ein Klick auf einen Chat öffnet ihn; die Antwort läuft Wort für Wort mit. **Stopp** bricht ab, Stift und Papierkorb am Chat benennen um bzw. löschen.
+4. Optional: „Beim Start automatisch verbinden“ und „Beim Verbinden gleich den aktiven Chat öffnen“ (praktisch für das Handy).
+
+## 5. Alternative ohne Server: Live-Quelle in der Windows-App
+**Einstellungen → Live-Ansicht → „Live-Quelle anbieten“**: Dieser PC bietet seine eigenen Chats im WLAN an, ein zweites Gerät zeigt sie in Echtzeit. Mit **„Fernsteuerung erlauben“** (Standard aus) darf das zweite Gerät auch Nachrichten senden, stoppen und neue Chats beginnen. Achtung: Die KI arbeitet dann mit deinen Workspace-Rechten. Hier endet die Antwort, sobald die App auf dem PC geschlossen wird.
+
+## Sicherheit
+- Jede Anfrage braucht den Schlüssel aus der Adresse. Nach 20 Fehlversuchen sperrt der Hub die Adresse 10 Minuten. `config.json` enthält API-Schlüssel im Klartext und ist unter Linux nur für den Besitzer lesbar.
+- Der Hub spricht **HTTP ohne Verschlüsselung**. Im eigenen WLAN/LAN ist das üblich. Aus dem Internet nur hinter WireGuard/Tailscale oder einem Reverse-Proxy mit TLS (z. B. Caddy, nginx) erreichbar machen. Wer den Schlüssel hat, kann Chats lesen und über deine Cloud-Schlüssel Anfragen stellen (Kosten!).
+- Den Schlüssel erneuern: `config.json` → `token` ändern, Hub neu starten, Adresse in den Apps neu eintragen.
+
+## Grenzen
+- Hub-Chats sind reine Chats (Text, Denkmodus). Datei-Werkzeuge, Websuche, Wissenssuche und Assistenten laufen weiter in lokalen Chats in der App.
+- Keine automatische Kürzung langer Verläufe auf dem Hub: Ist der Kontext voll, meldet das Modell einen Fehler, dann einen neuen Chat beginnen.
+- Hub-Chats und lokale Chats der App sind getrennt und werden nicht abgeglichen.
+- Die Chats der Strata-Weboberfläche lassen sich nicht live spiegeln (Import bleibt möglich).
+
+Ausführlich: `hub/README.md`, `docs/LIVE-ANSICHT.md`, `docs/HANDBUCH.md`.
+
+# Update: Version 1.0.81
+
+## Eingabeleiste
+- **Alle Knöpfe in einer Reihe:** Anhängen, Ordner, Denken, Assistent, Wissen, Dateizugriff, Freigabe und Autonom sind gleich große Symbolknöpfe (38 × 34 px), gleichmäßig über die Zeile verteilt; Senden/Pause bleiben rechts. Beschriftung und Zustand (z. B. „Denken: Auto“, „Freigabe: Ohne Nachfrage“) erscheinen sofort beim Darüberfahren als Tooltip. Ein Klick öffnet wie bisher Menü bzw. schaltet um. Aktive Knöpfe bleiben farbig, Warnungen (Freigabe ohne Nachfrage, Autonom an) gelb.
+- **Autonom-Leiste außerhalb des Eingabefelds:** Sie sitzt jetzt als schmale, einzeilige Leiste oben im Chat (über den Nachrichten). Der Sicherheitshinweis ist auf eine Zeile gekürzt (voller Text im Tooltip), das Abschluss-Ergebnis hat eine begrenzte Höhe mit eigenem Scrollen.
+
+## Autonomer Modus: macht zuverlässiger weiter
+- **Abschluss-Prüfung:** Der erste Aufruf von `finish_task` beendet den Lauf nicht. Die KI bekommt die Aufforderung, Anforderungen und Test ihres Ergebnisses selbst zu prüfen (Befehl ausführen, Ausgabe lesen, Testdaten/Simulation) und `finish_task` danach erneut aufzurufen. Neuer Schalter unter **Einstellungen → Autonomer Modus → „Abschluss einmal prüfen lassen“** (Standard: an). Die Prüfung gilt pro Lauf einmal und beginnt nach einer eigenen Nachricht von dir wieder von vorn.
+- **Systemprompt:** Die KI wird ausdrücklich darauf hingewiesen, dass sie Befehle (auch PowerShell) selbst ausführen kann, ihr Ergebnis selbst testen soll und den Lauf nicht mit „bitte führe das selbst aus“ beenden darf.
+- **Fehler behoben (Chat-Schleife):** Die Schleife brach bei jedem `finish_task`-Aufruf sofort ab, auch wenn der Lauf gar nicht beendet war. Sie bricht jetzt nur ab, wenn der Lauf wirklich beendet wird.
+- **Antwort auf `finish_task`:** Der Hinweis „Antworte noch mit einem kurzen Schlusswort“ entfällt, weil nach dem Abschluss keine weitere Antwort mehr kommt.
+- **Hinweis „Die KI hat nach dem Werkzeug-Ergebnis nicht weitergearbeitet“** erscheint nach `finish_task` nicht mehr; er war dort irreführend.
+- Hilfetexte in den Einstellungen und im Handbuch nennen die neue Position der Leiste („oben im Chat“).
+- **Dialog „Grenzen“:** Das Fenster ist breiter (640 px) und zeigt die vier Felder in zwei Spalten komplett an, ohne Scrollbalken. Vorher war es 460 px breit, das Formular verlangte 560 px, der Inhalt lief seitlich über.
+
+## Sparmodus beim Antworten
+Die Punkte im „Gedankengang“, der blinkende Cursor, die Lebenszeichen-Punkte (Chatliste, Autonom-Leiste, wartende Programme) und der Spinner der Unteragenten laufen auch im Sparmodus weiter. Alle anderen Animationen und die Unschärfe-Effekte bleiben während der Antwort aus.
+
+## Grenzen
+- Die Abschluss-Prüfung hilft nur, wenn die KI danach wirklich testet. Lässt sich etwas auf dem Rechner nicht prüfen (z. B. ein Programm, auf das sie keinen Zugriff hat), steht das in ihrer Zusammenfassung.
+- Neue Texte (Schalter „Abschluss einmal prüfen lassen“) sind noch nicht in den Übersetzungslisten, in anderen Sprachen erscheinen sie deutsch.
+
+## Geänderte Dateien
+`renderer/js/auto.js` (Abschluss-Prüfung, Systemprompt, Leisten-Position, Dialog „Grenzen“, Einstellungen, Texte), `renderer/js/app.js` (Chat-Schleife bei `finish_task`, Hinweis „nicht weitergearbeitet“, Tooltips der Eingabeleiste), `renderer/styles.css` (Eingabeleiste, Autonom-Leiste, Dialog „Grenzen“, Ausnahmen im Sparmodus), `docs/HANDBUCH.md`, `package.json` (Version), `UPDATE.md`.
+
+# Update: Version 1.0.82
+
+Vorgängerversion: 1.0.81
+
+## Chatliste
+- **Feste Reihenfolge:** Die Chats links werden nach **Erstellung** sortiert (neuester oben), nicht mehr nach letzter Aktivität. Laufen zwei Chats gleichzeitig, springen sie nicht mehr nach oben und unten. Auch die Gruppen („Heute“, „Gestern“ …) richten sich nach dem Erstellungsdatum. Angeheftete Chats stehen weiterhin zuerst. Chats ohne Erstellungsdatum (z. B. Importe) fallen auf das Datum der letzten Änderung zurück.
+
+## Einstellungen pro Chat
+- **Denken** (Denkaufwand) und **Dateizugriff** unter dem Eingabefeld gelten jetzt nur für den einzelnen Chat (`chat.thinking`, `chat.tools`). Vorher änderten sie die globale Einstellung und wirkten auf alle Chats. Assistent, Wissen, Freigabe und Autonom waren schon pro Chat.
+- Ein neuer Chat startet mit dem Standard aus den Einstellungen. Der Standard für den Dateizugriff steht weiter unter Einstellungen → Workspace & Dateien, der Workspace-Ordner selbst bleibt global.
+- Beim Wechsel zwischen Chats werden die Knöpfe „Denken“ und „Dateizugriff“ neu gesetzt.
+- Anfragen an die KI (Chat, Übergabe, Autonom-Prüfung, Unteragenten) und das Anbieten der Werkzeuge verwenden jeweils den Wert **des eigenen Chats**, auch wenn im Vordergrund ein anderer Chat offen ist.
+
+## Websuche: SearXNG als Hintergrunddienst
+- Neu unter **Einstellungen → Websuche & Sprache** (Anbieter „SearXNG“): Schalter **„SearXNG mit der App starten“**. Die App startet SearXNG beim Programmstart im Hintergrund, stellt die Websuche auf `http://127.0.0.1:<Port>` und beendet den Dienst beim Schließen (abschaltbar über „Mit der App beenden“).
+- **SearXNG wird nicht mitgeliefert.** Es ist eine eigene Python-Anwendung (AGPL-3.0) und läuft als getrennter Dienst. Zwei Arten:
+  - **Docker (empfohlen):** Container `llm-box-searxng` aus dem Image `searxng/searxng`, nur auf `127.0.0.1` erreichbar. Die App legt `settings.yml` im Datenordner (`searxng/`) an, mit zufälligem Schlüssel, ohne Limiter und mit aktiviertem JSON-Format. Beim ersten Start lädt Docker das Image (einige Minuten). Docker (Desktop) muss installiert sein und laufen.
+  - **Eigener Startbefehl:** für eine vorhandene SearXNG-Installation. Der Befehl läuft als Kindprozess der App, der Port steht in `SEARXNG_PORT`.
+- Knöpfe **Starten**, **Stoppen**, **Status prüfen** und eine Statuszeile (Docker, Container, JSON-Antwort). Ein anderer Port legt den Container neu an.
+- Neu im Hauptprozess (`main.js`) und in `preload.js`: `searx:status`, `searx:start`, `searx:stop`. Neu in `owui.js`: `owSearxStart()`, `owSearxAutostart()`. Neue Einstellung `web.searx` (`auto`, `mode`, `port`, `command`, `stopOnQuit`).
+- Englische und französische Texte dazu: `i18n-lex-v82c.js`.
+
+## Gesamtverbrauch in der Seitenleiste
+- Neuer Block **„Gesamtverbrauch“** unten links, direkt über „Reuschler-IT“ (`js/usage.js`). Er zeigt die Summe über alle Chats: Tokens gesamt (Eingabe/Ausgabe), Ø Tempo (nach Tokens gewichtet), Anzahl Antworten, Rechenzeit, Kosten (Vergleichswert) und Strom (kWh und Stromkosten, wenn der Monitor GPU-Leistung misst). Ein Klick auf die Überschrift klappt den Block ein und aus.
+- **Bleibt erhalten, auch wenn Chats gelöscht werden:** Die Summen liegen in der eigenen Datei `usage.json` im Datenordner und wachsen mit jeder fertigen Antwort. Löschen oder „Alle Chats löschen“ ändert sie nicht. Ein Knopf **„Zurücksetzen“** setzt sie auf 0 (mit Rückfrage).
+- Beim ersten Start werden die dann vorhandenen Chats einmalig eingerechnet, damit die Zahl nicht bei 0 beginnt. Was vorher schon gelöscht war, fehlt.
+- Kosten und Stromkosten werden beim Erfassen mit den damals eingestellten Preisen berechnet. Spätere Preisänderungen verändern die bisherige Summe nicht.
+- Die Zeile **„Strom“** wird immer angezeigt, auch wenn noch nichts gemessen wurde („–“, mit Hinweis im Tooltip).
+- Nicht erfasst: Hintergrund-Aufrufe ohne Chat-Antwort (Unteragenten, Übergabe-Text, Verbindungstest).
+- Englische und französische Texte: `i18n-lex-v82c.js`.
+
+## Sprachen (Englisch und Französisch)
+- Rund 290 bisher fehlende Texte und 40 Muster übersetzt (`i18n-lex-v82.js`, `i18n-lex-v82b.js`, in `index.html` eingebunden): Autonomer Modus, Live-Ansicht, Websuche, Server-Fenster, Verbindungsprüfung, Modul-Beschreibungen, Stromkosten-Tooltips, Menüs.
+- Anweisungen an die KI (Autonom-Modus, Übergabe, Abschluss-Prüfung, Werkzeug-Antworten) gehen in der gewählten Sprache an das Modell. Neue Funktion `TLines()` in `i18n.js` übersetzt mehrzeilige Texte zeilenweise (`autoFinishTool()` und `autoSystemDe()` in `auto.js`).
+- Prüfwerkzeug: Es liest den Quelltext, sucht deutsche Texte und meldet, was nicht übersetzt wird.
+
+## Linux
+- Neue Linux-Fassung: normale Titelleiste des Desktops, natives Wayland (`js/platform.js`, `main.js`, `styles.css`).
+- `package.json`: Version 1.0.82, Ziele AppImage, deb, tar.gz (`npm run dist:linux`, `npm run pack:linux`). Neu: `start.sh`, `build-linux.sh`, `llm-box.desktop`, `docs/LINUX.md`.
+
+## Grenzen
+- Der Gesamtverbrauch wurde nur beim Start geprüft (Block erscheint, usage.json wird angelegt). Das Zählen echter Antworten und der Import vorhandener Chats sind nicht an echten Daten getestet.
+- Der SearXNG-Dienst wurde nicht mit echtem Docker oder SearXNG getestet (in der Prüfumgebung nicht vorhanden). Geprüft sind nur Syntax und der Start der App mit der neuen Oberfläche. Ob der erste Start, der Port-Wechsel und das Beenden mit der App auf deinem Rechner sauber laufen, bitte ausprobieren.
+- Meldungen aus `main.js`, die als Werkzeug-Ergebnis an die KI gehen, bleiben deutsch.
+- Die Linux-Fassung wurde nur kurz unter einem virtuellen Display gestartet (Oberfläche lädt, keine Renderer-Fehler). Der Bau der Pakete und der Betrieb auf echten Desktops sind nicht geprüft.
+- Die Änderungen an Sortierung und Pro-Chat-Einstellungen sind per Syntaxprüfung kontrolliert, aber nicht in der laufenden App getestet.
+- Englische und französische Texte sind nicht von Muttersprachlern gegengelesen.
+- Ändert ein Android-Build `auto.js` mit exakten Suchtexten, bitte prüfen (`autoSystem()` ist in zwei Funktionen geteilt).
+
+## Geänderte Dateien
+`main.js` (Sortierung, Linux-Fenster), `renderer/js/app.js`, `owui.js`, `usage.js`, `preload.js`, `i18n-lex-v82c.js`, `auto.js`, `handoff.js`, `subagents.js`, `i18n.js`, `i18n-lex-v82.js`, `i18n-lex-v82b.js`, `platform.js`, `renderer/index.html`, `renderer/styles.css`, `package.json`, `package-lock.json`, `start.sh`, `build-linux.sh`, `llm-box.desktop`, `docs/LINUX.md`, `UPDATE.md`.

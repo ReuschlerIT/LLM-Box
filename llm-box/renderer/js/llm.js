@@ -75,7 +75,45 @@
     let j;
     try { j = JSON.parse(res.text); } catch { throw new Error(`Die Antwort von ${url} ist kein JSON: ${String(res.text || '').replace(/\s+/g, ' ').slice(0, 120)}`); }
     if (conn.type === 'ollama') return (j.models || []).map((m) => ({ id: m.name, size: m.size, details: m.details }));
-    return (j.data || j.models || []).map((m) => ({ id: m.id || m.name, raw: m })).filter((m) => m.id);
+    const loaded = (j.data || j.models || []).map((m) => ({ id: m.id || m.name, raw: m })).filter((m) => m.id);
+    // Strata (und ähnliche Server) melden unter /v1/models nur das GELADENE Modell. Die übrigen installierten Modelle
+    // stehen im Host der Strata-App (/api/native → installed) und werden hier zusätzlich eingeblendet.
+    let extra = [];
+    try { extra = await listStrataInstalled(conn); } catch { extra = []; }
+    if (!extra.length) return loaded;
+    const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const out = loaded.map((m) => ({ ...m, loaded: true }));
+    for (const x of extra) {
+      const nx = norm(x.id);
+      if (out.some((m) => m.id === x.id || (nx && norm(m.id) === nx) || (nx.length > 5 && m.loaded && (norm(m.id).includes(nx) || nx.includes(norm(m.id)))))) continue;
+      out.push({ id: x.id, installedOnly: true, raw: x.raw });
+    }
+    return out;
+  }
+
+  /* Installierte Modelle der Strata-Desktop-App (GET <Host>/api/native → installed). Leere Liste, wenn der Server das nicht kennt. */
+  async function listStrataInstalled(conn) {
+    if (!conn || conn.type === 'ollama' || isAnth(conn)) return [];
+    let host = '';
+    try { host = new URL(conn.baseUrl).hostname; } catch { return []; }
+    // Keine fremden Cloud-Server abfragen: nur lokale/private Adressen oder Verbindungen, die ausdrücklich „Strata“ heißen
+    if (!/^(localhost|127\.|\[::1\]|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(host) && !/strata/i.test(conn.name || '')) return [];
+    const root = String(conn.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+    const res = await api().fetch({ url: root + '/api/native', method: 'GET', headers: { ...headersFor(conn), Accept: 'application/json' }, timeout: 4000 });
+    if (!res || !res.ok) return [];
+    let j;
+    try { j = JSON.parse(res.text); } catch { return []; }
+    const inst = j && j.installed;
+    let list = !inst ? [] : Array.isArray(inst) ? inst : Array.isArray(inst.models) ? inst.models : Array.isArray(inst.items) ? inst.items : Array.isArray(inst.data) ? inst.data : [];
+    const seen = new Set();
+    const out = [];
+    for (const m of list) {
+      const id = typeof m === 'string' ? m : m && (m.id || m.modelId || m.name || m.model);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ id: String(id), raw: m });
+    }
+    return out;
   }
 
 

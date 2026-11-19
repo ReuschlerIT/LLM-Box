@@ -19,6 +19,11 @@ const aborts = new Map();
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
+// Linux: unter Wayland nativ statt ueber XWayland starten (X11 bleibt unveraendert), Fenstername fuer Docks und Startmenue
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+  try { app.setName('LLM Box'); } catch {}
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -188,7 +193,7 @@ ipcMain.handle('chats:list', async () => {
   const metas = fund.metas;
   for (const m of metas) seen.set(m.id, m.rev || 0);
   baseline = true;
-  return metas.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  return metas.sort((a, b) => (b.created || b.updated || 0) - (a.created || a.updated || 0));   // nach Erstellung, nicht nach letzter Aktivitaet (sonst springen Chats bei laufenden Antworten)
 });
 ipcMain.handle('chats:load', async (_e, id) => {
   const dir = chatsDir();
@@ -1445,17 +1450,201 @@ ipcMain.handle('llm:abort', (_e, id) => {
   return true;
 });
 
+/* ───────────────────────── Live-Ansicht (Hub) ─────────────────────────
+   Dieser Rechner bietet seine laufenden Chats im Netz an. Andere Geräte (PC oder Android) verbinden sich und sehen
+   Nachrichten und Antworten Wort für Wort mit, ähnlich wie bei Open WebUI mehrere Fenster denselben Chat zeigen.
+   Technik: HTTP + Server-Sent-Events (SSE). Die Oberfläche (renderer/js/live.js) meldet Änderungen per 'live:push',
+   der Hub pflegt einen kleinen Zwischenspeicher und verteilt sie. Zugriff nur mit Token (?t=…), Standard: aus. */
+const LIVE_PORT_DEFAULT = 45460;
+const LIVE_PATH = '/llmbox-live';
+const live = { server: null, port: 0, token: '', clients: new Set(), seq: 0, hb: null, remote: false, log: [], waiters: new Set(), pollers: new Map(), cache: { active: '', list: [], chats: new Map() } };
+const liveCfgFile = () => path.join(app.getPath('userData'), 'live.json');
+function liveToken(regen) {
+  let t = '';
+  try { t = JSON.parse(fs.readFileSync(liveCfgFile(), 'utf8')).token || ''; } catch {}
+  if (!t || regen) {
+    t = crypto.randomBytes(12).toString('base64url');
+    try { fs.writeFileSync(liveCfgFile(), JSON.stringify({ token: t })); } catch {}
+  }
+  return t;
+}
+function liveIps() {
+  const ips = [];
+  for (const list of Object.values(os.networkInterfaces())) for (const ni of list || []) if (ni.family === 'IPv4' && !ni.internal) ips.push(ni.address);
+  return ips;
+}
+function liveStatus() {
+  const running = !!live.server;
+  const mk = (ip) => `http://${ip}:${live.port}${LIVE_PATH}?t=${encodeURIComponent(live.token)}`;
+  return { running, port: live.port, token: running ? live.token : '', clients: live.clients.size + livePollerCount(), remote: live.remote, device: deviceName(), urls: running ? liveIps().map(mk) : [] };
+}
+function liveSend(res, type, data, id) {
+  try { res.write(`${id ? 'id: ' + id + '\n' : ''}event: ${type}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
+}
+function livePollerCount() {
+  const now = Date.now();
+  for (const [k, t] of live.pollers) if (now - t > 60000) live.pollers.delete(k);
+  return live.pollers.size;
+}
+// Ereignisprotokoll für Geräte, die keinen Strom (SSE) können: sie holen Neues per Long-Polling (/poll)
+function liveFlushWaiters() {
+  for (const w of [...live.waiters]) {
+    const ev = live.log.filter((e) => e.seq > w.since);
+    if (!ev.length) continue;
+    clearTimeout(w.timer);
+    live.waiters.delete(w);
+    try { w.res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); w.res.end(JSON.stringify({ seq: live.seq, events: ev })); } catch {}
+  }
+}
+function liveBroadcast(type, data) {
+  live.seq++;
+  live.log.push({ seq: live.seq, type, data });
+  if (live.log.length > 600) live.log.splice(0, live.log.length - 600);
+  for (const res of live.clients) liveSend(res, type, data, live.seq);
+  if (live.waiters.size) liveFlushWaiters();
+}
+// Ereignis in den Zwischenspeicher übernehmen, damit neue Geräte sofort den aktuellen Stand abrufen können
+function liveApply(e) {
+  const c = live.cache;
+  if (!e || typeof e !== 'object') return;
+  if (e.type === 'list') c.list = Array.isArray(e.list) ? e.list : [];
+  else if (e.type === 'active') c.active = String(e.id || '');
+  else if (e.type === 'chat' && e.chat && e.chat.id) {
+    c.chats.delete(e.chat.id);
+    c.chats.set(e.chat.id, e.chat);
+    while (c.chats.size > 24) c.chats.delete(c.chats.keys().next().value);
+  } else if ((e.type === 'msg' || e.type === 'delta') && c.chats.has(e.id)) {
+    const ch = c.chats.get(e.id);
+    if (!Array.isArray(ch.messages)) return;
+    if (e.type === 'msg' && e.message) {
+      if (e.index >= 0 && e.index <= ch.messages.length) ch.messages[e.index] = e.message;
+      if (e.title) ch.title = e.title;
+    } else if (e.type === 'delta') {
+      const m = ch.messages[e.index];
+      if (!m) return;
+      if (typeof e.c === 'string') m.content = String(m.content || '').slice(0, e.cFrom || 0) + e.c;
+      if (typeof e.t === 'string') m.thinking = String(m.thinking || '').slice(0, e.tFrom || 0) + e.t;
+    }
+  }
+}
+function liveStop() {
+  if (live.hb) { clearInterval(live.hb); live.hb = null; }
+  for (const res of live.clients) { try { res.end(); } catch {} }
+  live.clients.clear();
+  for (const w of live.waiters) { clearTimeout(w.timer); try { w.res.end('{}'); } catch {} }
+  live.waiters.clear(); live.pollers.clear(); live.log = [];
+  if (live.server) { try { live.server.close(); } catch {} live.server = null; }
+  live.port = 0;
+}
+ipcMain.handle('live:start', async (_e, { port, regenToken, remote } = {}) => {
+  const http = require('http');
+  liveStop();
+  live.remote = !!remote;
+  live.token = liveToken(!!regenToken);
+  const server = http.createServer(async (req, res) => {
+    const u = new URL(req.url || '/', 'http://localhost');
+    if (!u.pathname.startsWith(LIVE_PATH)) { res.writeHead(404); res.end(); return; }
+    const given = u.searchParams.get('t') || '';
+    const a = Buffer.from(given), b = Buffer.from(live.token);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Token passt nicht'); return; }
+    const sub = u.pathname.slice(LIVE_PATH.length) || '/';
+    const json = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
+    try {
+      if (sub === '/events') {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+        res.write(': ok\n\n');
+        live.clients.add(res);
+        req.on('close', () => live.clients.delete(res));
+        liveSend(res, 'hello', { app: 'LLM Box', version: app.getVersion(), device: deviceName(), active: live.cache.active, remote: live.remote, seq: live.seq }, live.seq);
+        // Die Oberfläche schickt daraufhin den vollständigen Stand der aktiven Chats nach
+        if (win && !win.isDestroyed()) win.webContents.send('live:resync');
+        return;
+      }
+      if (sub === '/poll') {
+        // Long-Polling-Ersatz für den Strom: ?since=<seq> (-1 = frisch verbinden). Antwortet sofort oder nach höchstens 20 s.
+        const since = parseInt(u.searchParams.get('since') || '-1', 10);
+        live.pollers.set(given.slice(0, 4) + (req.socket.remoteAddress || ''), Date.now());
+        if (since < 0 || (live.log.length && since < live.log[0].seq - 1) || since > live.seq) {
+          if (win && !win.isDestroyed()) win.webContents.send('live:resync');
+          return json(200, { seq: live.seq, reset: true, events: [{ seq: live.seq, type: 'hello', data: { app: 'LLM Box', version: app.getVersion(), device: deviceName(), active: live.cache.active, remote: live.remote, seq: live.seq } }] });
+        }
+        const ev = live.log.filter((e) => e.seq > since);
+        if (ev.length) return json(200, { seq: live.seq, events: ev });
+        const w = { res, since, timer: null };
+        w.timer = setTimeout(() => { live.waiters.delete(w); try { json(200, { seq: live.seq, events: [] }); } catch {} }, 20000);
+        live.waiters.add(w);
+        req.on('close', () => { clearTimeout(w.timer); live.waiters.delete(w); });
+        return;
+      }
+      if (sub === '/send' || sub === '/stop') {
+        // Fernsteuerung: nur wenn der Nutzer sie auf diesem Rechner ausdrücklich erlaubt hat
+        if (!live.remote) return json(403, { error: 'Fernsteuerung ist auf diesem Gerät ausgeschaltet.' });
+        if (req.method !== 'POST') return json(405, { error: 'POST erwartet' });
+        let body = '';
+        for await (const ch of req) { body += ch; if (body.length > 300000) return json(413, { error: 'Zu groß' }); }
+        let o = {};
+        try { o = JSON.parse(body || '{}'); } catch { return json(400, { error: 'Kein JSON' }); }
+        const id = String(o.id || '').slice(0, 80);
+        if (!id) return json(400, { error: 'id fehlt' });
+        if (sub === '/send' && !String(o.text || '').trim()) return json(400, { error: 'text fehlt' });
+        if (win && !win.isDestroyed()) win.webContents.send('live:cmd', { cmd: sub.slice(1), id, text: String(o.text || ''), create: !!o.create });
+        return json(200, { ok: true });
+      }
+      if (sub === '/chats') return json(200, { device: deviceName(), active: live.cache.active, remote: live.remote, list: live.cache.list });
+      if (sub === '/chat') {
+        const id = u.searchParams.get('id') || '';
+        let ch = live.cache.chats.get(id);
+        if (!ch) ch = await readJson(chatFileIn(chatsDir(), id), null);
+        return ch ? json(200, ch) : json(404, { error: 'Chat nicht gefunden' });
+      }
+      if (sub === '/' || sub === '') return json(200, { app: 'LLM Box', device: deviceName(), version: app.getVersion() });
+      res.writeHead(404); res.end();
+    } catch (err) { try { json(500, { error: String(err && err.message || err) }); } catch {} }
+  });
+  const tryListen = (pt) => new Promise((resolve, reject) => { server.once('error', reject); server.listen(pt, '0.0.0.0', () => { server.removeListener('error', reject); resolve(); }); });
+  try { await tryListen(+port || LIVE_PORT_DEFAULT); }
+  catch (e) {
+    if (e && e.code === 'EADDRINUSE') await tryListen(0); // gewünschter Port belegt: freien nehmen
+    else throw e;
+  }
+  live.server = server;
+  live.port = server.address().port;
+  live.hb = setInterval(() => { for (const res of live.clients) { try { res.write(': hb\n\n'); } catch {} } }, 15000);
+  if (win && !win.isDestroyed()) win.webContents.send('live:resync');
+  return { ok: true, ...liveStatus() };
+});
+ipcMain.handle('live:stop', () => { liveStop(); return { ok: true, ...liveStatus() }; });
+ipcMain.handle('live:config', (_e, { remote } = {}) => { live.remote = !!remote; return { ok: true, ...liveStatus() }; });
+ipcMain.handle('live:status', () => liveStatus());
+ipcMain.on('live:push', (_e, evt) => {
+  if (!live.server || !evt || typeof evt.type !== 'string') return;
+  liveApply(evt);
+  if (live.clients.size || live.waiters.size || live.pollers.size) liveBroadcast(evt.type, evt);
+});
+app.on('before-quit', liveStop);
+
 /* ───────────────────────── Fenster / System ───────────────────────── */
 
 ipcMain.handle('shell:openExternal', (_e, url) => {
   if (/^https?:\/\//i.test(url)) shell.openExternal(url);
 });
 ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p));
+/* Rechner wach halten, solange ein autonomer Lauf aktiv ist (Ruhezustand verhindern; der Bildschirm darf ausgehen) */
+let keepAwakeId = null;
+ipcMain.handle('power:keepAwake', (_e, on) => {
+  const { powerSaveBlocker } = require('electron');
+  try {
+    if (on && keepAwakeId === null) keepAwakeId = powerSaveBlocker.start('prevent-app-suspension');
+    else if (!on && keepAwakeId !== null) { powerSaveBlocker.stop(keepAwakeId); keepAwakeId = null; }
+  } catch (e) { console.error('Wach halten:', e && e.message); }
+  return keepAwakeId !== null;
+});
+ipcMain.handle('shell:showItem', (_e, p) => { try { shell.showItemInFolder(p); return ''; } catch (e) { return e.message; } });
 
 /* ───────────────────────── Rechtschreibprüfung ─────────────────────────
    Falsch geschriebene Wörter werden in Eingabefeldern rot wellig unterstrichen. Rechtsklick auf das Wort zeigt Vorschläge.
    Unter Windows und Linux lädt Chromium die Wörterbücher beim ersten Mal selbst herunter (Internet nötig), danach sind sie lokal. */
-const SPELL_LANGS = { de: ['de'], 'de-en': ['de', 'en-US'], en: ['en-US'] };
+const SPELL_LANGS = { de: ['de'], 'de-en': ['de', 'en-US'], en: ['en-US'], fr: ['fr'], 'fr-en': ['fr', 'en-US'], 'de-fr': ['de', 'fr'], 'de-en-fr': ['de', 'en-US', 'fr'] };
 function applySpell({ enabled, lang }) {
   try {
     if (!win || win.isDestroyed()) return false;
@@ -1564,8 +1753,9 @@ async function createWindow() {
     backgroundColor: '#ffffff',
     title: 'LLM Box – Reuschler-IT',
     icon: path.join(__dirname, 'build', 'icon.png'),
-    titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#f3f5fb', symbolColor: '#4a5478', height: 38 },
+    // Windows: eigene Titelleiste mit Fenster-Knoepfen im Overlay. Linux: normale Titelleiste des Desktops (GNOME, KDE, Xfce …),
+    // sonst fehlen unter manchen Fenstermanagern die Knoepfe zum Schliessen und Verschieben.
+    ...(process.platform === 'linux' ? {} : { titleBarStyle: 'hidden', titleBarOverlay: { color: '#f3f5fb', symbolColor: '#4a5478', height: 38 } }),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1629,6 +1819,122 @@ async function createWindow() {
     win = null;
   });
 }
+
+/* ───────────────────────── SearXNG als Hintergrunddienst ─────────────────────────
+   SearXNG ist eine eigene Python-Anwendung (AGPL-3.0) und wird NICHT in die App kopiert, sondern als getrennter Prozess gestartet:
+     docker : Container "llm-box-searxng" (Image searxng/searxng) mit eigener settings.yml im Datenordner. Nur auf 127.0.0.1 erreichbar.
+     command: ein selbst eingerichteter Startbefehl (z. B. eine vorhandene SearXNG-Installation), laeuft als Kindprozess der App.
+   Start beim Programmstart und Beenden mit der App steuert die Oberflaeche (Einstellungen -> Websuche). */
+const SEARX_NAME = 'llm-box-searxng';
+const searx = { child: null, stopOnQuit: true, mode: '', port: 8888, busy: null, log: '' };
+
+function searxRun(file, args, timeout = 20000) {
+  return new Promise((resolve) => {
+    execFile(file, args, { timeout, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({ ok: !err, out: String(stdout || '').trim(), err: String((stderr || '') || (err && err.message) || '').trim() });
+    });
+  });
+}
+function searxPing(port) {
+  return new Promise((resolve) => {
+    const req = require('http').get({ host: '127.0.0.1', port, path: '/search?q=test&format=json', timeout: 4000 }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200 ? 'ok' : res.statusCode === 403 ? 'nojson' : 'http' + res.statusCode);
+    });
+    req.on('error', () => resolve('down'));
+    req.on('timeout', () => { req.destroy(); resolve('down'); });
+  });
+}
+function searxPort(p) { const n = Math.floor(+p); return n >= 1024 && n <= 65535 ? n : 8888; }
+function searxDir() { return path.join(dataDir(), 'searxng'); }
+function searxWriteSettings() {
+  const dir = searxDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const f = path.join(dir, 'settings.yml');
+  if (!fs.existsSync(f)) {
+    const key = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(f, ['use_default_settings: true', 'server:', `  secret_key: "${key}"`, '  limiter: false', '  image_proxy: false', '  bind_address: "0.0.0.0"', 'search:', '  formats:', '    - html', '    - json', ''].join('\n'));
+  }
+  return dir;
+}
+async function searxDockerState() {
+  const info = await searxRun('docker', ['info', '--format', '{{.ServerVersion}}'], 15000);
+  if (!info.ok) return { docker: false, why: /not found|ENOENT|nicht gefunden/i.test(info.err) ? 'missing' : 'stopped', err: info.err.slice(0, 300) };
+  const ins = await searxRun('docker', ['inspect', '-f', '{{.State.Running}}|{{json .HostConfig.PortBindings}}', SEARX_NAME]);
+  if (!ins.ok) return { docker: true, container: 'none' };
+  const [running, ports] = ins.out.split('|');
+  const m = /"HostPort":"(\d+)"/.exec(ports || '');
+  return { docker: true, container: running === 'true' ? 'running' : 'stopped', hostPort: m ? +m[1] : 0 };
+}
+async function searxStatus(o) {
+  const port = searxPort(o && o.port);
+  const mode = o && o.mode === 'command' ? 'command' : 'docker';
+  const http = await searxPing(port);
+  const r = { mode, port, http, reachable: http === 'ok' || http === 'nojson', json: http === 'ok', busy: !!searx.busy, log: searx.log };
+  if (mode === 'docker') Object.assign(r, await searxDockerState());
+  else r.child = !!(searx.child && searx.child.exitCode === null);
+  return r;
+}
+async function searxStart(o) {
+  if (searx.busy) return searx.busy;
+  searx.busy = (async () => {
+    const port = searxPort(o && o.port);
+    const mode = o && o.mode === 'command' ? 'command' : 'docker';
+    searx.mode = mode; searx.port = port; searx.stopOnQuit = !(o && o.stopOnQuit === false); searx.log = '';
+    try {
+      if ((await searxPing(port)) === 'ok') return { ok: true, note: 'läuft bereits' };
+      if (mode === 'docker') {
+        const st = await searxDockerState();
+        if (!st.docker) return { ok: false, error: st.why === 'missing' ? 'Docker ist nicht installiert (https://docs.docker.com/get-docker/).' : 'Docker ist installiert, läuft aber nicht. Bitte Docker (Desktop) starten.' };
+        const dir = searxWriteSettings();
+        if (st.container !== 'none' && st.hostPort && st.hostPort !== port) { await searxRun('docker', ['rm', '-f', SEARX_NAME]); st.container = 'none'; }
+        if (st.container === 'stopped') { const r = await searxRun('docker', ['start', SEARX_NAME]); if (!r.ok) return { ok: false, error: 'Container ließ sich nicht starten: ' + r.err.slice(0, 300) }; }
+        else if (st.container === 'none') {
+          const r = await searxRun('docker', ['run', '-d', '--name', SEARX_NAME, '--restart', 'no', '-p', `127.0.0.1:${port}:8080`, '-v', `${dir}:/etc/searxng`, '-e', `SEARXNG_BASE_URL=http://127.0.0.1:${port}/`, 'searxng/searxng:latest'], 15 * 60 * 1000);
+          if (!r.ok) return { ok: false, error: 'docker run fehlgeschlagen: ' + r.err.slice(0, 400) };
+        }
+      } else {
+        const cmd = String((o && o.command) || '').trim();
+        if (!cmd) return { ok: false, error: 'Kein Startbefehl eingetragen.' };
+        if (!(searx.child && searx.child.exitCode === null)) {
+          const env = { ...process.env, SEARXNG_PORT: String(port), SEARXNG_BIND_ADDRESS: '127.0.0.1' };
+          const c = spawn(cmd, { shell: true, detached: !IS_WIN, windowsHide: true, env, cwd: (o && o.cwd) || undefined, stdio: ['ignore', 'pipe', 'pipe'] });
+          const add = (d) => { searx.log = (searx.log + String(d)).slice(-2000); };
+          c.stdout.on('data', add); c.stderr.on('data', add);
+          c.on('error', (e) => add(e.message));
+          searx.child = c;
+        }
+      }
+      for (let i = 0; i < 60; i++) {   // bis zu 2 Minuten auf die erste Antwort warten
+        const h = await searxPing(port);
+        if (h === 'ok') return { ok: true };
+        if (h === 'nojson') return { ok: false, error: 'SearXNG läuft, verweigert aber das JSON-Format. In settings.yml muss unter „search: formats“ „json“ stehen.' };
+        if (mode === 'command' && searx.child && searx.child.exitCode !== null) return { ok: false, error: 'Der Startbefehl wurde beendet: ' + searx.log.slice(-300) };
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      return { ok: false, error: 'SearXNG antwortet nicht (Zeitüberschreitung).' };
+    } finally { setTimeout(() => { searx.busy = null; }, 0); }
+  })();
+  return searx.busy;
+}
+async function searxStop() {
+  const o = { ok: true };
+  if (searx.child && searx.child.exitCode === null) {
+    try { if (IS_WIN) execFile('taskkill', ['/pid', String(searx.child.pid), '/T', '/F'], { windowsHide: true }, () => {}); else process.kill(-searx.child.pid, 'SIGTERM'); } catch {}
+    searx.child = null;
+  }
+  const st = await searxDockerState();
+  if (st.docker && st.container === 'running') await searxRun('docker', ['stop', '-t', '5', SEARX_NAME], 30000);
+  return o;
+}
+ipcMain.handle('searx:status', (_e, o) => searxStatus(o));
+ipcMain.handle('searx:start', (_e, o) => searxStart(o));
+ipcMain.handle('searx:stop', () => searxStop());
+app.on('before-quit', () => {
+  if (!searx.stopOnQuit) return;
+  if (searx.child && searx.child.exitCode === null) { try { if (IS_WIN) execFile('taskkill', ['/pid', String(searx.child.pid), '/T', '/F'], { windowsHide: true }, () => {}); else process.kill(-searx.child.pid, 'SIGTERM'); } catch {} }
+  if (searx.mode === 'docker') { try { require('child_process').execFileSync('docker', ['stop', '-t', '3', SEARX_NAME], { timeout: 15000, windowsHide: true, stdio: 'ignore' }); } catch {} }
+});
 
 if (gotLock) app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());

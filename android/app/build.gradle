@@ -13,8 +13,8 @@ android {
         /* Versionsnummer bewusst gleich wie die Desktop-App (llm-box\package.json).
            Bislang stand hier fest 1.0.32 - dadurch war auf dem Gerat nicht erkennbar,
            ob eine neu gebaute APK wirklich installiert ist (gleicher Name trotz aenderungen). */
-        versionCode 70
-        versionName "1.0.70-android"
+        versionCode 82
+        versionName "1.0.82-android"
     }
 
     buildTypes {
@@ -47,7 +47,7 @@ android {
     }
 }
 
-// Der Arbeitsordner liegt auf einem Netzlaufwerk (Z:). Dort bleiben gelöschte Ordner im
+// Der Arbeitsordner liegt auf einem Netzlaufwerk (Y:). Dort bleiben gelöschte Ordner im
 // Lösch-Limbus hängen und blockieren den Standard-Ausgabeordner "build". Deshalb ein eigener Name.
 layout.buildDirectory.set(new File(projectDir, 'app_build'))
 

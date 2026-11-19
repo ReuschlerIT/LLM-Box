@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Reuschler-IT - LLM Box</title>
   <link rel="stylesheet" href="styles.css" />
+  <script src="js/platform.js"></script>
   <link id="hl-theme" rel="stylesheet" href="vendor/hl-light.css" />
 </head>
 <body>
@@ -21,7 +22,8 @@
         <button id="btn-import" class="icon-btn" title="Chats importieren (z. B. aus der Strata-Weboberfläche)"></button>
         <button id="btn-settings" class="icon-btn" title="Einstellungen (Strg+,)"></button>
       </div>
-      <div class="brand-foot"><b>Reuschler-IT</b><br>© 2026 Reuschler-IT. Alle Rechte vorbehalten.</div>
+      <div id="usage-foot" class="usage-foot"></div>
+      <div class="brand-foot"><b>Reuschler-IT</b><br>© 2026 Reuschler-IT. Veröffentlicht unter der MIT-Lizenz.</div>
     </aside>
 
     <main id="main">
@@ -100,6 +102,9 @@
   <script src="js/i18n-lex-hints.js"></script>
   <script src="js/i18n-lex-ctx.js"></script>
   <script src="js/i18n-lex-full.js"></script>
+  <script src="js/i18n-lex-v82.js"></script>
+  <script src="js/i18n-lex-v82b.js"></script>
+  <script src="js/i18n-lex-v82c.js"></script>
   <!-- Sprachregeln und Systemprompt-Varianten fuer die KI (nutzen app.js und settings.js) -->
   <script src="js/i18n-prompts.js"></script>
   <script src="js/llm.js"></script>
@@ -112,6 +117,16 @@
   <script src="js/thinktr.js"></script>
   <script src="js/strataimport.js"></script>
   <script src="js/transfer.js"></script>
+  <!-- Live-Ansicht: Chats geräteübergreifend in Echtzeit (vor app.js, das liveInit() aufruft) -->
+  <script src="js/live.js"></script>
+  <!-- Module: alles frei ein- und ausschaltbar -->
+  <script src="js/modules.js"></script>
+  <!-- Open-WebUI-Funktionen: Prompts, Assistenten, Gedächtnis, Wissen, Websuche, Vorlesen, Chats ordnen -->
+  <script src="js/owui.js"></script>
+  <!-- Autonomer Modus: selbstständiges Arbeiten ohne Rückfragen, Kontext leert sich selbst -->
+  <!-- Gesamtverbrauch aller Chats (Seitenleiste) -->
+  <script src="js/usage.js"></script>
+  <script src="js/auto.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

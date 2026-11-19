@@ -1,7 +1,7 @@
 {
   "name": "llm-box",
   "productName": "LLM Box",
-  "version": "1.0.70",
+  "version": "1.0.82",
   "description": "Lokale Chat-Oberfläche für Ollama, LM Studio, llama.cpp und OpenAI-kompatible APIs",
   "main": "main.js",
   "author": {
@@ -11,8 +11,11 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
+    "hub": "node hub/hub.js",
     "dist": "electron-builder --win nsis portable",
-    "pack": "electron-builder --win dir"
+    "pack": "electron-builder --win dir",
+    "dist:linux": "electron-builder --linux AppImage deb tar.gz",
+    "pack:linux": "electron-builder --linux dir"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -32,6 +35,8 @@
       "renderer/**/*",
       "build/icon.png",
       "package.json",
+      "LICENSE",
+      "THIRD-PARTY-NOTICES.md",
       "!node_modules/pdfjs-dist/{web,build,image_decoders,types}/**",
       "!node_modules/pdfjs-dist/legacy/{web,image_decoders,types}/**",
       "!node_modules/pdfjs-dist/legacy/build/*.map",
@@ -50,6 +55,19 @@
       "target": [
         "nsis",
         "portable"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "synopsis": "Lokale Chat-Oberfläche für Ollama, LM Studio, llama.cpp",
+      "maintainer": "Reuschler-IT <noreply@users.noreply.github.com>",
+      "executableName": "llm-box",
+      "desktop": { "Name": "LLM Box", "Comment": "Chat for local LLM servers", "Keywords": "LLM;AI;Chat;Ollama;", "StartupWMClass": "LLM Box" },
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
       ]
     },
     "nsis": {

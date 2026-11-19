@@ -59,14 +59,25 @@ function parkLive() {
 const NO_CONN = { id: '', name: 'Keine Verbindung', type: 'openai', baseUrl: '', apiKey: '', extraParams: false, none: true };
 const activeConn = () => S.settings.connections.find((c) => c.id === S.settings.activeConnection) || S.settings.connections[0] || NO_CONN;
 const currentModel = () => (S.chat && S.chat.model) || S.settings.model || '';
-const useTools = () => !!(S.settings.workspace.toolsEnabled && S.settings.workspace.path);
+/* Dateizugriff pro Chat: chat.tools (true/false) gilt nur fuer diesen Chat. Fehlt der Wert, gilt der Standard aus den Einstellungen.
+   Der Workspace-Ordner selbst bleibt global. */
+const useTools = (chat) => {
+  const c = chat || S.chat;
+  const on = c && typeof c.tools === 'boolean' ? c.tools : S.settings.workspace.toolsEnabled;
+  return !!(on && S.settings.workspace.path);
+};
 const EXEC_TOOLS = ['run_command', 'install_tool', 'check_tool'];
 const askOn = () => S.settings.workspace.askUser !== false;
-const askAlone = () => !useTools() && askOn() && S.settings.workspace.askUserAlways === true;
+const askAlone = (chat) => !useTools(chat) && askOn() && S.settings.workspace.askUserAlways === true;
 // Welche Werkzeuge dem Modell angeboten werden
-function toolsFor() {
-  if (useTools()) return LLM.WORKSPACE_TOOLS.filter((t) => (subOn() || t.function.name !== 'delegate_task') && (hoOn() || t.function.name !== 'propose_new_session') && (execOn() || !EXEC_TOOLS.includes(t.function.name)) && (askOn() || t.function.name !== 'ask_user'));
-  if (askAlone()) return LLM.WORKSPACE_TOOLS.filter((t) => t.function.name === 'ask_user');
+function toolsFor(chat) {
+  let t = toolsForBase(chat);
+  if (chat && typeof autoOn === 'function' && autoOn(chat)) t = autoTools(t); // autonom: keine Rückfragen, dafür finish_task (auto.js)
+  return typeof owuiTools === 'function' ? owuiTools(t) : t; // Websuche-Werkzeuge ergänzen (owui.js)
+}
+function toolsForBase(chat) {
+  if (useTools(chat)) return LLM.WORKSPACE_TOOLS.filter((t) => (subOn() || t.function.name !== 'delegate_task') && (hoOn() || t.function.name !== 'propose_new_session') && (execOn() || !EXEC_TOOLS.includes(t.function.name)) && (askOn() || t.function.name !== 'ask_user'));
+  if (askAlone(chat)) return LLM.WORKSPACE_TOOLS.filter((t) => t.function.name === 'ask_user');
   return null;
 }
 const execOn = () => S.settings.workspace.execEnabled !== false;
@@ -134,6 +145,8 @@ async function init() {
   api.onChatsChanged((m) => onRemoteChats(m));
   setInterval(updateBusyNotice, 20000); // abgelaufene „arbeitet gerade“-Markierungen (Rechner abgestürzt) ausblenden
   await loadChatList();
+  if (typeof usageInit === 'function') usageInit();   // Gesamtverbrauch laden
+  if (typeof owSearxAutostart === 'function') owSearxAutostart();   // SearXNG im Hintergrund starten, falls so eingestellt
   if (S.chatList.length) await openChat(S.chatList[0].id);
   if (!S.settings.connections.length) setTimeout(() => { toast('Lege zuerst eine Verbindung zu deinem KI-Server an.', 6000); openSettings('conn'); }, 400);
   else newChat();
@@ -197,7 +210,29 @@ const THINK_LEVELS = [
   { id: 'medium', label: 'Normal', hint: 'Ausgewogen' },
   { id: 'high', label: 'Hoch', hint: 'Gründlich – dauert länger' },
 ];
-const thinkLevel = () => THINK_LEVELS.find((l) => l.id === S.settings.thinking) || THINK_LEVELS[0];
+/* Denkaufwand pro Chat: chat.thinking gilt nur fuer diesen Chat, ohne Wert der Standard aus den Einstellungen. */
+const thinkId = (chat) => { const c = chat || S.chat; return c && c.thinking && THINK_LEVELS.some((l) => l.id === c.thinking) ? c.thinking : S.settings.thinking; };
+const thinkLevel = (chat) => THINK_LEVELS.find((l) => l.id === thinkId(chat)) || THINK_LEVELS[0];
+
+/* Eingabeleiste zeigt nur Symbole: Beschriftung samt Zustand (z. B. „Denken: Auto“) kommt als Tooltip. Die Chips bauen ihren Inhalt bei jeder Änderung neu auf, daher beobachten wir sie. */
+function composerTips() {
+  const bar = $('.composer-bar .left');
+  if (!bar) return;
+  const apply = () => {
+    for (const b of bar.querySelectorAll('.chip-btn, .icon-btn')) {
+      const sp = b.querySelector(':scope > span');
+      const lab = sp ? sp.textContent.trim() : '';
+      let base = b.dataset.base;
+      if (base === undefined || (b.title && !b.title.startsWith(lab + ' – ') && b.title !== b.dataset.tipFull)) base = b.dataset.base = b.title || '';
+      const full = lab && base ? lab + ' – ' + base : (lab || base);
+      b.dataset.tipFull = full;
+      b.dataset.tip = full;
+      if (b.title) b.title = ''; // natives Tooltip aus, damit nicht doppelt (nur bei Bedarf setzen, sonst löst der Beobachter sich selbst aus)
+    }
+  };
+  new MutationObserver(apply).observe(bar, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['title', 'class'] });
+  apply();
+}
 
 function updateThinkBtn() {
   const b = $('#btn-think');
@@ -213,8 +248,8 @@ function openThinkMenu() {
     hint: l.hint,
     active: l.id === thinkLevel().id,
     onClick: () => {
-      S.settings.thinking = l.id;
-      saveSettings();
+      if (S.chat) { S.chat.thinking = l.id; saveChatSoon(S.chat); }   // nur dieser Chat
+      else { S.settings.thinking = l.id; saveSettings(); }
       updateThinkBtn();
     },
   })));
@@ -229,6 +264,10 @@ function buildChrome() {
   initSubagents();
   initHandoff();
   initStrataImport();
+  if (typeof owuiInit === 'function') owuiInit();
+  if (typeof autoInit === 'function') autoInit();
+  if (typeof liveInit === 'function') liveInit();
+  if (typeof applyModules === 'function') applyModules();
   $('#btn-export').innerHTML = icon('download', 17);
   $('#btn-panel').innerHTML = icon('panel', 17);
   $('#btn-attach').innerHTML = icon('paperclip');
@@ -327,6 +366,7 @@ function applySpell() {
 
 const settingsChanged = debounce(() => {
   applyAppearance();
+  if (typeof applyModules === 'function') applyModules();
   applySpell();
   renderConnSelect();
   updateToolsBtn();
@@ -352,7 +392,7 @@ function renderModelSelect() {
   const ids = S.models.map((m) => m.id);
   if (cur && !ids.includes(cur)) ids.unshift(cur);
   if (!ids.length) s.append(el('option', { value: '', text: S.modelsErr ? 'Keine Verbindung' : 'Keine Modelle gefunden' }));
-  ids.forEach((id) => s.append(el('option', { value: id, text: id })));
+  ids.forEach((id) => { const m = S.models.find((x) => x.id === id); s.append(el('option', { value: id, text: m && m.installedOnly ? id + '  (installiert, nicht geladen)' : id })); });
   s.append(el('option', { value: '__manual', text: 'Modell manuell eingeben …' }));
   s.value = cur || ids[0] || '';
 }
@@ -420,7 +460,7 @@ async function refreshModels() {
   }
   if (!S.modelsErr && S.models.length) {
     const cur = currentModel();
-    if (!cur || (conn.type === 'ollama' && !S.models.some((m) => m.id === cur))) setModel(S.models[0].id);
+    if (!cur || (conn.type === 'ollama' && !S.models.some((m) => m.id === cur))) setModel((S.models.find((m) => !m.installedOnly) || S.models[0]).id);
   }
   renderModelSelect();
   renderStatus();
@@ -446,8 +486,13 @@ function renderChatList() {
   const box = $('#chat-list');
   box.innerHTML = '';
   const q = S.search.toLowerCase();
-  const items = S.chatList.filter((c) => !q || (c.title || '').toLowerCase().includes(q));
-  if (!items.length) {
+  const orgOn = typeof modOn === 'function' && modOn('organize') && typeof owOrg === 'function';
+  const org = orgOn ? owOrg() : { pins: {}, archived: {}, tags: {} };
+  const tagQ = orgOn && q.startsWith('#') ? q.slice(1) : '';
+  let items = S.chatList.filter((c) => (tagQ ? (org.tags[c.id] || []).some((t) => t.toLowerCase().includes(tagQ)) : !q || (c.title || '').toLowerCase().includes(q)));
+  const archived = orgOn ? items.filter((c) => org.archived[c.id]) : [];
+  if (orgOn) items = [...items.filter((c) => org.pins[c.id] && !org.archived[c.id]), ...items.filter((c) => !org.pins[c.id] && !org.archived[c.id])]; // Angeheftete zuerst
+  if (!items.length && !archived.length) {
     box.append(el('div', { class: 'group-title', text: q ? 'Keine Treffer' : 'Noch keine Chats' }));
     return;
   }
@@ -457,33 +502,54 @@ function renderChatList() {
     const d = Math.floor((today - new Date(t).setHours(0, 0, 0, 0)) / 86400000);
     return d <= 0 ? 'Heute' : d === 1 ? 'Gestern' : d <= 7 ? 'Letzte 7 Tage' : d <= 30 ? 'Letzte 30 Tage' : 'Älter';
   };
-  let last = '';
-  for (const c of items) {
-    const g = groupOf(c.updated || c.created || 0);
-    if (g !== last) {
-      box.append(el('div', { class: 'group-title', text: g }));
-      last = g;
-    }
+  const addItem = (c, isArchived) => {
     const title = el('span', { class: 't' }, c.source === 'strata' ? el('span', { class: 'src-badge', text: 'Strata', title: 'Aus der Strata-Weboberfläche importiert' }) : null, c.title || 'Chat');
     const rr = runById(c.id);
     const isRun = !!rr;
     const dot = isRun ? el('span', { class: 'chat-dot ' + (rr.pendingApproval ? 'attn' : 'run'), title: rr.pendingApproval ? 'Wartet auf deine Antwort oder Freigabe' : 'Die KI arbeitet hier gerade' })
       : S.unread.has(c.id) ? el('span', { class: 'chat-dot unread', title: 'Neue Antwort' }) : null;
-    const item = el('div', { class: 'chat-item' + (S.chat && S.chat.id === c.id ? ' active' : ''), title: `${c.title}\n${fmt.tok(c.tokens || 0)} Tokens`, onclick: () => openChat(c.id) },
+    const tags = orgOn ? org.tags[c.id] || [] : [];
+    const acts = el('span', { class: 'acts' });
+    if (orgOn) {
+      acts.append(
+        el('button', { class: 'mini-btn', title: org.pins[c.id] ? 'Lösen' : 'Anheften', html: icon('pin', 14), onclick: (e) => { e.stopPropagation(); owuiTogglePin(c.id); } }),
+        el('button', { class: 'mini-btn', title: 'Tags', html: icon('tag', 14), onclick: (e) => { e.stopPropagation(); owuiEditTags(c.id); } }),
+        el('button', { class: 'mini-btn', title: isArchived ? 'Aus dem Archiv holen' : 'Archivieren', html: icon('archive', 14), onclick: (e) => { e.stopPropagation(); owuiToggleArchive(c.id); } })
+      );
+    }
+    acts.append(
+      el('button', { class: 'mini-btn', title: 'Umbenennen', html: icon('edit', 14), onclick: (e) => { e.stopPropagation(); renameChat(c.id); } }),
+      el('button', { class: 'mini-btn', title: 'Löschen', html: icon('trash', 14), onclick: (e) => { e.stopPropagation(); deleteChat(c.id); } })
+    );
+    const item = el('div', { class: 'chat-item' + (S.chat && S.chat.id === c.id ? ' active' : '') + (orgOn && org.pins[c.id] ? ' pinned' : ''), title: `${c.title}\n${fmt.tok(c.tokens || 0)} Tokens`, onclick: () => openChat(c.id) },
       dot,
+      orgOn && org.pins[c.id] ? el('span', { class: 'pin-mark', html: icon('pin', 12) }) : null,
       title,
-      el('span', { class: 'acts' },
-        el('button', { class: 'mini-btn', title: 'Umbenennen', html: icon('edit', 14), onclick: (e) => { e.stopPropagation(); renameChat(c.id); } }),
-        el('button', { class: 'mini-btn', title: 'Löschen', html: icon('trash', 14), onclick: (e) => { e.stopPropagation(); deleteChat(c.id); } })
-      )
+      tags.length ? el('span', { class: 'chat-tags' }, tags.map((t) => el('span', { class: 'tag', text: t, title: 'Nach diesem Tag filtern', onclick: (e) => { e.stopPropagation(); S.search = '#' + t; const si = $('#chat-search'); if (si) si.value = '#' + t; renderChatList(); } }))) : null,
+      acts
     );
     item.addEventListener('dblclick', () => renameChat(c.id));
     box.append(item);
+  };
+  let last = '';
+  for (const c of items) {
+    const g = orgOn && org.pins[c.id] ? 'Angeheftet' : groupOf(c.created || c.updated || 0);
+    if (g !== last) {
+      box.append(el('div', { class: 'group-title', text: g }));
+      last = g;
+    }
+    addItem(c, false);
+  }
+  if (archived.length) {
+    box.append(el('button', { class: 'group-title archive-toggle', text: (S.showArchive ? '▾ ' : '▸ ') + 'Archiv (' + archived.length + ')', onclick: () => { S.showArchive = !S.showArchive; renderChatList(); } }));
+    if (S.showArchive) for (const c of archived) addItem(c, true);
   }
 }
 
 function newChat() {
+  const wasLive = typeof liveLeave === 'function' && liveLeave();
   if (S.chat && !S.chat.messages.length) {
+    if (wasLive) renderAll();
     $('#input').focus();
     return;
   }
@@ -496,6 +562,7 @@ function newChat() {
 }
 
 async function openChat(id) {
+  if (typeof liveLeave === 'function') liveLeave(); // Live-Ansicht verlassen, falls aktiv
   if (S.chat && S.chat.id === id && runOf(S.chat)) return;
   // Läuft in diesem Chat gerade die KI, gilt das Objekt im Speicher (die Datei auf der Platte ist veraltet)
   const R = runById(id);
@@ -503,6 +570,7 @@ async function openChat(id) {
   if (!c) return;
   parkLive();
   S.chat = c;
+  if (typeof autoRegister === 'function') autoRegister(c);
   S.attachments = [];
   S.stick = true;
   S.unread.delete(id);
@@ -520,7 +588,7 @@ async function openChat(id) {
 
 async function saveChatNow(chat) {
   const c = chat || S.chat;
-  if (!c || !c.messages.length || DELETED.has(c)) return; // gelöschte Chats nicht wieder anlegen
+  if (!c || c._live || !c.messages.length || DELETED.has(c)) return; // gelöschte Chats nicht wieder anlegen, Live-Ansicht (fremder Chat) nie speichern
   c.updated = Date.now();
   // „arbeitet gerade“: Andere Rechner sehen, dass hier eine Antwort läuft, und schreiben nicht dazwischen
   const busy = runOf(c) ? { dev: S.sync.deviceId, name: S.sync.deviceName, ts: Date.now() } : null;
@@ -538,7 +606,7 @@ async function saveChatNow(chat) {
   const i = S.chatList.findIndex((x) => x.id === c.id);
   if (i >= 0) S.chatList[i] = meta;
   else S.chatList.push(meta);
-  S.chatList.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  S.chatList.sort((a, b) => (b.created || b.updated || 0) - (a.created || a.updated || 0));   // feste Reihenfolge nach Erstellung
   renderChatList();
 }
 
@@ -683,6 +751,8 @@ function chatTotals(c) {
 /* ═════════════ Rendering: Gesamt ═════════════ */
 function renderAll() {
   renderChatList();
+  if (typeof owuiRefresh === 'function') owuiRefresh();
+  if (typeof autoRefresh === 'function') autoRefresh();
   renderModelSelect();
   renderMessages();
   renderAttachStrip();
@@ -693,6 +763,7 @@ function renderAll() {
   updateCtxMeter();
   updateSendBtn();
   updatePermBtn();
+  try { updateThinkBtn(); updateToolsBtn(); } catch {}   // Denken und Dateizugriff gelten pro Chat
 }
 
 /* Nach dem Sprachwechsel neu aufbauen, was aus Vorlagen entsteht. */
@@ -834,7 +905,7 @@ function renderMessages() {
   if (!atRun) {
     const lastMsg = msgs[msgs.length - 1];
     if (S.chat.pendingContinue) box.append(continueNotice());
-    else if (lastMsg && lastMsg.role === 'tool' && lastMsg.name !== 'propose_new_session') box.append(continueNotice('Die KI hat nach dem Werkzeug-Ergebnis nicht weitergearbeitet.'));
+    else if (lastMsg && lastMsg.role === 'tool' && lastMsg.name !== 'propose_new_session' && lastMsg.name !== 'finish_task') box.append(continueNotice('Die KI hat nach dem Werkzeug-Ergebnis nicht weitergearbeitet.'));
     const hn = hoNotice();
     if (hn) box.append(hn);
   }
@@ -954,6 +1025,7 @@ function userEl(m, i) {
   const node = el('div', { class: 'msg user' });
   if (m.files && m.files.length) node.append(el('div', { class: 'chips' }, m.files.map((f) => fileChip(f))));
   if (m.steer) node.append(el('div', { class: 'steer-tag', text: 'Hinweis während der Arbeit' }));
+  if (m.auto && !m.handoff) node.append(el('div', { class: 'steer-tag', text: 'Automatisch (autonomer Modus)' }));
   if (m.content && m.handoff) node.append(el('details', { class: 'bubble handoff-msg' }, el('summary', { text: `${m.cleared ? 'Übergabe nach „Kontext leeren“' : 'Übergabe aus der vorherigen Sitzung'} (${fmt.num(m.content.length)} Zeichen)` }), el('pre', { text: m.content })));
   else if (m.content) node.append(el('div', { class: 'bubble', text: m.content }));
   node.append(el('div', { class: 'msg-actions' }, actionBtn('copy', 'Kopieren', () => copyText(m.content || '')), actionBtn('edit', 'Bearbeiten und neu senden', () => editMessage(i))));
@@ -976,6 +1048,7 @@ function assistantEl(m, i, isLast) {
   node._r = r;
   node.append(r.who, r.think, r.body, r.imgs, r.err, r.note, r.stats);
   const acts = el('div', { class: 'msg-actions' }, actionBtn('copy', 'Antwort kopieren', () => copyText(LLM.splitThink(m.content || '').answer)));
+  if (typeof owuiActions === 'function') owuiActions(acts, m); // Vorlesen
   if (isLast) acts.append(actionBtn('refresh', 'Neu generieren', regenerate, 'Neu generieren'));
   if (m.request) acts.append(actionBtn('sliders', 'Zeigt, was an den Server gesendet wurde (Parameter, Anzahl Nachrichten und Werkzeuge)', () => showRequest(m), 'Anfrage'));
   node._acts = acts;
@@ -1239,6 +1312,7 @@ function updatePauseUI() {
 }
 
 async function send() {
+  if (S.chat && S.chat._live) { if (typeof liveSendHook === 'function' && liveSendHook()) return; return toast('Live-Ansicht: Hier kann nur gelesen werden. Wechsle zu „Eigener Chat“, um zu schreiben.', 4000); }
   const R = viewRun();
   if (R) { // die KI arbeitet in diesem Chat: Text = Hinweis an die laufende KI, leeres Feld = Stopp
     const text = $('#input').value.trim();
@@ -1247,6 +1321,7 @@ async function send() {
   }
   const ta = $('#input');
   const text = ta.value.trim();
+  if (typeof owuiSendHook === 'function' && owuiSendHook(text)) return; // „/merke …“
   if (!text && !S.attachments.length) return;
   const rb = remoteBusy(S.chat);
   if (rb) return toast(`In diesem Chat arbeitet gerade die KI auf „${rb.name || 'einem anderen Rechner'}“. Bitte warten, bis sie fertig ist.`, 5000);
@@ -1261,6 +1336,7 @@ async function send() {
   chat.connectionId = activeConn().id;
   chat.model = currentModel();
   chat.pendingContinue = false;
+  if (typeof autoOnUserSend === 'function') autoOnUserSend(chat);
   S.attachments = [];
   ta.value = '';
   autosize();
@@ -1277,6 +1353,7 @@ async function send() {
 function stopGeneration(R) {
   R = R || viewRun();
   if (!R) return;
+  if (R.chat.auto && R.chat.auto.on && !R.autoStopping) R.chat.auto.halted = true; // Stopp durch den Nutzer beendet auch den autonomen Lauf
   R.stopRequested = true;
   if (R.paused) releasePause(R); // aus der Pause heraus beenden
   if (R.pendingApproval) R.pendingApproval.resolve('deny');
@@ -1298,23 +1375,26 @@ function applyLanguage(lang) {
   refreshLanguageUi();                          // Vorlagen (Statuszeile, Listen) neu aufbauen
 }
 
-function buildSystem() {
+function buildSystem(chat, kctx) {
   const lang = S.settings.uiLang || 'de';
-  let s = S.settings.systemPrompt || '';
+  const persona = typeof owuiPersona === 'function' ? owuiPersona(chat) : null; // Assistent mit eigenem Systemprompt (owui.js)
+  let s = persona && persona.system ? persona.system : S.settings.systemPrompt || '';
   /* Sprachregel fuer die KI: Steht noch der unveraenderte Standardprompt drin, wird er
      durch seine englische bzw. franzoesische Fassung ersetzt. Hat der Nutzer seinen
      Prompt selbst bearbeitet, bleibt er erhalten und bekommt nur die Sprachregel. */
-  if (isDefaultPrompt(s)) {
+  if (!(persona && persona.system) && isDefaultPrompt(s)) {
     s = defaultPromptFor(lang, promptCompact());   // unveraendertes Standardprompt: Fassung fuer Sprache und Profil (kurz oder ausfuehrlich)
   } else if (lang !== 'de') {
     s += (s ? '\n\n' : '') + LANG_RULE[lang];
   }
   if (S.settings.appearance.thinkInGerman) s += (s ? '\n\n' : '') + T('Denke und überlege auf Deutsch (auch im Gedankengang).');
-  if (useTools()) {
+  if (useTools(chat)) {
     const list = `list_files, search_text, read_file, edit_file, write_file${subOn() ? ', delegate_task' : ''}`;
-    s += part('toolsHint', lang, S.settings.workspace.path, list) + part('actHint', lang) + (askOn() ? part('askHint', lang) : '') + (hoOn() ? part('handoffHint', lang) : '') + (subOn() ? part('subHint', lang) : '');
+    s += part('toolsHint', lang, S.settings.workspace.path, list) + part('actHint', lang) + (askOn() && !(typeof autoOn === 'function' && autoOn(chat)) ? part('askHint', lang) : '') + (hoOn() ? part('handoffHint', lang) : '') + (subOn() ? part('subHint', lang) : '');
     if (execOn()) s += part('execHint', lang, /Win/i.test(navigator.platform || navigator.userAgent));
-  } else if (askAlone()) s += `\n\n${part('askHint', lang).trim()}`;
+  } else if (askAlone() && !(typeof autoOn === 'function' && autoOn(chat))) s += `\n\n${part('askHint', lang).trim()}`;
+  if (typeof autoSystem === 'function') s += autoSystem(chat); // autonomer Modus
+  if (typeof owuiSystem === 'function') s += owuiSystem(chat, kctx); // Gedächtnis, Wissens-Auszüge, Websuche-Hinweis
   return s.trim();
 }
 
@@ -1346,12 +1426,12 @@ function applyDrops(messages) {
     if (!m.dropped) return m;
     if (m.role === 'tool' && (m.content || '').length > DROP_MIN) {
       const what = m.args && (m.args.path || m.args.query) ? ' ' + (m.args.path || m.args.query) : '';
-      return { ...m, content: `[Ausgabe von ${m.name}${what} (${fmt.num(m.content.length)} Zeichen) wurde entfernt, um Kontext zu sparen. Lies die Stelle bei Bedarf gezielt erneut.]` };
+      return { ...m, content: T(`[Ausgabe von ${m.name}${what} (${fmt.num(m.content.length)} Zeichen) wurde entfernt, um Kontext zu sparen. Lies die Stelle bei Bedarf gezielt erneut.]`) };
     }
     if (m.role === 'assistant' && m.toolCalls && m.toolCalls.some(bigArg)) {
       return { ...m, toolCalls: m.toolCalls.map((t) => {
         const args = { ...(t.args || {}) };
-        for (const k of ['content', 'old_text', 'new_text']) if (typeof args[k] === 'string' && args[k].length > DROP_MIN) args[k] = `[… ${fmt.num(args[k].length)} Zeichen gekürzt]`;
+        for (const k of ['content', 'old_text', 'new_text']) if (typeof args[k] === 'string' && args[k].length > DROP_MIN) args[k] = T(`[… ${fmt.num(args[k].length)} Zeichen gekürzt]`);
         return { ...t, args };
       }) };
     }
@@ -1411,7 +1491,7 @@ function permOf(chat) {
   p.installs = !!p.installs;
   return p;
 }
-const approvalMode = (chat) => permOf(chat).mode || approvalDefault();
+const approvalMode = (chat) => (typeof autoOn === 'function' && autoOn(chat) ? 'none' : permOf(chat).mode || approvalDefault()); // autonomer Modus: nie nachfragen
 const permHas = (key, chat) => permOf(chat).keys.includes(key);
 function permAdd(key, chat) {
   const p = permOf(chat);
@@ -1750,6 +1830,7 @@ function effCtx() {
 
 async function generate(chatArg) {
   const chat = chatArg || S.chat;
+  if (chat && chat._live) return; // Live-Ansicht ist schreibgeschützt
   if (runOf(chat)) return; // in diesem Chat arbeitet die KI schon
   trAbortAll(); // laufende Übersetzungen nicht mit dem Agenten konkurrieren lassen
   const conn = activeConn();
@@ -1790,6 +1871,8 @@ async function generate(chatArg) {
     for (let step = 0; step < maxSteps; step++) {
       await pauseGate(R); // Pause aus dem vorigen Schritt (z. B. während ein Programm lief)
       if (R.stopRequested) { finished = true; break; }
+      if (typeof autoLimit === 'function' && autoOn(chat) && autoLimit(chat)) { finished = true; break; } // autonom: Grenze erreicht, Aufsicht meldet das Ende
+      if (typeof autoShouldClear === 'function' && autoShouldClear(chat)) { chat.autoClearPending = true; finished = true; break; } // autonom: Kontext voll, Aufsicht leert ihn
       takeInbox();
       const am = { id: uid(), role: 'assistant', content: '', thinking: '', model, ts: Date.now(), toolCalls: [] };
       chat.messages.push(am);
@@ -1835,10 +1918,12 @@ async function generate(chatArg) {
       };
 
       const nudgeNow = nudgeNext;
-      const nudgeMsg = nudgeText || 'Fahre mit der Aufgabe fort. Nutze bei Bedarf weitere Werkzeuge oder fasse das Ergebnis für mich zusammen.';
+      const nudgeMsg = nudgeText || T('Fahre mit der Aufgabe fort. Nutze bei Bedarf weitere Werkzeuge oder fasse das Ergebnis für mich zusammen.');
       nudgeNext = false;
       nudgeText = '';
-      const sysText = buildSystem();
+      let kctx = '';
+      try { kctx = typeof owuiKnowledge === 'function' ? await owuiKnowledge(chat) : ''; } catch { kctx = ''; } // passende Abschnitte aus den Wissenssammlungen
+      const sysText = buildSystem(chat, kctx);
       const cs = ctxStart(chat);
       const rawMsgs = nudgeNow ? [...chat.messages.slice(cs, -1), { role: 'user', content: nudgeMsg }] : chat.messages.slice(cs, -1);
       const cmp = compactMessages(rawMsgs, sysText);
@@ -1859,9 +1944,9 @@ async function generate(chatArg) {
         model,
         system: sysText,
         messages: cmp.messages,
-        params: S.settings.params,
-        tools: toolsFor(),
-        thinkLevel: S.settings.thinking,
+        params: typeof owuiParams === 'function' ? owuiParams(chat) : S.settings.params,
+        tools: toolsFor(chat),
+        thinkLevel: thinkId(chat),
         handlers: {
           onContent: (full, n) => { am.content = full; tick(n); schedule(); },
           onThinking: (t, n) => { am.thinking = t; tick(n); schedule(); },
@@ -1939,6 +2024,7 @@ async function generate(chatArg) {
           am.stats.energyWh = en.ws / 3600;
           am.stats.avgPowerW = en.ws / Math.max(0.5, (tEndEn - live.t0) / 1000);
         }
+        if (am.stats && typeof usageRecord === 'function') usageRecord(am.stats, conn);   // Gesamtverbrauch (bleibt auch nach dem Loeschen von Chats)
         if (R.run && R.run.request) am.request = R.run.request;
         // (c) Vom Server gemessene Geschwindigkeit nachladen (z. B. Strata), ohne den Ablauf aufzuhalten
         if (conn.type !== 'ollama' && res.stats && res.stats.completionTokens > 20) {
@@ -1984,7 +2070,7 @@ async function generate(chatArg) {
       }
 
       // Nur angekündigt, nichts ausgeführt: höchstens dreimal in Folge automatisch zum Weitermachen auffordern, statt still zu enden
-      if (!am.error && !am.aborted && !R.stopRequested && !am.toolCalls.length && useTools() && autoNudges < 3 && am.finish !== 'length' && looksUnfinished(am.content)) {
+      if (!am.error && !am.aborted && !R.stopRequested && !am.toolCalls.length && useTools(chat) && autoNudges < 3 && am.finish !== 'length' && looksUnfinished(am.content)) {
         autoNudges++;
         nudgeNext = true;
         nudgeText = NUDGE_TEXT[S.settings.uiLang] || NUDGE_TEXT.de;
@@ -2002,7 +2088,7 @@ async function generate(chatArg) {
       // Unteragenten starten sofort und laufen gleichzeitig; die übrigen Werkzeuge laufen der Reihe nach
       // Für jeden Werkzeugaufruf sofort eine Live-Karte (Status + Ausgabe), damit man sieht, worauf die KI gerade wartet
       for (const tc of am.toolCalls) tlStart(tc, R);
-      const stoppedTool = (tc) => ({ id: uid(), role: 'tool', name: tc.name, toolCallId: tc.id, args: tc.args, ts: Date.now(), ok: false, content: 'Vom Nutzer abgebrochen. Dieser Werkzeugaufruf wurde nicht (zu Ende) ausgeführt.' });
+      const stoppedTool = (tc) => ({ id: uid(), role: 'tool', name: tc.name, toolCallId: tc.id, args: tc.args, ts: Date.now(), ok: false, content: T('Vom Nutzer abgebrochen. Dieser Werkzeugaufruf wurde nicht (zu Ende) ausgeführt.') });
       const early = new Map();
       for (const tc of am.toolCalls) if (tc.name === 'delegate_task') early.set(tc.id, runTool(tc, chat));
       for (const tc of am.toolCalls) {
@@ -2019,7 +2105,7 @@ async function generate(chatArg) {
         tlFinish(tc.id, tm);
         if (!R.stopRequested) await pauseGate(R);
       }
-      if (R.stopRequested || am.toolCalls.some((t) => t.name === 'propose_new_session')) {
+      if (R.stopRequested || am.toolCalls.some((t) => t.name === 'propose_new_session' || (t.name === 'finish_task' && chat.auto && chat.auto.finished)) || (chat.auto && chat.auto.stopNow)) {
         finished = true;
         break;
       }
@@ -2053,6 +2139,7 @@ async function generate(chatArg) {
     R.runAm = null;
     R.ghost.innerHTML = '';
     updateSendBtn();
+    if (typeof autoAfterRun === 'function') setTimeout(() => autoAfterRun(chat), 60); // autonomer Modus: entscheidet, wie es weitergeht
     if (DELETED.has(chat)) { /* Chat wurde gelöscht: nichts mehr anzeigen oder speichern */ }
     else if (wasViewing) { renderMessages(); restoreUnsent(chat); }
     else {
@@ -2076,8 +2163,10 @@ async function runTool(tc, chat) {
   tlState(tc.id, 'running');
   if (tc.name === 'ask_user') return runAskUser(tc, base, R);
   if (tc.name === 'delegate_task') return runSubagent(tc, base, rc); // nur lesend: keine Freigabe nötig
+  if (typeof autoRunTool === 'function') { const ar = autoRunTool(tc, base, rc); if (ar) return ar; } // autonomer Modus: Zähler, Schleifen, finish_task (auto.js)
+  if (typeof OWUI_TOOLS !== 'undefined' && OWUI_TOOLS.has(tc.name)) return owuiRunTool(tc, base, rc, R); // Websuche (owui.js)
   if (EXEC_TOOLS.includes(tc.name)) return runExecTool(tc, base, rc);
-  if (tc.name === 'propose_new_session') return { ...base, ok: true, content: 'Der Vorschlag wurde dem Nutzer mit einer Schaltfläche angezeigt. Beende deine Antwort jetzt (höchstens ein Satz) und rufe keine weiteren Werkzeuge auf.' };
+  if (tc.name === 'propose_new_session') return { ...base, ok: true, content: T('Der Vorschlag wurde dem Nutzer mit einer Schaltfläche angezeigt. Beende deine Antwort jetzt (höchstens ein Satz) und rufe keine weiteren Werkzeuge auf.') };
   try {
     const mode = approvalMode(rc);
     const needs = mode === 'all' || (mode === 'write' && (tc.name === 'write_file' || tc.name === 'edit_file'));
@@ -2087,7 +2176,7 @@ async function runTool(tc, chat) {
       const d = await requestApproval(tc, undefined, R);
       tlState(tc.id, 'running');
       if (d === 'always') permAdd(key, rc);
-      if (d === 'deny') return { ...base, ok: false, content: 'Der Benutzer hat die Ausführung abgelehnt. Frage nach, wie du stattdessen vorgehen sollst.' };
+      if (d === 'deny') return { ...base, ok: false, content: T('Der Benutzer hat die Ausführung abgelehnt. Frage nach, wie du stattdessen vorgehen sollst.') };
     }
     const r = await api.ws.tool({ root: ws.path, name: tc.name, args: tc.args, maxKB: +ws.readKB || 40, ignore: ignoreList(), owner: rc.id });
     if ((tc.name === 'write_file' || tc.name === 'edit_file') && r.ok) renderFilePanel();
@@ -2104,7 +2193,7 @@ async function runExecTool(tc, base, rc) {
   const ask = (o) => requestApproval(tc, o, R);
   const ws = S.settings.workspace;
   const a = tc.args || {};
-  if (!execOn()) return { ...base, ok: false, content: 'Das Ausführen von Programmen ist in den Einstellungen ausgeschaltet. Sage dem Nutzer, dass er es unter Einstellungen → Workspace & Dateien aktivieren kann.' };
+  if (!execOn()) return { ...base, ok: false, content: T('Das Ausführen von Programmen ist in den Einstellungen ausgeschaltet. Sage dem Nutzer, dass er es unter Einstellungen → Workspace & Dateien aktivieren kann.') };
   const timeout = Math.max(5, +ws.execTimeout || 120);
   try {
     if (tc.name === 'check_tool') {
@@ -2114,6 +2203,8 @@ async function runExecTool(tc, base, rc) {
     if (tc.name === 'run_command') {
       const command = String(a.command || '').trim();
       if (!command) return { ...base, ok: false, content: 'Der Parameter command fehlt.' };
+      const danger = typeof autoCheckCommand === 'function' ? autoCheckCommand(rc, command) : '';
+      if (danger) return { ...base, ok: false, content: danger };
       const shellKind = a.shell === 'powershell' ? 'powershell' : 'cmd';
       const heads = cmdHeads(command);
       const prog = heads ? heads[0] : ((command.match(/^\s*(?:"([^"]+)"|(\S+))/) || [])[1] || (command.match(/^\s*(\S+)/) || [])[1] || '').toLowerCase();
@@ -2134,7 +2225,7 @@ async function runExecTool(tc, base, rc) {
           allCmds: true,
         });
         tlState(tc.id, 'running');
-        if (d === 'deny') return { ...base, ok: false, content: 'Der Benutzer hat die Ausführung abgelehnt. Frage nach, wie du stattdessen vorgehen sollst.' };
+        if (d === 'deny') return { ...base, ok: false, content: T('Der Benutzer hat die Ausführung abgelehnt. Frage nach, wie du stattdessen vorgehen sollst.') };
         if (d === 'always' && canProg) permAdd(keyOf(heads[0]), rc);
         if (d === 'all') { permOf(rc).runAll = true; permChanged(rc); }
       }
@@ -2152,21 +2243,24 @@ async function runExecTool(tc, base, rc) {
       const c = await api.sys.installCmd({ manager, pkg });
       if (c.error) return { ...base, ok: false, content: c.error };
       tlHead(tc.id, '> ' + c.command);
-      if (!permOf(rc).installs) tlState(tc.id, 'approval');
-      const d = permOf(rc).installs ? 'allow' : await ask({
+      const noInst = typeof autoInstallDenied === 'function' ? autoInstallDenied(rc) : '';
+      if (noInst) return { ...base, ok: false, content: noInst };
+      const instOk = permOf(rc).installs || (typeof autoInstallOk === 'function' && autoInstallOk(rc));
+      if (!instOk) tlState(tc.id, 'approval');
+      const d = instOk ? 'allow' : await ask({
         kind: 'install',
         target: c.command,
         note: `${a.reason ? 'Grund: ' + a.reason + '. ' : ''}Die Installation ändert deinen Rechner. Je nach Paketmanager kann Windows eine Administrator-Abfrage (UAC) zeigen. Genehmige nur, wenn du dem Paket „${pkg}“ vertraust.`,
         noAlways: true,
         allowLabel: 'Installieren',
       });
-      if (d !== 'allow') return { ...base, ok: false, content: 'Der Benutzer hat die Installation abgelehnt. Installiere nichts und frage, wie du ohne dieses Tool weitermachen sollst.' };
+      if (d !== 'allow') return { ...base, ok: false, content: T('Der Benutzer hat die Installation abgelehnt. Installiere nichts und frage, wie du ohne dieses Tool weitermachen sollst.') };
       tlState(tc.id, 'running');
       R.execId = uid();
       tlExec(tc.id, R.execId, 900);
       const r = await api.sys.install({ id: R.execId, root: ws.path, manager, pkg, timeout: 900 }, (m) => tlAppend(tc.id, m.text));
       R.execId = null;
-      return { ...base, ok: r.ok, content: r.result + (r.ok ? '\nHinweis: Prüfe mit check_tool, ob das Programm jetzt gefunden wird. Manche Programme liegen nach der Installation nicht im PATH.' : '') };
+      return { ...base, ok: r.ok, content: r.result + (r.ok ? '\n' + T('Hinweis: Prüfe mit check_tool, ob das Programm jetzt gefunden wird. Manche Programme liegen nach der Installation nicht im PATH.') : '') };
     }
   } catch (e) {
     R.execId = null;
@@ -2370,11 +2464,12 @@ function toggleTools() {
     openSettings('ws');
     return;
   }
-  ws.toolsEnabled = !ws.toolsEnabled;
-  saveSettings();
+  let on;
+  if (S.chat) { on = !useTools(S.chat); S.chat.tools = on; saveChatSoon(S.chat); }   // nur dieser Chat
+  else { ws.toolsEnabled = !ws.toolsEnabled; on = ws.toolsEnabled; saveSettings(); }
   updateToolsBtn();
   renderFilePanel();
-  toast(ws.toolsEnabled ? 'KI darf den Workspace lesen und schreiben.' : 'KI-Dateizugriff ausgeschaltet.');
+  toast(on ? 'KI darf den Workspace lesen und schreiben.' : 'KI-Dateizugriff ausgeschaltet.');
 }
 
 async function chooseWorkspace() {
@@ -2403,7 +2498,7 @@ function renderFilePanel() {
   const tree = el('div', { class: 'fp-tree' });
   p.append(tree);
   if (!ws.path) {
-    tree.append(el('div', { class: 'fp-empty' }, 'Wähle einen Projektordner. Klicke Dateien an, um sie an die Nachricht zu hängen, oder erlaube der KI den Zugriff.', el('br'), el('button', { class: 'btn primary', text: 'Ordner wählen', onclick: chooseWorkspace })));
+    tree.append(el('div', { class: 'fp-empty' }, 'Wähle einen Projektordner. Dateien öffnest oder hängst du per Klick an (einstellbar unter Einstellungen → Workspace & Dateien), oder du erlaubst der KI den Zugriff.', el('br'), el('button', { class: 'btn primary', text: 'Ordner wählen', onclick: chooseWorkspace })));
   } else {
     loadTree(tree, '', 0);
   }
@@ -2422,6 +2517,47 @@ function renderFilePanel() {
   if (typeof svDockMount === 'function') svDockMount(p); // Monitor-Dock unter dem Workspace
 }
 
+/* Klick auf eine Datei im Workspace-Panel: öffnen, anhängen, nachfragen oder im Explorer zeigen (Einstellung workspace.fileClick) */
+const FILE_CLICK_HINTS = { open: 'klicken zum Öffnen', attach: 'klicken zum Anhängen', ask: 'klicken für Optionen', reveal: 'klicken zum Anzeigen im Ordner' };
+const fileClickMode = () => { const m = S.settings.workspace.fileClick; return FILE_CLICK_HINTS[m] ? m : 'open'; };
+const fileClickHint = () => FILE_CLICK_HINTS[fileClickMode()];
+const RISKY_EXT = /\.(exe|bat|cmd|com|scr|msi|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|jar|reg|lnk|pif|cpl|dll)$/i;
+
+async function wsAttachFile(rel) {
+  const ws = S.settings.workspace;
+  addAttachments(await api.files.read([joinPath(ws.path, rel)], fileLimits()));
+}
+async function wsOpenFile(rel) {
+  const full = joinPath(S.settings.workspace.path, rel);
+  if (typeof api.openPath !== 'function') { toast('Öffnen ist auf diesem Gerät nicht verfügbar. Die Datei wird stattdessen angehängt.'); return wsAttachFile(rel); }
+  // Programme und Skripte nicht einfach per Klick starten
+  if (RISKY_EXT.test(rel) && !(await confirmModal('Datei ausführen?', `„${rel}“ ist ein ausführbarer Dateityp. Das Öffnen startet sie auf diesem Rechner.`, { okLabel: 'Öffnen', danger: true }))) return;
+  const err = await api.openPath(full);
+  if (err) toast('Datei konnte nicht geöffnet werden: ' + err, 6000);
+}
+async function wsRevealFile(rel) {
+  const full = joinPath(S.settings.workspace.path, rel);
+  if (typeof api.showItem !== 'function') return wsOpenFile(rel);
+  const err = await api.showItem(full.replace(/\//g, '\\'));
+  if (err) toast('Konnte nicht im Ordner angezeigt werden: ' + err, 6000);
+}
+function wsFileClick(rel) {
+  const mode = fileClickMode();
+  if (mode === 'attach') return wsAttachFile(rel);
+  if (mode === 'reveal') return wsRevealFile(rel);
+  if (mode === 'open') return wsOpenFile(rel);
+  openModal({
+    title: rel.split('/').pop(),
+    body: el('div', { text: 'Was soll mit der Datei geschehen?' }),
+    buttons: [
+      { label: 'Abbrechen', value: null },
+      { label: 'Im Ordner zeigen', onClick: (close) => { close(); wsRevealFile(rel); } },
+      { label: 'Anhängen', onClick: (close) => { close(); wsAttachFile(rel); } },
+      { label: 'Öffnen', primary: true, onClick: (close) => { close(); wsOpenFile(rel); } },
+    ],
+  });
+}
+
 async function loadTree(container, rel, depth) {
   const ws = S.settings.workspace;
   let items;
@@ -2434,7 +2570,7 @@ async function loadTree(container, rel, depth) {
   if (!items.length && depth === 0) container.append(el('div', { class: 'fp-empty', text: 'Der Ordner ist leer.' }));
   for (const it of items) {
     const r = rel ? rel + '/' + it.name : it.name;
-    const row = el('div', { class: 'tr', style: { paddingLeft: 6 + depth * 14 + 'px' }, title: it.isDir ? r : `${r} (${fmt.size(it.size)}) – klicken zum Anhängen` });
+    const row = el('div', { class: 'tr', style: { paddingLeft: 6 + depth * 14 + 'px' }, title: it.isDir ? r : `${r} (${fmt.size(it.size)}) – ${fileClickHint()}` });
     row.append(el('span', { class: 'chev', html: it.isDir ? icon('chevron', 12) : '' }), el('span', { html: icon(it.isDir ? 'folder' : 'file', 14) }), el('span', { class: 'nm', text: it.name }));
     row.append(el('button', { class: 'mini-btn add', title: it.isDir ? 'Ganzen Ordner anhängen' : 'Anhängen', html: icon('plus', 13), onclick: async (e) => { e.stopPropagation(); addAttachments(await api.files.read([joinPath(ws.path, r)], fileLimits())); } }));
     container.append(row);
@@ -2453,7 +2589,7 @@ async function loadTree(container, rel, depth) {
         await loadTree(child, r, depth + 1);
       });
     } else {
-      row.addEventListener('click', async () => addAttachments(await api.files.read([joinPath(ws.path, r)], fileLimits())));
+      row.addEventListener('click', () => wsFileClick(r));
     }
   }
 }
@@ -2534,6 +2670,7 @@ function wireEvents() {
   $('#btn-tools').addEventListener('click', toggleTools);
   $('#btn-perm').addEventListener('click', openPermMenu);
   $('#btn-think').addEventListener('click', openThinkMenu);
+  composerTips();
   $('#chat-search').addEventListener('input', (e) => { S.search = e.target.value; renderChatList(); });
 
   $('#sel-conn').addEventListener('change', (e) => {
@@ -2552,6 +2689,18 @@ function wireEvents() {
       }
       renderModelSelect();
       renderStatus();
+      return;
+    }
+    const picked = S.models.find((m) => m.id === e.target.value);
+    if (picked && picked.installedOnly) {
+      // Installiert, aber nicht geladen: auf Wunsch über die Strata-App laden (das aktuelle Modell wird dafür entladen)
+      const go = await confirmModal('Modell laden', `„${picked.id}“ ist installiert, aber nicht geladen. Soll die Strata-App es jetzt laden? Ein aktuell geladenes Modell wird dafür entladen.`, { okLabel: 'Laden' });
+      if (!go) { renderModelSelect(); return; }
+      setModel(picked.id);
+      renderStatus();
+      const ok = await svHostSwitchModel(picked.id);
+      await refreshModels();
+      if (ok) setModel(picked.id), renderModelSelect();
       return;
     }
     setModel(e.target.value);

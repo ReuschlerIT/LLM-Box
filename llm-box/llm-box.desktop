@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LLM Box
+Comment=Chat for local LLM servers (Ollama, LM Studio, llama.cpp)
+Exec=/PFAD/ZU/llm-box/start.sh
+Icon=/PFAD/ZU/llm-box/build/icon.png
+Terminal=false
+Categories=Utility;Network;
+StartupWMClass=LLM Box

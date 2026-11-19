@@ -4,7 +4,7 @@
    werden. Eine APK ist eine ZIP-Datei mit kompiliertem Code; personengebundene Werte koennen
    also mitten in classes.dex stecken, ohne dass eine Textsuche in den Quelltext-Dateien sie
    zeigt. Genau das war zu erwarten: die Geraete-Sonden der App enthalten als Standardwerte die
-   LAN-Adressen des Nutzers (192.0.2.10 fuer die Freigabe, 192.0.2.50 fuer den PC).
+   LAN-Adressen des Nutzers (192.168.1.30 fuer die Freigabe, 192.168.10.50 fuer den PC).
 
    Vorgehen: Dateien werden als Bytes gelesen und mit Buffer.indexOf durchsucht. Damit findet
    der Scan auch Strings in dex-, so- und asar-Inhalten. Gefunden wird NUR gemeldet (nichts wird
@@ -18,21 +18,21 @@ const path = require('path');
 /* Was als persoenlich gilt. Bewusst konkret und erklaerbar – keine vagen Begriffe wie "Passwort",
    sonst meldet der Scan jeden Hinweis-Text der Oberflaeche ("Bitte Passwort eingeben"). */
 const MUSTER = [
-  ['LAN-IP 192.0.2.x', '192.0.2.'],
-  ['Workspace-Laufwerk', 'Y:\\'],
+  ['LAN-IP 192.168.x', '192.168.'],
+  ['Workspace-Laufwerk', 'Z:\\'],
   ['Projektordner des Nutzers', 'MeinProjekt'],
   ['Windows-Benutzerprofil', 'C:\\Users\\'],
   ['Benutzername Administrator', 'Administrator'],
   ['eigener Rechnername', 'EIGENER-RECHNERNAME'],
-  ['Freigabe-Server (IP)', '192.0.2.10'],
-  ['Arbeits-PC (IP)', '192.0.2.50'],
-  ['Handy-IP', '192.0.2.117'],
+  ['Freigabe-Server (IP)', '192.168.1.30'],
+  ['Arbeits-PC (IP)', '192.168.10.50'],
+  ['Handy-IP', '192.168.10.117'],
   ['E-Mail-Adresse', '@gmx.'],
   ['E-Mail-Adresse', '@web.de'],
   ['E-Mail-Adresse', '@gmail.com'],
   ['E-Mail-Adresse', '@outlook.com'],
   ['E-Mail-Adresse', '@t-online.de'],
-  ['Laufwerks-Freigabe homes', '\\daten'],
+  ['Laufwerks-Freigabe homes', '\\homes'],
   ['Android-Geraetename', 'EIGENE-GERAETESERIENNUMMER'],
 ];
 

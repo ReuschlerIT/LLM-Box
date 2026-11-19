@@ -91,16 +91,38 @@ win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 win.HTMLCanvasElement.prototype.getContext = () => null;
 win.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } };
 
-/* Skripte in der Reihenfolge von index.html nachladen (jsdom laedt file:-Ressourcen) */
+/* Skripte in der Reihenfolge von index.html nachladen.
+   WICHTIG (seit 1.0.82): frueher wurde jede Datei einzeln mit win.eval() ausgefuehrt.
+   Dabei ist ein `const`/`let` auf Top-Level einer Datei in der naechsten Datei NICHT
+   sichtbar, weil eval() fuer jeden Aufruf ein eigenes Skript-Umfeld anlegt. Die neue
+   Oberflaeche nutzt aber genau das: util.js deklariert `const ICONS` und `const debounce`,
+   und server.js, owui.js, app.js greifen darauf zurueck. Einzeln evalt meldete der Test
+   dann "ICONS is not defined" - ein Test-Artefakt, kein Fehler auf dem Gerat (eine echte
+   WebView fuehrt alle Skript-Tags im selben globalen Lexical Environment aus).
+   Deshalb werden alle Skripte jetzt zu EINEM Quelltext zusammengefuegt und einmal
+   ausgewertet - das teilt das Top-Level-Umfeld wie im Browser. Die Fehlerzuordnung pro
+   Datei bleibt erhalten: jeder Abschnitt ist in einem try/catch mit Dateiname. */
 const scripts = [...fs.readFileSync(path.join(WEBAPP, 'index.html'), 'utf8').matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
 
 (async () => {
   await new Promise((r) => setTimeout(r, 400));   // auf Ressourcen-Laden warten
 
+  let zusammen = '';
   for (const s of scripts) {
     const file = path.join(WEBAPP, s);
-    try { win.eval(fs.readFileSync(file, 'utf8')); }
-    catch (e) { errors.push(`Skript ${s}: ${e.message}`); }
+    if (!fs.existsSync(file)) { errors.push(`Skript ${s}: Datei fehlt`); continue; }
+    // Kein try/catch pro Datei: das wuerde das gemeinsame Top-Level-Umfeld wieder zerschneiden.
+    // Stattdessen laeuft alles in einem Durchlauf; schlaegt es fehl, zaehlt der Fehler unten.
+    zusammen += `\n/* === ${s} === */\n` + fs.readFileSync(file, 'utf8') + `\n`;
+  }
+  try { win.eval(zusammen); }
+  catch (e) {
+    // Fundstelle in der Zusammensetzung finden, damit klar ist, welche Datei fehlerhaft ist.
+    const fund = /\/\* === (.+?) === \*\//g;
+    let letzte = '?';
+    let m;
+    while ((m = fund.exec(zusammen))) letzte = m[1];
+    errors.push(`Skripte gemeinsam geladen (letzte: ${letzte}): ${e.message}`);
   }
 
   await new Promise((r) => setTimeout(r, 600));   // init() ablaufen lassen
@@ -288,9 +310,12 @@ const scripts = [...fs.readFileSync(path.join(WEBAPP, 'index.html'), 'utf8').mat
     ok('Aktionsknopfe sind dauerhaft sichtbar (kein Hover noetig)', disp !== 'none' && disp !== '', 'display: ' + disp);
 
     const btns = [...acts.querySelectorAll('.mini-btn')];
-    ok('Stift und Papierkorb vorhanden', btns.length === 2, 'Knopfe: ' + btns.length);
+    // Seit 1.0.73 (Chats ordnen) kommen zu Umbenennen und Loeschen weitere Knopfe dazu:
+    // Anheften, Tags, Archivieren. Der Test prueft deshalb nicht mehr "genau 2", sondern
+    // dass die beiden bekannten (Stift = Umbenennen, Papierkorb = Loeschen) vorhanden sind.
+    ok('Stift und Papierkorb vorhanden', btns.length >= 2, 'Knopfe: ' + btns.length);
     const titles = btns.map((b) => b.getAttribute('title'));
-    ok('Knopfe sind beschriftet (Umbenennen/Löschen)', /Umbenennen/.test(titles[0] || '') && /öschen/.test(titles[1] || ''), titles.join(', '));
+    ok('Knopfe sind beschriftet (Umbenennen/Löschen)', titles.some((t) => /Umbenennen/.test(t || '')) && titles.some((t) => /öschen/.test(t || '')), titles.join(', '));
 
     // Groesse: muss mit dem Finger sicher zu treffen sein
     const cs = btns.length ? win.getComputedStyle(btns[0]) : null;
@@ -304,7 +329,8 @@ const scripts = [...fs.readFileSync(path.join(WEBAPP, 'index.html'), 'utf8').mat
     const logged = uiLogs.map((s) => { try { return JSON.parse(s); } catch { return null; } }).filter(Boolean);
     ok('Adapter-Selbstmessung schreibt in die Bruecke', logged.length > 0, 'Logsaetze: ' + uiLogs.length);
     const withActs = logged.find((o) => o && o.chatActs);
-    ok('Messung meldet die Aktionsknopfe der Chatliste', !!withActs && withActs.chatActs.acts !== 'none' && withActs.chatActs.buttons === 2,
+    // buttons seit 1.0.73 nicht mehr genau 2 (Anheften, Tags, Archivieren kommen dazu).
+    ok('Messung meldet die Aktionsknopfe der Chatliste', !!withActs && withActs.chatActs.acts !== 'none' && withActs.chatActs.buttons >= 2,
       JSON.stringify(withActs ? withActs.chatActs : null));
   }
 

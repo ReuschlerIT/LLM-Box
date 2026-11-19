@@ -95,7 +95,7 @@ async function runSubagent(tc, base, rc) {
       const run = LLM.streamChat({
         conn, model, system: sys, messages: cmp.messages, params: S.settings.params,
         tools: final ? null : LLM.WORKSPACE_TOOLS.filter((t) => SUB_TOOLS.includes(t.function ? t.function.name : t.name)),
-        thinkLevel: S.settings.thinking,
+        thinkLevel: thinkId(chat),
         handlers: {
           onContent: (full) => { const sp = LLM.splitThink(full || ''); st.text = sp.answer; st.think = [st.thinkRaw, sp.think].filter(Boolean).join('\n'); mark(sp.answer ? 'Schreibt Antwort …' : 'Denkt nach …'); feedSoon(); },
           onThinking: (t) => { st.thinkRaw = t || ''; st.think = st.thinkRaw; mark('Denkt nach …'); feedSoon(); },

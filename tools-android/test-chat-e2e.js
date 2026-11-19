@@ -75,11 +75,19 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => (body += c));
   req.on('end', () => {
     const parsed = body ? JSON.parse(body) : {};
-    if (!req.url.endsWith('/models')) rounds.push(parsed);
+    // Seit 1.0.71 holt listModels zusaetzlich die installierten Strata-Modelle vom Host
+    // (/api/native, Feld "installed"). Das ist keine Chat-Runde und darf nicht mitgezaehlt
+    // werden. Gezählt wird nur die eigentliche Chat-Anfrage (chat/completions).
+    if (req.url.includes('/chat/completions')) rounds.push(parsed);
 
     if (req.url.endsWith('/models')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ data: [{ id: 'test-modell' }] }));
+      return;
+    }
+    if (req.url.endsWith('/api/native')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ installed: [] }));
       return;
     }
 

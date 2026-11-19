@@ -431,6 +431,14 @@ async function qrScannenAndroid() {
 
     scanQr(video, status, (text) => {
       const r = qrVerwerten(text, sammler);
+      if (r.art === 'adresse' && /\/llmbox-live\?/.test(r.wert)) {
+        // Adresse einer Live-Quelle: als Empfänger-Adresse speichern und verbinden
+        liveCfg().client.url = r.wert; liveCfg().client.enabled = true; saveSettings();
+        status.textContent = 'Live-Quelle erkannt – verbinde …';
+        liveConnect();
+        zumachen();
+        return;
+      }
       if (r.art === 'adresse') {
         status.textContent = 'Adresse erkannt – Daten werden abgerufen …';
         fetchTransferFrom(r.wert)

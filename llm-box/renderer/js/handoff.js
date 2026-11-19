@@ -45,7 +45,7 @@ function hoModelHint(chat) {
   const n = chat.messages.length;
   if (chat.hoHintAt && n - chat.hoHintAt < 10) return '';
   chat.hoHintAt = n;
-  return `\n\n[Hinweis der App: Der Kontext ist zu ${Math.round(r * 100)} % gefüllt. Schließe den aktuellen Teilschritt ab und rufe dann propose_new_session auf, mit einer vollständigen Übergabe in summary und dem nächsten Schritt in next_steps (die App leert damit den Kontext oder öffnet eine neue Session). Arbeite nicht endlos weiter.]`;
+  return T(`\n\n[Hinweis der App: Der Kontext ist zu ${Math.round(r * 100)} % gefüllt. Schließe den aktuellen Teilschritt ab und rufe dann propose_new_session auf, mit einer vollständigen Übergabe in summary und dem nächsten Schritt in next_steps (die App leert damit den Kontext oder öffnet eine neue Session). Arbeite nicht endlos weiter.]`);
 }
 
 function hoFiles(chat) {
@@ -68,15 +68,15 @@ function hoCompose(chat, { summary, next, same }) {
   const parts = [
     `# Übergabe aus der vorherigen Sitzung`,
     same
-      ? `Der bisherige Verlauf dieses Chats wurde aus deinem Kontext entfernt, weil das Kontextfenster voll war. Du siehst ihn nicht mehr. Alles Wichtige steht hier. Lies Dateien nur gezielt nach (search_text, dann read_file mit start_line/end_line) und ändere sie mit edit_file.`
-      : `Du setzt eine Arbeit fort, die in der Sitzung „${chat.title}“ begonnen wurde. Dort war der Kontext voll. Alles Wichtige steht hier. Lies Dateien nur gezielt nach (search_text, dann read_file mit start_line/end_line) und ändere sie mit edit_file.`,
-    firstUser ? `## Ursprüngliches Ziel\n${cut(firstUser.content, 1500)}` : '',
-    summary ? `## Stand laut vorheriger Sitzung\n${cut(summary, 7000)}` : '',
-    files.length ? `## Geänderte Dateien (automatisch erfasst)\n${files.join('\n')}\nDiese Änderungen sind bereits umgesetzt, mache sie nicht doppelt.` : '',
-    subs.length ? `## Ergebnisse von Unteragenten\n${subs.slice(-5).map((r) => `- „${r.label}“: ${cut(r.result.replace(/\s+/g, ' '), 900)}`).join('\n')}` : '',
-    next ? `## Nächster Schritt\n${cut(next, 2000)}` : '',
-    lastUser ? `## Letzte Anweisung des Nutzers\n${cut(lastUser.content, 600)}` : '',
-    `## Arbeitsweise\nBestätige kurz in einem Satz, was du verstanden hast, und setze dann mit dem nächsten Schritt fort. Erfinde nichts, was hier nicht steht oder was du nicht gelesen hast.`,
+      ? T(`Der bisherige Verlauf dieses Chats wurde aus deinem Kontext entfernt, weil das Kontextfenster voll war. Du siehst ihn nicht mehr. Alles Wichtige steht hier. Lies Dateien nur gezielt nach (search_text, dann read_file mit start_line/end_line) und ändere sie mit edit_file.`)
+      : T(`Du setzt eine Arbeit fort, die in der Sitzung „${chat.title}“ begonnen wurde. Dort war der Kontext voll. Alles Wichtige steht hier. Lies Dateien nur gezielt nach (search_text, dann read_file mit start_line/end_line) und ändere sie mit edit_file.`),
+    firstUser ? T('## Ursprüngliches Ziel') + `\n${cut(firstUser.content, 1500)}` : '',
+    summary ? T('## Stand laut vorheriger Sitzung') + `\n${cut(summary, 7000)}` : '',
+    files.length ? T('## Geänderte Dateien (automatisch erfasst)') + `\n${files.join('\n')}\n` + T('Diese Änderungen sind bereits umgesetzt, mache sie nicht doppelt.') : '',
+    subs.length ? T('## Ergebnisse von Unteragenten') + `\n${subs.slice(-5).map((r) => `- „${r.label}“: ${cut(r.result.replace(/\s+/g, ' '), 900)}`).join('\n')}` : '',
+    next ? T('## Nächster Schritt') + `\n${cut(next, 2000)}` : '',
+    lastUser ? T('## Letzte Anweisung des Nutzers') + `\n${cut(lastUser.content, 600)}` : '',
+    TLines('## Arbeitsweise\nBestätige kurz in einem Satz, was du verstanden hast, und setze dann mit dem nächsten Schritt fort. Erfinde nichts, was hier nicht steht oder was du nicht gelesen hast.'),
   ];
   return parts.filter(Boolean).join('\n\n');
 }
@@ -87,10 +87,10 @@ async function hoGenerate(chat) {
   const model = currentModel();
   const msgs = chat.messages.slice(ctxStart(chat)).filter((m) => !m.error);
   while (msgs.length && msgs[msgs.length - 1].role === 'assistant' && (msgs[msgs.length - 1].toolCalls || []).length) msgs.pop(); // unvollständiger Werkzeugaufruf am Ende
-  msgs.push({ role: 'user', content: 'Schreibe jetzt eine Übergabe für eine neue Sitzung, die ohne diesen Verlauf weiterarbeiten muss. Gliederung: Ziel · Erledigt (mit Dateipfaden und Funktionsnamen) · Wichtige Entscheidungen und Fakten · Offene Punkte · Nächster Schritt. Nur Dinge aus dem Verlauf, nichts erfinden, höchstens 500 Wörter. Keine Werkzeuge verwenden.' });
-  const sys = buildSystem();
+  msgs.push({ role: 'user', content: T('Schreibe jetzt eine Übergabe für eine neue Sitzung, die ohne diesen Verlauf weiterarbeiten muss. Gliederung: Ziel · Erledigt (mit Dateipfaden und Funktionsnamen) · Wichtige Entscheidungen und Fakten · Offene Punkte · Nächster Schritt. Nur Dinge aus dem Verlauf, nichts erfinden, höchstens 500 Wörter. Keine Werkzeuge verwenden.') });
+  const sys = buildSystem(chat);
   const cmp = compactMessages(msgs, sys);
-  const run = LLM.streamChat({ conn, model, system: sys, messages: cmp.messages, params: S.settings.params, tools: null, thinkLevel: S.settings.thinking, handlers: {} });
+  const run = LLM.streamChat({ conn, model, system: sys, messages: cmp.messages, params: S.settings.params, tools: null, thinkLevel: thinkId(chat), handlers: {} });
   const res = await run.promise;
   let text = LLM.splitThink(res.content || '').answer.trim();
   if (!text) throw new Error('Das Modell hat keine Übergabe geliefert.');

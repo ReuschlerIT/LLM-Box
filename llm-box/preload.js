@@ -30,6 +30,7 @@ const withLive = (ch) => (o, cb) => {
 };
 
 contextBridge.exposeInMainWorld('api', {
+  searx: { status: (o) => inv('searx:status', o), start: (o) => inv('searx:start', o), stop: () => inv('searx:stop') },
   store: { get: (n) => inv('store:get', n), set: (n, d) => inv('store:set', n, d) },
   chats: {
     list: () => inv('chats:list'),
@@ -79,7 +80,18 @@ contextBridge.exposeInMainWorld('api', {
   },
   abort: (id) => inv('llm:abort', id),
   openExternal: (u) => inv('shell:openExternal', u),
+  live: {
+    start: (o) => inv('live:start', o),
+    stop: () => inv('live:stop'),
+    status: () => inv('live:status'),
+    config: (o) => inv('live:config', o),
+    onCmd: (cb) => ipcRenderer.on('live:cmd', (_e, m) => cb(m)),
+    push: (evt) => ipcRenderer.send('live:push', evt),
+    onResync: (cb) => ipcRenderer.on('live:resync', () => cb()),
+  },
   openPath: (p) => inv('shell:openPath', p),
+  showItem: (p) => inv('shell:showItem', p),
+  power: { keepAwake: (on) => inv('power:keepAwake', !!on) },
   appInfo: () => inv('app:info'),
   transfer: { info: () => inv('transfer:info'), pack: (json) => inv('transfer:pack', json), wsFiles: (o) => inv('transfer:wsFiles', o), serveStart: (o) => inv('transfer:serveStart', o), serveStop: () => inv('transfer:serveStop') },
   sync: { get: () => inv('sync:get'), setDir: (d) => inv('sync:setDir', d), migrate: () => inv('sync:migrate'), setEvery: (ms) => inv('sync:setEvery', ms) },

@@ -16,9 +16,26 @@ Eigene EXE bauen: `build-exe.bat`. Ergebnis im Ordner `dist` (Installer und port
 |---|---|---|
 | Ollama | Ollama | `http://localhost:11434` |
 | OpenAI-kompatibel | LM Studio, llama.cpp, vLLM, OpenAI, OpenRouter, Groq | z. B. `http://localhost:1234/v1` |
+| Anthropic (Claude) | Claude Opus, Sonnet, Haiku | `https://api.anthropic.com/v1` |
 
 Anfragen laufen über den Hauptprozess der App. Dadurch brauchst du **kein** `OLLAMA_ORIGINS` und es gibt keine CORS-Probleme.
 Über Einstellungen → Verbindungen kannst du beliebig viele Verbindungen anlegen, testen und (bei Ollama) Modelle herunterladen.
+
+### Claude (Anthropic)
+
+1. Unter **Einstellungen → Verbindungen** im Auswahlfeld **„Anthropic (Claude)“** wählen.
+2. **API-Schlüssel** von [console.anthropic.com](https://console.anthropic.com) (API Keys) eintragen, **„Verbindung testen“** drücken. Die Modellliste kommt direkt von Anthropic.
+3. Modell wählen und losschreiben.
+
+- **Abrechnung:** über dein Anthropic-API-Konto mit Guthaben, nicht über ein Claude-Abo.
+- **Datenschutz:** Chat-Inhalte, Anhänge und Dateien, die die KI im Workspace liest, werden an Anthropic gesendet. Für vertrauliche Inhalte ein lokales Modell nehmen.
+- **Werkzeuge, Unteragenten, Bilder (Strg+V):** funktionieren wie bei anderen Verbindungen. Bildausgabe gibt es nicht.
+- **Denken:** „Auto“ sendet nichts, „Aus“ schaltet Denken ab. Schnell/Normal/Hoch senden bei „Adaptiv + effort“ (Standard, Claude Opus/Sonnet 4.6 und neuer) die passende Stufe, bei „Festes Token-Budget“ (ältere Modelle, 4.5 und früher) 2.048, 8.192 bzw. 16.384 Token. Claude 4.7 und neuer lehnt das feste Budget ab. Der Gedankengang erscheint als Zusammenfassung; in Werkzeug-Abläufen gibt die App die Denk-Blöcke automatisch zurück. Mit Denken sind Temperatur und Top-K nicht erlaubt und werden weggelassen.
+- **Sampling:** Standard ist „Dem Server überlassen“. Bei „Von der App senden“ geht nur die Temperatur (0 bis 1) und die Stop-Sequenz mit, nie Top-P.
+- **Antwortlänge:** Claude verlangt eine Obergrenze. Ohne Wert unter „Modell & Parameter“ sendet die App 16.384 Token.
+- **Prompt-Caching** (Standard an): System-Prompt, Werkzeuge und Verlauf werden zwischengespeichert, gelesen kosten sie nur etwa ein Zehntel. Die Prompt-Zahl der Statistik enthält die zwischengespeicherten Token.
+- **Kontextanzeige:** das Eingabe-Limit übernimmt die App aus der Modellliste.
+- **Probleme:** „Verbindung genau prüfen“ fragt die Modellliste ab und schickt eine Testanfrage (höchstens 16 Token). So lassen sich falscher Schlüssel (401), Netzwerkproblem und fehlendes Guthaben unterscheiden.
 
 ## Statistik
 
@@ -31,9 +48,21 @@ Unter dem Eingabefeld steht für den jeweiligen Chat: Tokens (Prompt/Antwort), �
 
 Die Kosten sind ein **Vergleichswert**: was dieselbe Nutzung bei einem Cloud-Anbieter zu Listenpreisen kosten würde. Alle Preise sind in **Euro je 1 Mio. Token**. Standard ist der Mittelwert aus GPT-6.1 Sol, Claude Sonnet 5.5 und Gemini 3.1 Pro (1,80 € Eingabe / 9,60 € Ausgabe, umgerechnet aus 2 $ / 10,67 $ zum Kurs 0,90). Unter Einstellungen → Kosten wählst du andere Vorlagen oder trägst eigene Euro-Preise ein; pro Verbindung sind eigene Preise möglich.
 
+**Stromkosten:** Unter **Einstellungen → Kosten** kannst du den **Strompreis (€ je kWh)** eintragen. Dann liest die LLM Box während jeder Antwort einmal pro Sekunde die **GPU-Leistung (Watt)** aus dem Server-Monitor, rechnet sie über die Zeit in Kilowattstunden um und zeigt die **Stromkosten vor den Gesamtkosten** unter dem Eingabefeld sowie als Wert „Strom“ unter jeder Antwort (Tooltip: Wattstunden und Durchschnittsleistung). Das funktioniert auch bei geschlossenem Monitor, aber nur, wenn der Chat auf demselben Server läuft, den der Monitor überwacht (Fenster „Server“), und der Server `gpu_power` liefert. Gemessen wird nur die GPU, nicht CPU oder der übrige Rechner. Strompreis 0 oder leer = aus. Die Werte werden pro Antwort im Chat gespeichert, ältere Chats ohne Messung zeigen „–“.
+
+## Parallel arbeiten, Chats löschen, Hinweise an die laufende KI
+
+Die LLM Box blockiert nicht, während die KI arbeitet:
+
+- **Mehrere Chats gleichzeitig:** Jeder Chat hat seinen eigenen Lauf. Du kannst einen anderen Chat öffnen und dort sofort weiterarbeiten, ohne dass die Antwort im ersten Chat abbricht. Beide Chats arbeiten gleichzeitig (der Server muss die Anfragen verarbeiten können; bei nur einem Slot stellt er sie hintereinander ab). Ein Punkt in der Chat-Liste zeigt, wo die KI gerade arbeitet oder auf dich wartet. Freigaben und Rückfragen eines Chats erscheinen nur in diesem Chat. „Stopp“, „Pause“ und die Freigabe-Einstellungen gelten immer für den angezeigten Chat.
+- **Chats löschen:** Jeder Chat lässt sich jederzeit löschen, auch einer, in dem die KI gerade arbeitet. Ihre Antwort wird dann abgebrochen, und der Chat wird nicht wieder angelegt. „Alle Chats löschen“ beendet ebenfalls alle laufenden Antworten.
+- **Hinweise an die laufende KI:** Arbeitet die KI im angezeigten Chat, kannst du weiter schreiben. Der Text geht als Hinweis an die KI (der Senden-Knopf bleibt ein Senden-Knopf; mit leerem Feld wirkt er als Stopp). Der Hinweis erscheint über dem Eingabefeld und wird **nach dem aktuellen Schritt** (z. B. nach dem laufenden Werkzeug) als Nachricht in den Chat eingefügt. Die KI liest ihn vor ihrem nächsten Schritt und richtet sich danach. Endet ihre Antwort gerade, macht sie wegen des Hinweises noch einen weiteren Schritt. Mit **„Jetzt“** unterbrichst du die laufende Antwort sofort (der bisherige Text bleibt stehen) und die KI geht gleich auf den Hinweis ein. Mit dem Kreuz holst du den Hinweis zurück ins Eingabefeld. Wird der Lauf vorher beendet (Stopp, Fehler, Schritt-Limit), steht der Hinweis wieder im Eingabefeld.
+- **Strom bei mehreren Chats:** Arbeiten mehrere Chats gleichzeitig, wird die gemessene GPU-Leistung gleichmäßig auf sie verteilt, damit der Verbrauch nicht doppelt gezählt wird.
+
+
 ## Denkaufwand
 
-Im Eingabefeld: **Denken: Auto / Aus / Schnell / Normal / Hoch**. Bei Ollama wird `think` gesendet (gpt-oss mit Stufen). Bei OpenAI-kompatiblen Servern lässt sich in Einstellungen → Verbindungen wählen, wie die Stufe übertragen wird: `reasoning_effort`, Chat-Template (llama.cpp, vLLM, Qwen3), OpenRouter-`reasoning` oder gar nicht. Zahlen werden kompakt angezeigt (k, M, B, T); exakte Werte stehen im Tooltip.
+Im Eingabefeld: **Denken: Auto / Aus / Schnell / Normal / Hoch**. Bei Ollama wird `think` gesendet (gpt-oss mit Stufen). Bei OpenAI-kompatiblen Servern lässt sich in Einstellungen → Verbindungen wählen, wie die Stufe übertragen wird: `reasoning_effort`, Chat-Template (llama.cpp, vLLM, Qwen3), OpenRouter-`reasoning` oder gar nicht. Bei Claude (Anthropic) wählst du zwischen adaptivem Denken und festem Token-Budget (siehe „Claude (Anthropic)“ oben). Zahlen werden kompakt angezeigt (k, M, B, T); exakte Werte stehen im Tooltip.
 
 ## Dateien
 
@@ -225,7 +254,7 @@ Solange die KI arbeitet, steht neben dem Senden-Knopf ein **Pause-Knopf**. Ein K
 
 Im Eingabefeld werden falsch geschriebene Wörter mit der bekannten roten Wellenlinie unterstrichen. **Rechtsklick** auf das Wort zeigt bis zu sechs Vorschläge (Klick ersetzt das Wort) und **Zum Wörterbuch hinzufügen**. Das Rechtsklick-Menü bietet außerdem Ausschneiden, Kopieren, Einfügen und Alles auswählen (in Eingabefeldern) bzw. Kopieren (bei markiertem Text im Chat).
 
-- Einstellungen → Darstellung: **Rechtschreibprüfung** ein/aus und **Sprachen** (Deutsch und Englisch, nur Deutsch, nur Englisch). Bei „Deutsch und Englisch“ gilt ein Wort nur dann als falsch, wenn es in keiner der beiden Sprachen vorkommt. So werden englische Fachwörter nicht ständig markiert. Standard: eingeschaltet, Deutsch und Englisch.
+- Einstellungen → Darstellung: **Rechtschreibprüfung** ein/aus und **Sprachen** (Deutsch, Englisch, Französisch und ihre Kombinationen, z. B. „Deutsch, Englisch und Französisch“). Wählst du beim ersten Start Französisch als Sprache, stellt die App die Rechtschreibung auf „Französisch und Englisch“. Bei „Deutsch und Englisch“ gilt ein Wort nur dann als falsch, wenn es in keiner der beiden Sprachen vorkommt. So werden englische Fachwörter nicht ständig markiert. Standard: eingeschaltet, Deutsch und Englisch.
 - Die Wörterbücher lädt die App beim ersten Start selbst herunter (unter Windows ist dafür eine Internetverbindung nötig). Danach funktioniert die Prüfung auch offline. Eigene Wörter bleiben im Datenordner gespeichert.
 - Die Prüfung läuft lokal im Fenster. Der Text wird nicht an dein Modell oder einen Dienst von uns geschickt.
 
@@ -241,6 +270,89 @@ Unter Einstellungen → Aussehen hat jede Farbe (auch die Akzentfarbe) einen Reg
 
 Einstellungen → Darstellung: 8 Farbschemata zum Anklicken, jede Farbe einzeln änderbar (getrennt für dunklen und hellen Modus: Chat-Hintergrund, Seitenleisten, Karten, Eingabefeld, Nachrichtenblasen, Text, Rahmen, Code), Akzentfarbe, Schriftart für Oberfläche und Code (auch eigene installierte Schriften), Schriftgröße, Zeilenabstand, Chatbreite, Eckenrundung, Seitenleistenbreite sowie Hintergrund (Reuschler-IT-Wallpaper, eigenes Bild mit Intensität und Weichzeichner, oder einfarbig).
 
+## Übertragung auf die Android-App (QR-Code und JSON)
+
+Unter **Einstellungen → Übertragung** übernimmt die Android-App deine Einstellungen von hier.
+
+- **QR-Code erzeugen:** Zeigt eine Folge von QR-Bildern, die automatisch im Kreis wechseln (1 bis 4 Bilder pro Sekunde, mit Pause und Vor/Zurück). Die Android-App scannt sie nacheinander ein, die Reihenfolge ist egal, und meldet, wenn alles da ist. Enthalten sind alle Einstellungen, Verbindungen mit API-Keys, Modell, Parameter, System-Prompt, Kosten und Workspace-Einstellungen (zum Beispiel die Zahl der Werkzeug-Schritte). Chats kannst du dazuwählen (letzte 3, letzte 10 oder alle); jeder Chat vergrößert die Zahl der Bilder. Ab 400 Bildern weist die App auf die JSON-Datei hin.
+- **JSON exportieren (Fallback):** Gleicher Inhalt als Datei, falls das Scannen nicht klappt. Optional mit Textdateien aus dem Workspace-Ordner (insgesamt höchstens 5 MB).
+- **Sicherheit:** QR-Code und JSON enthalten API-Keys im Klartext. Den Code nicht fotografieren oder weitergeben, die JSON-Datei nach dem Import löschen.
+- Der SSH-Schlüssel selbst wird nicht übertragen, nur sein Dateipfad. Gerätebezogenes (Fensterposition, Rechner-ID, gemeinsamer Chat-Ordner) bleibt draußen.
+- Das genaue Format für die Android-Seite steht in `docs/TRANSFER-FORMAT.md`.
+
+## Funktionen und Ansicht frei ein- und ausschalten (neu)
+
+**Einstellungen → Funktionen & Ansicht** listet jede Funktion und jedes Bedienelement einzeln: Knöpfe der oberen Leiste (Unteragenten, Server, Monitor, Übergabe, Export, Workspace-Panel, Kontextanzeige), das Eingabefeld (Anhänge, Denkaufwand, KI-Dateizugriff, Token-Schätzung), die Seitenleisten und Anzeigen (Suche, Import, Verbindungsstatus, Markenzeile, Statusleiste, Live-Kasten) und die Erweiterungen. Ausgeschaltetes wird ausgeblendet, die zugehörigen Einstellungen bleiben erhalten. Die **Profile** „Schlicht“ (nur Chat), „Standard“ und „Alles“ setzen viele Schalter auf einmal.
+
+Das Einstellungsmenü ist in der Reihenfolge der Einrichtung gegliedert: **Einrichten** (Verbindungen, Modell & Parameter), **Arbeiten** (Darstellung, Workspace & Dateien, Prompts & Assistenten, Gedächtnis & Wissen, Websuche & Sprache), **Module**, **Geräte und Daten** (Live-Ansicht, Übertragung, Daten), **Verwaltung** (Kosten, Über).
+
+## Prompt-Bibliothek und Assistenten
+
+- **Prompts:** Vorlagen mit Befehl, die du im Eingabefeld mit „/“ einfügst (Pfeiltasten und Enter wählen aus). Platzhalter: `{{datum}}`, `{{uhrzeit}}`, `{{wochentag}}`.
+- **Assistenten:** eigene Rollen mit Systemprompt, optional festem Modell und eigener Temperatur (wie „Modelle“ bei Open WebUI). Auswahl pro Chat über den Knopf „Assistent“ im Eingabefeld.
+
+## Gedächtnis und Wissenssammlungen
+
+- **Gedächtnis:** kurze Sätze, die die KI in jedem Chat kennt. Im Chat: `/merke Text`.
+- **Wissenssammlungen:** Dokumente (Text, PDF, Word, Excel, Code) in Sammlungen ablegen. Beim Antworten sucht die App **lokal** (BM25, ohne Cloud) die fünf passendsten Abschnitte und gibt sie der KI mit Quellenangabe. Aktivierung pro Chat über den Knopf „Wissen“ oder „immer aktiv“ pro Sammlung. Die Suche ist eine reine Stichwortsuche, keine Bedeutungssuche (keine Embeddings).
+
+## Websuche
+
+Die KI bekommt die Werkzeuge `web_search` und `fetch_url`. Die Anfragen gehen **direkt von deinem Rechner** aus, ein eigener Server ist nicht nötig. Anbieter unter **Einstellungen → Websuche & Sprache**:
+
+| Anbieter | Schlüssel | Stärke |
+|---|---|---|
+| **Tavily** | ja (https://app.tavily.com) | speziell für KI gebaut; liefert aus den Seiten gezogene, zur Frage passende Textstellen (länger als ein Snippet) |
+| **Serper** | ja (https://serper.dev) | echte Google-Ergebnisse, inklusive Direktantwort, wenn Google eine zeigt |
+| **Brave Search** | ja (https://brave.com/search/api/) | unabhängiger Suchindex |
+| **Exa** | ja (https://exa.ai) | semantische Suche, gut für Recherche nach Inhalten statt Stichwörtern |
+| DuckDuckGo | nein | ohne Konto, aber eine Webseite: kann Anfragen von Programmen zeitweise blockieren (dann antwortet ersatzweise Wikipedia) |
+| Wikipedia | nein | nur Wikipedia |
+| SearXNG | nein | nur wer schon einen eigenen Server betreibt (Adresse mit Port; `settings.yml`: `search: formats` braucht `json`) |
+
+Die Anbieter mit Schlüssel haben ein kostenloses Startkontingent, danach zahlst du beim Anbieter. Umfang und Preise legt der Anbieter fest und ändern sich, schau auf seiner Seite nach. Der Schlüssel wird lokal gespeichert. „Verbindung prüfen“ testet den gewählten Anbieter; falscher Schlüssel, aufgebrauchtes Kontingent und Limits melden sich mit klaren Texten. Bei einem Anbieter mit Schlüssel wechselt die App bei Fehlern **nicht** heimlich zu einem anderen Anbieter.
+
+Das Abrufen einzelner Seiten (`fetch_url`) fragt immer nach, außer bei „Nichts bestätigen“. **Datenschutz:** Der Suchtext geht an den gewählten Anbieter, samt Konto und IP-Adresse dieses Rechners. Das Modul „Websuche“ ist standardmäßig aus.
+
+## Vorlesen
+
+Unter jeder Antwort liest ein Knopf sie mit der Systemstimme vor (Geschwindigkeit unter „Websuche & Sprache“).
+
+## Chats ordnen
+
+In der Chatliste: **Anheften**, **Archivieren** (Zeile „Archiv“ am Ende) und **Tags** (Klick auf einen Tag filtert; auch Suche mit `#tag`). Die Ordnung wird pro Gerät gespeichert.
+
+## Live-Ansicht (geräteübergreifend in Echtzeit)
+
+Siehe `docs/LIVE-ANSICHT.md`. Kurz: Einstellungen → Live-Ansicht. Die Quelle (Windows) bietet ihre Chats an, ein zweites Gerät (Windows oder Android) zeigt sie Wort für Wort mit. Optional mit **Fernsteuerung** (Nachrichten senden, stoppen, neue Chats beginnen). Ersatzweg **Long-Polling**, falls ein Gerät keine Datenströme durchlässt.
+
+## LLM Box Hub: Chats und Antworten auf dem Server
+
+Der **Hub** (Ordner `hub/`, Anleitung `hub/README.md`) läuft ohne Oberfläche auf einem Linux- oder Windows-Rechner, zum Beispiel neben Strata. Er speichert die Chats, ruft das Modell auf (lokal oder Cloud, die Schlüssel liegen nur dort) und zeigt jede Änderung in Echtzeit in der Windows- und der Android-App. Die Antwort läuft auch dann weiter, wenn du die App schließt oder das Handy weglegst.
+
+Verbinden: **Einstellungen → Live-Ansicht → Adresse der Quelle** (Adresse mit `node hub/hub.js --show`). Hub-Chats sind reine Chats; Werkzeuge, Websuche, Wissenssuche und Assistenten laufen weiter in lokalen Chats auf dem Gerät.
+
+## Autonomer Modus (auch über Nacht)
+
+Im autonomen Modus arbeitet die KI vollständig selbstständig: **keine Rückfragen, keine Freigaben, der Kontext leert sich selbst**. Du beschreibst die Aufgabe, sendest und lässt sie laufen.
+
+**Einschalten:** Knopf **„Autonom“** im Eingabefeld (pro Chat) oder Einstellungen → Arbeiten → **Autonomer Modus**, dann Aufgabe senden. Über dem Eingabefeld zeigt eine Leiste Laufzeit, Schritte und Leerungen, dazu den Sicherheitshinweis (ohne Bestätigung) und die Knöpfe „Stopp“, „Aus“ und „Jetzt weitermachen“.
+
+**Was die App für dich übernimmt**
+- **Kontext leeren:** Ab etwa 70 % Füllstand bittet die App die KI um eine Übergabe (Ziel, Erledigtes, Offenes, Nächster Schritt), die ohne Klick übernommen wird. Schafft die KI das nicht, schreibt die App ab 85 % die Übergabe selbst. Der alte Verlauf bleibt sichtbar, die KI sieht nur noch die Übergabe. Ein Fehler „Kontext zu groß“ löst dasselbe aus.
+- **Weitermachen:** Das Schrittlimit pro Lauf hält die KI nicht mehr an. Antwortet sie nur mit Text, wird sie bis zu dreimal zum Weitermachen aufgefordert.
+- **Fehler:** Bei Netz- oder Serverfehlern wartet die App (20 s, 1, 2, 5, 10, 15 min) und versucht es erneut.
+- **Gedächtnis:** Auf Wunsch führt die KI die Datei `AUTONOM-LOG.md` im Workspace (Ziel, erledigt, offen, Annahmen) und liest sie nach dem Leeren zuerst.
+- **Rechner wach halten:** Der Ruhezustand wird verhindert, solange ein Lauf aktiv ist (Windows-App). Am Ende kommt eine Windows-Meldung.
+
+**Ende des Laufs:** Die KI ruft `finish_task` auf, **du** drückst „Stopp“ oder „Aus“, oder eine Grenze greift: Höchstdauer (Standard 8 Stunden), Höchstzahl Werkzeugaufrufe (3000), Höchstzahl Kontext-Leerungen (40), erkannte Schleife (derselbe Aufruf mehrfach ohne Fortschritt) oder wiederholte Fehler. Das Ergebnis steht danach in der Autonom-Leiste oben im Chat, „Fortsetzen“ macht weiter. Der **erste** Aufruf von `finish_task` beendet den Lauf noch nicht: Die KI wird gebeten, ihr Ergebnis selbst zu prüfen und zu testen, erst der zweite Aufruf beendet den Lauf (abschaltbar unter Einstellungen → Autonomer Modus → „Abschluss einmal prüfen lassen“).
+
+**Grenzen selbst einstellen:** Die Standardwerte stehen unter Einstellungen → Autonomer Modus → „Grenzen (Notbremse)“ (Höchstdauer, Werkzeugaufrufe, Kontext-Leerungen, Fehler-Wiederholungen, Zwangs-Leeren ab Füllstand). Leer oder 0 heißt „keine Grenze“. Änderungen gelten sofort, auch für einen laufenden Lauf. Für **einen einzelnen Chat** überschreibst du sie über den Knopf **„Grenzen“** in der Autonom-Leiste oben im Chat, zum Beispiel um einen laufenden Lauf zu verlängern (Höchstdauer ist ab dem Start gerechnet: lief er schon 8 h, setze 12 für vier weitere Stunden). „Auf Standard zurücksetzen“ nimmt die Überschreibung zurück; ein neuer Lauf beginnt wieder mit den Standardwerten. Die Grenzen werden während des Laufs vor jedem Schritt geprüft.
+
+**Sicherheit:** Die KI ändert Dateien im Workspace und führt Befehle **mit deinen Benutzerrechten ohne Rückfrage** aus. Nutze den Modus nur für einen Ordner, dessen Inhalt gesichert ist (z. B. Git oder Backup), und prüfe das Ergebnis am Morgen. Die App blockiert gefährliche Befehle (rm -rf /, Laufwerke löschen oder formatieren, Herunterfahren, Registry-, Dienst- und Firewall-Änderungen, `git push`, Code aus dem Netz sofort ausführen) und erlaubt **keine Installationen**, solange du das nicht einschaltest. Das ist ein Sicherheitsnetz, **kein vollständiger Schutz**. Die Websuche (falls an) und das Lesen von Webseiten laufen ebenfalls ohne Rückfrage.
+
+Grenzen: Der Lauf setzt sich nach einem Neustart der App nicht von selbst fort (Knopf „Jetzt weitermachen“). Der Rechner muss an bleiben und die App offen.
+
 ## Daten
 
 Chats und Einstellungen liegen unter `%APPDATA%\LLM Box`. API-Schlüssel werden dort unverschlüsselt gespeichert.
@@ -252,4 +364,4 @@ Chats und Einstellungen liegen unter `%APPDATA%\LLM Box`. API-Schlüssel werden 
 - Getestet wurde die Logik gegen Mock-Server (Ollama, OpenAI-Stream). Die Electron-Oberfläche selbst habe ich hier nicht auf einem echten Windows-Rechner gestartet.
 
 ---
-© 2026 Reuschler-IT. Alle Rechte vorbehalten.
+© 2026 Reuschler-IT. Veröffentlicht unter der MIT-Lizenz (siehe `LICENSE`). Verwendete Open-Source-Bausteine: `THIRD-PARTY-NOTICES.md`.

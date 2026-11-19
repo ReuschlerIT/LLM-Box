@@ -1,19 +1,21 @@
-# LLM Box 1.0.70 (Windows und Android)
+# LLM Box 1.0.82 (Windows, Linux und Android)
 
-**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.70** gebaut und als Dateien am
-GitHub-Release [1.0.70](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70) eingestellt
+**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.82** gebaut und als Dateien am
+GitHub-Release [1.0.82](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.82) eingestellt
 (Setup, portable EXE, APK). Im Repository liegen sie nicht mehr – die Windows-Programme sind rund
-84 MB. Die Android-Fassung trägt **1.0.70-android**
-(versionCode 70). Beide Fassungen entstehen aus **derselben
+84 MB. Die Android-Fassung trägt **1.0.82-android**
+(versionCode 82). Beide Fassungen entstehen aus **derselben
 Quelle** (`llm-box/`), die Android-Oberfläche wird beim Bauen aus den Dateien von `llm-box/renderer/`
-erzeugt. Vorgängerversion auf GitHub: [1.0.65](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.65),
+erzeugt. Vorgängerversion auf GitHub: [1.0.70](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70),
+[1.0.65](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.65),
 [v1.0.50](https://github.com/ReuschlerIT/LLM-Box/releases/tag/v1.0.50)
 
-Die aktuelle Fassung bringt **Deutsch, English und Français** für die gesamte Oberfläche (mit
-Sprachabfrage beim allerersten Start), ein **Modellprofil für kleine, stark quantisierte Modelle (IQ3)**
-und damit deutlich weniger vorzeitige Abbrüche im Werkzeugmodus. Die Vorgängerversion 1.0.65 brachte
-**sehr große Chats deutlich schneller**, den **Windows-Netzwerkordner direkt als Arbeitsordner**
-(am PC wie auf dem Handy) und die **Übertragung zwischen PC und Handy in beide Richtungen**.
+Die aktuelle Fassung bringt den **autonomen Modus** (die KI arbeitet selbstständig über Nacht),
+**Live-Ansicht und Hub** (Chats geräteübergreifend in Echtzeit, Server ohne Oberfläche), die
+**Module im Stil von Open WebUI** (Prompt-Bibliothek, Assistenten, Gedächtnis, Wissenssuche,
+Websuche ohne eigenen Server), den **Gesamtverbrauch** in der Seitenleiste, rund **290 neue englische
+und französische Texte** sowie eine **Linux-Fassung**. Vorgängerversion 1.0.70 brachte
+**Stromverbrauch**, **Hinweise an die laufende KI** und **mehrere Aufträge pro Chat**.
 
 ## Programme
 
@@ -22,9 +24,9 @@ Android-Programm der aktuellen Fassung und die zuletzt gebauten Windows-Programm
 
 | Datei | Für | Größe |
 |---|---|---|
-| `LLM.Box.Setup.1.0.70.exe` | Windows 10/11, Installer | 84,0 MB |
-| `LLM.Box.1.0.70.portable.exe` | Windows 10/11, ohne Installation | 83,8 MB |
-| `LLM-Box-1.0.70-android.apk` | Android 8.0 oder neuer, Fassung 1.0.70-android | 10,6 MB |
+| `LLM.Box.Setup.1.0.82.exe` | Windows 10/11, Installer | 84,1 MB |
+| `LLM.Box.1.0.82.portable.exe` | Windows 10/11, ohne Installation | 83,8 MB |
+| `LLM-Box-1.0.82-android.apk` | Android 8.0 oder neuer, Fassung 1.0.82-android | 10,8 MB |
 
 Beide Fassungen haben dieselbe Oberfläche und dasselbe Chat-Format. Bestehende Einstellungen,
 Verbindungen und Chats bleiben beim Update erhalten.
@@ -263,44 +265,83 @@ Windows-Änderungen dieses Zeitraums stecken in 1.0.63.
   Patch-Suchtexte gegen die Quelle, ohne zu bauen) und `tools-android\bruecken-check.js`
   (verweist die Android-Brücke noch auf existierende Interna der Desktop-Seite).
 
+### Version 1.0.71 bis 1.0.82 (gemeinsamer Abschnitt)
+- **1.0.71:** Modellauswahl zeigt jetzt alle installierten Strata-Modelle (Abfrage `/api/native`,
+  entladen und nachladen auf Wunsch); Klick auf eine Datei im Workspace-Panel ist einstellbar
+  (öffnen, anhängen, nachfragen, im Ordner zeigen).
+- **1.0.72:** **Live-Ansicht** – Chats geräteübergreifend in Echtzeit, Wort für Wort. Die
+  Windows-App bietet ihre Chats im WLAN an (Adresse mit geheimem Schlüssel, QR-Code), Windows und
+  Android zeigen sie schreibgeschützt mit; „Fernsteuerung erlauben" erlaubt Senden und Stoppen.
+  Protokoll: `docs/LIVE-ANSICHT.md`. Neue Datei `renderer/js/live.js`.
+- **1.0.73:** **Funktionen & Ansicht** – jede Funktion einzeln schaltbar, Profile „Schlicht",
+  „Standard", „Alles"; Einstellungen neu gegliedert. Neue Module: **Prompt-Bibliothek**
+  („/"-Befehle), **Assistenten**, **Gedächtnis** (`/merke`), **Wissenssammlungen** (BM25),
+  **Websuche**, **Vorlesen**, **Chats ordnen**. Neue Dateien `renderer/js/modules.js`, `renderer/js/owui.js`.
+- **1.0.74:** **LLM Box Hub** (`hub/hub.js`) – Server ohne Oberfläche für Linux und Windows
+  (Node.js 18+, keine Pakete): speichert Chats, ruft Modelle auf (Schlüssel nur auf dem Hub),
+  verteilt alles in Echtzeit; die Antwort läuft weiter, wenn Gerät oder App zu sind. systemd-Datei,
+  Start-Skripte, `--add-connection`/`--set-default`/`--show`.
+- **1.0.75:** Rechtschreibprüfung auf Französisch (auch Kombinationen mit Deutsch/Englisch).
+- **1.0.76:** **MIT-Lizenz** (`LICENSE`) und `THIRD-PARTY-NOTICES.md` (alle enthaltenen
+  Open-Source-Bausteine), beides jetzt auch in der gebauten Programmdatei.
+- **1.0.77/1.0.78:** **Websuche ohne eigenen Server** – DuckDuckGo (Standard, ohne Konto), Brave,
+  Wikipedia, Tavily, Serper, Exa, SearXNG optional; klare Fehlermeldungen je Anbieter, kein
+  stiller Anbieterwechsel bei Schlüsseln.
+- **1.0.79:** Behoben: Anbieter der Websuche (und Live-Einstellungen, Sprechgeschwindigkeit)
+  ließ sich nicht umstellen – die Einstellungen wurden bei jedem Zugriff durch eine Kopie ersetzt.
+- **1.0.80:** **Autonomer Modus** – die KI arbeitet vollständig selbstständig (keine Rückfragen,
+  keine Freigaben, Kontext leert sich selbst per Übergabe, Weitermachen bis `finish_task`,
+  Höchstdauer 8 h, Höchstzahl Werkzeugaufrufe, Schleifenerkennung, Rechner wach halten,
+  gefährliche Befehle blockiert). Neue Datei `renderer/js/auto.js`.
+- **1.0.81:** Eingabeleiste: alle Knöpfe in einer Reihe mit Tooltips; Autonom-Leiste oben im Chat.
+  **Abschluss-Prüfung**: der erste `finish_task` beendet den Lauf nicht – die KI prüft ihr Ergebnis
+  selbst. Behoben: Die Chat-Schleife brach bei jedem `finish_task` ab.
+- **1.0.82:** **Chatliste nach Erstellung** (feste Reihenfolge, springt nicht mehr); **Denken und
+  Dateizugriff pro Chat**; **SearXNG als Hintergrunddienst** (Docker oder eigener Startbefehl,
+  `searx:start`/`searx:stop`/`searx:status`); **Gesamtverbrauch** in der Seitenleiste
+  (`renderer/js/usage.js`, `usage.json`, bleibt auch nach Chat-Löschung erhalten); rund **290 neue
+  englische und französische Texte** (`i18n-lex-v82*.js`) und `TLines()` für mehrzeilige
+  KI-Anweisungen in der App-Sprache; **Linux-Fassung** (`start.sh`, `build-linux.sh`,
+  `llm-box.desktop`, `docs/LINUX.md`, Ziele AppImage/deb/tar.gz).
+- **Android-Bau 1.0.82:** die 14 neuen api-Kanäle (live.\*, power.keepAwake, searx.\*, showItem)
+  sind Desktop-only und auf Android defensiv gekapselt (`liveCanHost()`); der Prüflauf
+  `tools-android\check-api.js` kennt eine desktopOnly-Liste. Die Live-**Empfänger**-Funktion
+  (Adresse einfügen, QR-Code scannen) funktioniert auf Android über `api.stream`; die
+  Live-**Quelle** (eigene Chats anbieten) bleibt dem Windows-Programm vorbehalten.
+
 ---
 
 ## Geprüft
 
-Die Prüfsuite läuft ohne Gerät und umfasst inzwischen **11 Prüfläufe mit 330 Prüfungen, 0 Fehler**
+Die Prüfsuite läuft ohne Gerät und umfasst **11 Prüfläufe, 0 Fehler**
 (Bridge-Vollständigkeit, portierte Kernschicht inklusive der neuen Schreib-Queue, Start der Oberfläche in
 einer WebView-Attrappe, kompletter Chat inklusive KI-Werkzeugen, PDF-Auslese, Chat-Abgleich,
-Übertragungsformat, Abgleich-Timer, QR-Scan, Übernahme-Korrekturen und seit dieser Fassung fest
-mitgezählt die Übersetzungsprüfung `tools-android\test-i18n.js` mit 24 Prüfungen).
-Sie läuft jetzt auch auf einem Rechner ohne gemapptes Netzlaufwerk durch.
+Übertragungsformat, Abgleich-Timer, QR-Scan, Übernahme-Korrekturen und die Übersetzungsprüfung
+`tools-android\test-i18n.js`). Der Bridge-Prüflauf meldet seit 1.0.82 die 14 neuen api-Kanäle
+(`live.*`, `power.keepAwake`, `searx.*`, `showItem`) als **bewusst Desktop-only** – auf Android sind
+sie defensiv gekapselt, die Live-**Empfänger**-Funktion läuft dort über `api.stream`.
 
-**Am Gerät geprüft (SM-S948B und SM-G986B, Fassung 1.0.67-android / versionCode 69):** IQ3-Profil wird
-beim ersten Start gesetzt (`modelProfile":"iq3"`, `ctxSoftCap":64000`), Sprachumschaltung über die
-Oberfläche (Deutsch/English/Français) wirkt sofort, Sprachabfrage beim ersten Start erscheint und die
-Wahl bleibt jetzt erhalten, 1.357 gesammelte UI-Textzeilen über alle acht Einstellungs-Reiter: keine
-deutschen Reste bei aktivem Englisch.
+**Android-Fassung 1.0.82-android (versionCode 82):** gebaut aus einer bereinigten Kopie mit
+`build-now.ps1`, APK 11.337.686 B. Alle 16 Android-Anpassungen griffen weiterhin
+(`tools-android\patch-check.js`: 0 Suchtexte würden abbrechen). Alle 11 Prüfläufe mit 0 Fehlern.
+**Am Gerät wurde diese Fassung nicht geprüft.** Die neuen Funktionen (Live-Ansicht als Empfänger,
+autonomer Modus, Gesamtverbrauch, SearXNG) sind nur in der simulierten WebView-Oberfläche geprüft;
+die Live-Quelle und SearXNG sind auf Android ausdrücklich abgeschaltet.
 
-Belege für die Performance-Angaben stammen aus Messungen an echten Chat-Dateien; die Protokolle der
-einzelnen Sitzungen stehen in `llm-box/UPDATE.md` zusammengefasst, jede Version dort als eigener
-Abschnitt seit 1.0.36.
-
-**Android-Fassung 1.0.70-android (versionCode 70):** gebaut aus einer bereinigten Kopie mit
-`build-now.ps1`, APK 11.084.346 B. Alle 16 Android-Anpassungen griffen (2 meldeten „bereits
-gepatcht", weil die Desktop-Quelle inzwischen selbst mit hellem Design startet). Alle 11 Prüfläufe
-mit 0 Fehlern, Übersetzungsprüfung jetzt wieder 24 Prüfungen, 0 Fehler. **Am Gerät wurde diese
-Fassung nicht geprüft** – die beiden bekannten Testhandys waren nicht erreichbar. Die neuen
-Funktionen (Strom, Hinweise, mehrere Aufträge) sind nur in der simulierten WebView-Oberfläche geprüft.
-
-**Windows-Fassung 1.0.70:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
-aus derselben bereinigten Quelle wie die APK – Setup 84.000.391 B, portable 83.758.160 B. Beide
+**Windows-Fassung 1.0.82:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
+aus derselben bereinigten Quelle wie die APK – Setup 84.060.209 B, portable 83.817.984 B. Beide
 Programmdateien und die APK wurden vor dem Einstellen am GitHub-Release mit
 `tools-android\scan-persoenlich.js` geprüft: im Setup und im portablen Programm je 4 Fundstellen,
-ausschließlich Zufallsbytefolgen im komprimierten Code. Das entpackte `app.asar` (427 Dateien)
+ausschließlich Zufallsbytefolgen im komprimierten Code. Das entpackte `app.asar` (438 Dateien)
 liefert 5 Fundstellen: eine Urheberangabe der mitgelieferten Bibliothek `fast-xml-parser` und vier
 Wortmeldungen („Administrator-Abfrage", „ohne Administratorrechte"). Keine internen IP-Adressen,
 Laufwerksbuchstaben, Freigabenamen, Rechner- oder Gerätenamen. Die Quelldateien im Repository nutzen
 durchgehend Beispielwerte aus dem Testnetz nach RFC 5737 (`192.0.2.x`) und den Beispielordner
 `D:\MeinProjekt`. **Installiert und gestartet wurden die Windows-Programme nicht.**
+
+**Linux-Fassung:** nur kurz unter einem virtuellen Display gestartet (Oberfläche lädt, keine
+Renderer-Fehler). Der Bau der Pakete (AppImage, deb, tar.gz) und der Betrieb auf echten Desktops
+sind nicht geprüft.
 
 ## Bekannte Grenzen
 

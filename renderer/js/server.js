@@ -890,6 +890,35 @@ async function svHostUnload() {
   svPoll();
 }
 
+/* Aus der Modellauswahl oben: ein installiertes, aber nicht geladenes Modell über die Strata-App laden (ggf. das aktuelle vorher entladen).
+   Gibt true zurück, wenn das Modell danach bereit ist. */
+async function svHostSwitchModel(modelId) {
+  const t = (m, ms) => toast(m, ms || 4000);
+  try {
+    const cur = await svHostInstance();
+    if (!cur.n.ok) { t('Die Strata-App antwortet nicht (/api/native). Modell bitte direkt in der App laden.', 7000); return false; }
+    if (cur.inst && cur.inst.id) {
+      const u = await svReq(`/api/native/instances/${encodeURIComponent(cur.inst.id)}/unload`, { method: 'POST', body: {}, timeout: 120000 });
+      if (!u.ok) { t('Das aktuelle Modell ließ sich nicht entladen: ' + svErrText(u), 7000); return false; }
+      await svSleep(1500);
+    }
+    const r = await svReq('/api/native/operations', { method: 'POST', body: { kind: 'load', args: { model: modelId } }, timeout: 30000 });
+    if (!r.ok) { t('Die Strata-App hat das Laden abgelehnt: ' + svErrText(r), 8000); return false; }
+    t(`Lade „${modelId}“ … beim ersten Start kann das einige Minuten dauern.`, 6000);
+    for (let i = 0; i < 600; i++) {
+      await svSleep(3000);
+      const x = await svHostInstance();
+      if (x.inst) {
+        const st = String(x.inst.status) + String(x.inst.phase);
+        if (x.inst.status === 'ready' && x.inst.phase !== 'unavailable') { t('Modell geladen.'); return true; }
+        if (/fail|error/i.test(st)) { t('Laden fehlgeschlagen. Details stehen in den Logs der Strata-App.', 8000); return false; }
+      }
+    }
+    t('Das Modell ist noch nicht bereit. Schau in der Strata-App nach dem Ladevorgang.', 8000);
+  } catch (e) { t('Laden fehlgeschlagen: ' + e.message, 8000); }
+  return false;
+}
+
 async function svLoad() {
   if (SV.data && SV.data.hostMode) return svHostLoad();
   if (!SV.data && SV.authErr) return svFixKey();

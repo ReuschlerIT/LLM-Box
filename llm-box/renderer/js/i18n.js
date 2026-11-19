@@ -179,6 +179,14 @@ function T(text) {
   return lead + out + tail;
 }
 
+/* Zeilenweise uebersetzen: fuer mehrzeilige Anweisungen an die KI (Autonom-Modus, Uebergabe).
+   Jede Zeile wird fuer sich im Woerterbuch gesucht, so stoeren sich Zeilen nicht gegenseitig. */
+function TLines(text) {
+  const raw = String(text ?? '');
+  if (I18N.lang === 'de') return raw;
+  return raw.split('\n').map((l) => T(l)).join('\n');
+}
+
 /* Bruchstuecke: Viele Meldungen setzt der Quelltext aus mehreren Teilen zusammen ('Server nicht erreichbar' + ': ' + Fehler).
    Findet T() fuer den ganzen Text nichts, werden darin bekannte Woerterbuch-Saetze (mind. 12 Zeichen mit Leerzeichen)
    einzeln ersetzt. Ergebnis wird je Sprache gemerkt. Nutzertexte (Chat-Titel, Dateinamen) enthalten solche Saetze praktisch nie. */
