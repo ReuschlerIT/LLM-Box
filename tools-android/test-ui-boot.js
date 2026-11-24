@@ -155,8 +155,13 @@ const scripts = [...fs.readFileSync(path.join(WEBAPP, 'index.html'), 'utf8').mat
   // nichts, der Test war damit ein Schein-Erfolg.
   const tabs = [...d.querySelectorAll('.settings nav button')];
   ok('Einstellungen haben Tabs (Test prueft wirklich etwas)', tabs.length >= 5, 'Tabs: ' + tabs.map((t) => t.textContent.trim()).join(', '));
-  const wsTab = tabs.find((t) => /Workspace/.test(t.textContent || ''));
+  // 1.0.84: Der Workspace-Ordner liegt nicht mehr in einem eigenen „Workspace“-Tab, sondern
+  // im Reiter „Projekte & Dateien“ im aufklappbaren Abschnitt wk-files (standardmaessig zu).
+  const wsTab = tabs.find((t) => /Projekte & Dateien|Workspace/.test(t.textContent || ''));
   if (wsTab) wsTab.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 300));
+  const wkSec = d.querySelector('details[data-sec="wk-files"]');
+  if (wkSec && !wkSec.open) { wkSec.open = true; wkSec.dispatchEvent(new win.Event('toggle', { bubbles: true })); }
   await new Promise((r) => setTimeout(r, 300));
 
   const hidden = [...d.querySelectorAll('.frow')].filter((r) => r.style.display === 'none');
@@ -164,7 +169,11 @@ const scripts = [...fs.readFileSync(path.join(WEBAPP, 'index.html'), 'utf8').mat
   ok('Schalter „Programme ausführen“ nicht sichtbar', !execRowVisible, `versteckte Zeilen: ${hidden.length}`);
 
   console.log('\nNetzwerkordner (SMB) …');
-  const wsRow = [...d.querySelectorAll('.frow')].find((r) => /Workspace-Ordner/.test(r.textContent || ''));
+  const wsRow = [...d.querySelectorAll('.frow')].find((r) => {
+    if (r.classList.contains('smb-box') || r.classList.contains('sync-smb')) return false;
+    const lab = r.querySelector('.flabel > div');
+    return /^Workspace-Ordner/.test(((lab && lab.textContent) || '').trim());
+  });
   ok('Workspace-Zeile gefunden', !!wsRow, 'Zeilen: ' + d.querySelectorAll('.frow').length);
 
   const smbBox = [...d.querySelectorAll('.frow')].find((r) => /Netzwerkordner \(SMB\)/.test(r.textContent || ''));
@@ -202,8 +211,12 @@ const scripts = [...fs.readFileSync(path.join(WEBAPP, 'index.html'), 'utf8').mat
       ok('Pfad ist persistiert (/smb/…)', saved === '/smb/testhost/daten/MeinProjekt', 'gespeichert: ' + saved);
 
       // Der entscheidende Nachweis fuer die Rueckmeldung des Nutzers: die Zeile DARUEBER
-      // muss den Ordner anzeigen, nicht "Kein Ordner gewaehlt".
-      const row = [...d.querySelectorAll('.frow')].find((r) => /Workspace-Ordner/.test(r.textContent || ''));
+      // muss den Ordner anzeigen, nicht "Kein Ordner gewaehlt". Label-basiert wie im Adapter.
+      const row = [...d.querySelectorAll('.frow')].find((r) => {
+        if (r.classList.contains('smb-box') || r.classList.contains('sync-smb')) return false;
+        const lab = r.querySelector('.flabel > div');
+        return /^Workspace-Ordner/.test(((lab && lab.textContent) || '').trim());
+      });
       const wsLabel = row ? row.querySelector('.fctrl > div') : null;
       ok('Workspace-Zeile zeigt den Netzwerkordner an', !!wsLabel && /\\\\testhost\\daten\\MeinProjekt/.test(wsLabel.textContent || ''), 'angezeigt: ' + (wsLabel ? wsLabel.textContent : 'kein Feld'));
 

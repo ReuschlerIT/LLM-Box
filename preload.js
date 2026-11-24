@@ -60,6 +60,17 @@ contextBridge.exposeInMainWorld('api', {
     list: (o) => inv('ws:list', o),
     tool: (o) => inv('ws:tool', o),
     abortAll: (owner) => inv('ws:abort', owner),
+    mkdir: (o) => inv('ws:mkdir', o),
+  },
+  mcp: {
+    sync: (cfgs) => inv('mcp:sync', cfgs),
+    list: () => inv('mcp:list'),
+    connect: (id) => inv('mcp:connect', id),
+    restart: (id) => inv('mcp:restart', id),
+    stop: (id) => inv('mcp:stop', id),
+    refresh: (id) => inv('mcp:refresh', id),
+    probe: (cfg) => inv('mcp:probe', cfg),
+    call: (o) => inv('mcp:call', o),
   },
   strata: {
     run: (req, cb) => {

@@ -14,9 +14,9 @@ const subRecs = () => (S.chat && S.chat.subagents) || [];
 // Ein gespeicherter „läuft“-Eintrag ohne laufenden Prozess stammt aus einer beendeten Sitzung
 const subStatus = (r) => (r.status === 'running' && !SUB.runs.has(r.id) ? 'aborted' : r.status);
 
-function subSystem() {
+function subSystem(chat) {
   return `Du bist ein Unteragent. Ein Hauptagent hat dir eine abgegrenzte Teilaufgabe übergeben. Arbeite sie selbstständig ab.
-Du hast nur lesende Werkzeuge (list_files, search_text, read_file) im Workspace (${S.settings.workspace.path}). Pfade sind relativ zum Workspace.
+Du hast nur lesende Werkzeuge (list_files, search_text, read_file) im Workspace (${wsRoot(chat)}). Pfade sind relativ zum Workspace.
 Dein Kontext ist begrenzt: Lies nie ganze große Dateien, sondern finde die Stelle mit search_text und lies gezielt mit start_line/end_line.
 Erfinde nichts: Nenne nur, was du tatsächlich gelesen hast, und gib Fundstellen als Datei:Zeile an.
 Schließe mit einer kompakten Zusammenfassung (höchstens ca. 400 Wörter) ab, die der Hauptagent ohne weiteres Nachlesen verwenden kann. Wenn etwas nicht auffindbar ist, sage das ausdrücklich.`;
@@ -87,7 +87,7 @@ async function runSubagent(tc, base, rc) {
       curStep = { n: step + 1, thinkRaw: '', think: '', text: '', tools: [] };
       steps.push(curStep);
       subRefresh();
-      const sys = subSystem();
+      const sys = subSystem(chat);
       const cmp = compactMessages(messages, sys);
       let lastPaint = 0;
       const mark = (txt) => { if (Date.now() - lastPaint > 400) { lastPaint = Date.now(); rec.activity = txt; tlAct(tc.id, txt); subRefresh(); } };
@@ -134,7 +134,7 @@ async function runSubagent(tc, base, rc) {
         let out;
         if (!SUB_TOOLS.includes(t.name)) out = { ok: false, result: 'Dieses Werkzeug ist für Unteragenten nicht erlaubt (nur list_files, search_text, read_file).' };
         else {
-          try { out = await api.ws.tool({ root: ws.path, name: t.name, args: t.args, maxKB: +ws.readKB || 40, ignore: ignoreList(), owner: chat.id }); }
+          try { out = await api.ws.tool({ root: wsRoot(chat), name: t.name, args: t.args, maxKB: +ws.readKB || 40, ignore: ignoreList(), owner: chat.id }); }
           catch (e) { out = { ok: false, result: 'Fehler: ' + e.message }; }
         }
         curStep.tools[curStep.tools.length - 1] = `${tline.label} → ${out.ok ? 'ok' : 'Fehler'} (${fmt.num(String(out.result || '').length)} Zeichen)`;

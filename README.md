@@ -16,16 +16,16 @@ Von [Reuschler-IT](https://github.com/ReuschlerIT) · Windows, Linux und Android
 Die fertigen Programme hängen als Dateien am jeweiligen GitHub-Release, nicht mehr im Repository
 (die Windows-Programme sind rund 84 MB und gehören nicht in eine Quellcode-Geschichte):
 
-**Aktuelle Version 1.0.83:** [Releases](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.83)
+**Aktuelle Version 1.0.86:** [Releases](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.86)
 
 | Datei | Für |
 |---|---|
-| `LLM.Box.Setup.1.0.83.exe` | Windows 10/11 (Installer) |
-| `LLM.Box.1.0.83.portable.exe` | Windows 10/11 (portable, ohne Installation) |
-| `LLM-Box-1.0.83-android.apk` | Android 8.0 oder neuer |
+| `LLM.Box.Setup.1.0.86.exe` | Windows 10/11 (Installer) |
+| `LLM.Box.1.0.86.portable.exe` | Windows 10/11 (portable, ohne Installation) |
+| `LLM-Box-1.0.86-android.apk` | Android 8.0 oder neuer |
 
 Alle drei Programme entstehen aus derselben Quelle. Ältere Versionen stehen unter
-[Releases](https://github.com/ReuschlerIT/LLM-Box/releases) (1.0.82, 1.0.70, 1.0.67, 1.0.65, 1.0.50).
+[Releases](https://github.com/ReuschlerIT/LLM-Box/releases) (1.0.83, 1.0.82, 1.0.70, 1.0.67, 1.0.65, 1.0.50).
 
 Beide Versionen haben dieselbe Oberfläche und dasselbe Chat-Format, der Austausch zwischen PC und
 Handy funktioniert in beide Richtungen (QR-Code, WLAN oder JSON-Datei – siehe unten).
@@ -224,6 +224,23 @@ Der vollständige Verlauf **einzelner Versionen ab 1.0.36** steht in [`llm-box/U
   Kontext leert sich selbst, Weitermachen bis zum Ergebnis (`finish_task`), Höchstdauer und
   Werkzeug-Grenzen einstellbar, gefährliche Befehle werden blockiert
 - Ab 1.0.81 prüft sie vor dem Abschluss einmal selbst ihr Ergebnis („Abschluss einmal prüfen lassen")
+
+### Neu in 1.0.84 bis 1.0.86
+- **MCP-Server (1.0.86):** Die Box ist jetzt ein MCP-Client. Beliebig viele Server gleichzeitig –
+  lokale Programme per stdio und Web-Adressen per Streamable HTTP. Werkzeuge heißen für das Modell
+  `mcp__<server>__<werkzeug>`, sind einzeln an-/abschaltbar und werden standardmäßig pro Aufruf
+  freigegeben. Import im Claude-Desktop-Format, Vorlagen für REA. Kontextschutz: Obergrenze pro
+  Anfrage, gekürzte Ergebnisse, Zeitlimit.
+- **Einstellungen neu geordnet (1.0.84):** aus 14 Reitern werden 8 nach Zweck (Verbindung, KI,
+  Arbeit, App), jeder mit aufklappbaren Abschnitten, plus Suche über alle Einstellungen.
+- **Projekte je Chat (1.0.84):** der Workspace-Ordner ist die Wurzel, jeder Chat arbeitet in einem
+  eigenen Projekt (Unterordner); die KI sieht nur ihr Projekt. `PROJEKT.md` als Projektanweisung.
+- **Genauigkeit und Tempo (1.0.84):** Temperatur bei Dateiarbeit begrenzt, Datei-nicht-gefunden
+  hängt die vorhandenen Dateien an, drei Sampling-Schnellwahlen. Skills mit schrittweiser
+  Offenlegung (Werkzeug `use_skill`). Strata-Startformular mit Startprofilen und Start-Skript.
+- **Lange eingefügte Texte (1.0.85):** besteht eine Nachricht nur aus eingefügtem Text, wird sie als
+  Auftrag gesendet statt als Datei – die KI stellt keine Gegenfrage mehr.
+- Neue englische und französische Texte (`i18n-lex-v84.js`, `i18n-lex-v86.js`).
 
 ### Neu in 1.0.83
 - **Modellprofil „Kleines / stark quantisiertes Modell" (IQ3/Q3) nachgereicht:** Sampling nach der

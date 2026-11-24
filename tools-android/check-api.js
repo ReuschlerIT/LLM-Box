@@ -77,7 +77,10 @@ const desktopOnly = [
   'searx.start', 'searx.status', 'searx.stop', 'showItem',
   // 1.0.83: discover.js zeigt ohne api.discover.scan einen Hinweis; chatmenu.js prueft
   // api.files.savePdf selbst (PDF-Export ist Desktop nur).
-  'discover', 'discover.scan', 'files.savePdf'
+  'discover', 'discover.scan', 'files.savePdf',
+  // 1.0.84/1.0.86: ws.mkdir ist Desktop only (projects.js prueft jetzt selbst); mcp.js kapselt
+  // alles ueber mcpAvailable() (api.mcp.sync), MCP-Server sind Desktop only.
+  'ws.mkdir', 'mcp', 'mcp.call', 'mcp.connect', 'mcp.list', 'mcp.probe', 'mcp.restart', 'mcp.sync'
 ];
 
 let missing = [];

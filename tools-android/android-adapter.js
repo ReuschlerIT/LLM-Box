@@ -323,7 +323,14 @@
        Pfad hier setzt, sieht dort weiterhin "Kein Ordner gewaehlt". Das Feld wird deshalb
        ueber die bekannte Struktur nachgezogen: erstes div im Steuerungsblock der Zeile. */
     function wsRow() {
-      for (const row of $all('.frow')) if ((row.textContent || '').includes('Workspace-Ordner')) return row;
+      // 1.0.84: Auch der Projekte-Abschnitt nennt „Workspace-Ordner" im Hinweistext.
+      // Getroffen wird nur die echte Zeile, deren Beschriftung mit „Workspace-Ordner"
+      // beginnt – dieselbe Regel wie in injectSmbRow().
+      for (const row of $all('.frow')) {
+        if (row.classList.contains('smb-box') || row.classList.contains('sync-smb')) continue;
+        const lab = row.querySelector('.flabel > div');
+        if (/^Workspace-Ordner/.test(((lab && lab.textContent) || '').trim())) return row;
+      }
       return null;
     }
     function syncWsLabel() {

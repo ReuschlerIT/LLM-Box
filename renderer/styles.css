@@ -1084,3 +1084,41 @@ body.gen .ag-spin { animation: agspin .8s linear infinite !important; }
 .think-dock.pos-float.open { resize: both; overflow: hidden; min-width: 260px; min-height: 150px; }
 .think-dock.pos-float.open .td-body { flex: 1; }
 body.gen .think-dock .td-live::after { animation: think-dots 1.2s steps(1, end) infinite !important; }
+
+/* ───── Version 1.0.84: Einstellungen in Abschnitten, Suche, Projekte, Skills ───── */
+.settings .set-search { width: 100%; margin: 2px 0 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-input); color: var(--text); font-size: 13px; box-sizing: border-box; }
+.set-tab { display: flex; flex-direction: column; }
+.set-sec { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 10px; background: var(--bg); }
+.set-sec > summary { cursor: pointer; padding: 11px 14px 11px 34px; display: flex; flex-direction: column; gap: 2px; list-style: none; user-select: none; position: relative; }
+.set-sec > summary::-webkit-details-marker { display: none; }
+.set-sec > summary::before { content: '›'; position: absolute; left: 14px; top: 9px; font-size: 18px; line-height: 1; color: var(--text-faint); transition: transform .12s; }
+.set-sec[open] > summary::before { transform: rotate(90deg); }
+.set-sec[open] > summary { border-bottom: 1px solid var(--line); }
+.set-sec .ss-title { font-weight: 600; color: var(--text); }
+.set-sec .ss-hint { font-size: 12px; color: var(--text-faint); }
+.set-sec .ss-body { padding: 4px 14px 10px; }
+.set-found .found-head { margin: 18px 0 2px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+.proj-list { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; max-height: 280px; overflow: auto; }
+.proj-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-raised); color: var(--text); text-align: left; cursor: pointer; }
+.proj-item:hover { background: var(--bg-hover); }
+.proj-item.active { border-color: var(--accent); background: var(--accent-soft); }
+.proj-new { display: flex; gap: 8px; }
+.proj-new input { flex: 1; }
+#btn-proj.warn { color: var(--warn); border-color: var(--warn); }
+.skill-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.skill-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.skill-main { flex: 1; min-width: 0; }
+
+/* ───── Version 1.0.86: MCP-Server ───── */
+.mcp-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.mcp-card { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-raised); }
+.mcp-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; flex-wrap: wrap; }
+.mcp-title { flex: 1; min-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.mcp-dot.ready { background: var(--ok); }
+.mcp-dot.error { background: var(--err); }
+.mcp-dot.starting { background: var(--warn); }
+.mcp-body { padding: 0 12px 8px; }
+.mcp-err { margin: 4px 0 8px; padding: 8px 10px; border-radius: 8px; background: var(--code-bg); color: var(--err); font-size: 12px; white-space: pre-wrap; max-height: 140px; overflow: auto; }
+.mcp-tools > summary { cursor: pointer; padding: 4px 0; color: var(--text-dim); font-size: 13px; }
+.mcp-tool { display: flex; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line); align-items: flex-start; }

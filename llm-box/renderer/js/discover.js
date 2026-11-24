@@ -59,15 +59,7 @@ function discoverApply(host, f, others, { apiKey, makeActive }) {
 }
 
 function openDiscover(onDone) {
-  // Desktop-Kanal: discover:scan laeuft im Hauptprozess. Auf der Android-Fassung gibt es ihn
-  // nicht; ohne diesen Guard wuerde ein unklarer Fehler erscheinen. Auf dem Desktop ist
-  // api.discover vorhanden, der Guard hat dort keinen Effekt.
-  if (!(typeof api !== 'undefined' && api.discover && api.discover.scan)) {
-    if (typeof toast === 'function') toast('Der Server-Entdecker ist in dieser Fassung nicht verfuegbar.');
-    if (onDone) onDone();
-    return;
-  }
-  const host = el('input', { type: 'text', placeholder: '192.0.2.50', style: { width: '100%' } });
+  const host = el('input', { type: 'text', placeholder: '192.0.2.1.50', style: { width: '100%' } });
   const ports = el('input', { type: 'text', placeholder: T('Weitere Ports (optional), z. B. 9001, 47000'), style: { width: '100%' } });
   const key = el('input', { type: 'password', placeholder: T('API-Schlüssel (nur falls der Server einen verlangt)'), style: { width: '100%' } });
   const msg = el('div', { class: 'fhint', style: { margin: '8px 0' } });

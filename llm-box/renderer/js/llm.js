@@ -264,6 +264,9 @@
   function userText(m) {
     const tf = (m.files || []).filter((f) => f.kind === 'text');
     const t = m.content || '';
+    /* V85: Text, der ohne eigene Nachricht eingefügt wurde (Karte „Eingefügt“), ist der Auftrag selbst und wird ohne <file>-Hülle gesendet.
+       Sonst sah das Modell nur eine „Datei“ ohne Anweisung und fragte zurück, was es damit tun solle. Mit eigenem Text bleibt die Datei-Hülle. */
+    if (!t.trim() && tf.length && tf.every((f) => f.pasted)) return tf.map((f) => f.text).join('\n\n');
     return tf.length ? tf.map(fileBlock).join('\n\n') + (t ? '\n\n' + t : '') : t;
   }
 

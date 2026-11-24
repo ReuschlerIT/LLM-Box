@@ -107,7 +107,14 @@ Object.assign(DEFAULTS.params, PROFILES.iq3.params);
 Object.assign(DEFAULTS.workspace, PROFILES.iq3.workspace);
 DEFAULTS.thinking = PROFILES.iq3.thinking;
 /* V83: neue Felder im Start-Formular fuer Strata (Entwurfs-Verfahren, Entwurfs-Fenster). Hier ergaenzt statt im Literal oben. */
-Object.assign(DEFAULTS.server.launch, { drafting: '', spec: null });
+Object.assign(DEFAULTS.server.launch, { drafting: '', spec: null, gpuRoles: '', poolCores: '', speed: '', retune: false, tuneAllowSmall: false, moveData: false, newKey: false, open: false });
+DEFAULTS.server.profiles = [];   // V84: benannte Startprofile der LLM Box
+/* V84: Projekte (Workspace-Wurzel + ein Ordner je Chat), Zuverlaessigkeit, Skills. Siehe projects.js, quality.js, skills.js. */
+Object.assign(DEFAULTS.workspace, { projectMode: true, projectInstructions: true });
+DEFAULTS.quality = { toolSampling: true, toolTemp: 0.6, pathHelp: true };
+DEFAULTS.skills = { enabled: true, plainChat: false, items: [] };
+/* V86: MCP-Server (siehe mcp.js im Programmordner und renderer/js/mcp.js) */
+DEFAULTS.mcp = { enabled: true, approval: 'ask', timeoutSec: 120, maxResultChars: 20000, maxTools: 24, servers: [] };
 DEFAULTS.modelProfile = 'iq3';
 
 /* Steht im Feld „System-Prompt“ noch ein unveraenderter Standard (egal in welcher Sprache/Laenge), wird er durch die Fassung der gewaehlten Sprache
@@ -146,6 +153,17 @@ function migrateQwenV83() {
   }
   if (S.settings.thinking === 'auto') S.settings.thinking = PROFILES.iq3.thinking;
   syncDefaultPrompt();
+  return true;
+}
+/* Einmalig (V84): Standard-Skills anlegen; Dateizugriff fuer NEUE Chats aus (nur wenn er bisher global an war), damit nicht jeder Auftrag den
+   Workspace und die Werkzeuge mitschleppt. Bestehende Chats mit eigener Einstellung (chat.tools) bleiben, wie sie sind. */
+function migrateV84(silent) {
+  if (S.settings.migV84) return false;
+  S.settings.migV84 = true;
+  if (typeof skillSeed === 'function') skillSeed();
+  S.settings.workspace.toolsEnabled = false;
+  api.store.set('settings', S.settings);
+  if (!silent) setTimeout(() => toast(T('Neu in 1.0.84: Dateizugriff ist für neue Chats aus, der Workspace gilt je Projekt (Knopf „Projekt“ im Chat). Einstellungen sind neu geordnet.'), 10000), 2500);
   return true;
 }
 // Einmalig (V65): bestehende Installationen bekommen das IQ3-Profil genau einmal; danach gilt, was der Nutzer einstellt.
@@ -783,7 +801,6 @@ function tabAppearance() {
       frow('Gedankengänge anzeigen', 'Im Chat: wie bisher, ein einklappbarer Gedankengang bei jeder Antwort. Eigenes Dropdown: Alle Gedankengänge des Chats stehen gesammelt in einem einklappbaren Feld, und der Chat bleibt frei davon.', (() => { const s = bindSelect('thinkDock.mode', [{ value: 'inline', label: 'Im Chat (wie bisher)' }, { value: 'dock', label: 'Als eigenes Dropdown' }]); s.addEventListener('change', () => tdModeChanged()); return s; })()),
       frow('Position des Gedankengänge-Dropdowns', 'Gilt für „Als eigenes Dropdown“. „Frei schwebend“ lässt sich an der Kopfzeile verschieben und an der Ecke in der Größe ändern. Links und Rechts brauchen ein Fenster von mindestens etwa 760 Pixel Breite, sonst liegt das Dropdown über dem Eingabefeld. Die Position lässt sich auch direkt im Dropdown ändern.', (() => { const s = bindSelect('thinkDock.pos', [{ value: 'composer', label: 'Über dem Eingabefeld' }, { value: 'top', label: 'Oben im Chatfenster' }, { value: 'left', label: 'Links' }, { value: 'right', label: 'Rechts' }, { value: 'float', label: 'Frei schwebend' }]); s.addEventListener('change', () => tdModeChanged()); return s; })()),
       frow('Gedankengang auf Deutsch anzeigen', 'Denkt das Modell auf Englisch, übersetzt die App den Gedankengang mit demselben Modell. „Automatisch“: im Hintergrund nach Abschluss der Antwort. „Beim Aufklappen“: erst wenn du ihn öffnest. „Aus“: nur per Knopf.', bindSelect('appearance.thinkLang', [{ value: 'auto', label: 'Automatisch' }, { value: 'click', label: 'Beim Aufklappen' }, { value: 'orig', label: 'Aus (Original)' }])),
-      frow('Modell bitten, auf Deutsch zu denken', 'Fügt dem Systemprompt eine Anweisung hinzu. Qwen hält sich nicht immer daran, und das Denken auf Englisch ist oft genauer. Übersetzen (oben) ist meist die bessere Wahl.', bindSwitch('appearance.thinkInGerman')),
       frow('Mit Enter senden', 'Aus: Strg+Enter sendet, Enter macht einen Zeilenumbruch.', bindSwitch('appearance.enterToSend'))
     );
 
@@ -1175,42 +1192,54 @@ function tabAbout() {
   return wrap;
 }
 
-// Ohne Angabe öffnet sich die zuletzt besuchte Seite (S.settings.settingsTab), mit Angabe genau diese (z. B. aus Hinweisen wie „Workspace wählen“).
-function openSettings(tab) {
-  // Reihenfolge = Reihenfolge der Einrichtung: erst verbinden, dann arbeiten, dann Module, Geräte und Daten, zuletzt Verwaltung.
+// Ohne Angabe öffnet sich die zuletzt besuchte Seite (S.settings.settingsTab), mit Angabe genau diese. Alte Kennungen (ws, model, auto, …) werden
+// über SETTINGS_ALIAS auf den neuen Reiter und Abschnitt umgelenkt (settingsgroups.js). Zweiter Parameter: Abschnitt, der geöffnet wird.
+function openSettings(tab, section) {
+  // Reihenfolge = Reihenfolge der Einrichtung: verbinden, KI einstellen, arbeiten, App und Daten.
   const all = [
-    { g: 'Einrichten', id: 'conn', label: 'Verbindungen', ic: 'plug', fn: tabConnections },
-    { g: 'Einrichten', id: 'model', label: 'Modell & Parameter', ic: 'cpu', fn: tabModel },
-    { g: 'Arbeiten', id: 'look', label: 'Darstellung', ic: 'palette', fn: tabAppearance },
-    { g: 'Arbeiten', id: 'ws', label: 'Workspace & Dateien', ic: 'folder', fn: tabWorkspace },
-    { g: 'Arbeiten', id: 'auto', label: 'Autonomer Modus', ic: 'zap', fn: typeof tabAuto === 'function' ? tabAuto : null },
-    { g: 'Arbeiten', id: 'prompts', label: 'Prompts & Assistenten', ic: 'sparkle', fn: typeof tabPrompts === 'function' ? tabPrompts : null },
-    { g: 'Arbeiten', id: 'know', label: 'Gedächtnis & Wissen', ic: 'db', fn: typeof tabKnowledge === 'function' ? tabKnowledge : null },
-    { g: 'Arbeiten', id: 'web', label: 'Websuche & Sprache', ic: 'search', fn: typeof tabWebSearch === 'function' ? tabWebSearch : null },
-    { g: 'Module', id: 'modules', label: 'Funktionen & Ansicht', ic: 'sliders', fn: typeof tabModules === 'function' ? tabModules : null },
-    { g: 'Geräte und Daten', id: 'live', label: 'Live-Ansicht', ic: 'zap', fn: typeof tabLive === 'function' ? tabLive : null },
-    { g: 'Geräte und Daten', id: 'transfer', label: 'Übertragung', ic: 'upload', fn: tabTransfer },
-    { g: 'Geräte und Daten', id: 'data', label: 'Daten', ic: 'db', fn: tabData },
-    { g: 'Verwaltung', id: 'cost', label: 'Kosten', ic: 'euro', fn: tabCosts },
-    { g: 'Verwaltung', id: 'about', label: 'Über', ic: 'box', fn: tabAbout },
+    { g: 'Verbindung', id: 'conn', label: 'Verbindungen', ic: 'plug', fn: tabConnections },
+    { g: 'Verbindung', id: 'strata', label: 'Strata-Server', ic: 'zap', fn: typeof tabStrataSrv === 'function' ? tabStrataSrv : null },
+    { g: 'KI', id: 'ai', label: 'KI-Verhalten', ic: 'cpu', fn: typeof tabAI === 'function' ? tabAI : tabModel },
+    { g: 'KI', id: 'abilities', label: 'Fähigkeiten', ic: 'sparkle', fn: typeof tabAbilities === 'function' ? tabAbilities : null },
+    { g: 'Arbeit', id: 'work', label: 'Projekte & Dateien', ic: 'folder', fn: typeof tabWork === 'function' ? tabWork : tabWorkspace },
+    { g: 'App', id: 'look', label: 'Darstellung', ic: 'palette', fn: typeof tabLook === 'function' ? tabLook : tabAppearance },
+    { g: 'App', id: 'data', label: 'Daten & Geräte', ic: 'db', fn: typeof tabDevices === 'function' ? tabDevices : tabData },
+    { g: 'App', id: 'cost', label: 'Kosten & Info', ic: 'euro', fn: typeof tabCostInfo === 'function' ? tabCostInfo : tabCosts },
   ];
   const tabs = all.filter((t) => t.fn);
   if (!tab) tab = S.settings.settingsTab || 'conn';
+  const al = typeof SETTINGS_ALIAS !== 'undefined' ? SETTINGS_ALIAS[tab] : null;
+  if (al && !tabs.some((t) => t.id === tab)) { section = section || al[1]; tab = al[0]; }
   if (!tabs.some((t) => t.id === tab)) tab = tabs[0].id;
   const pane = el('div', { class: 'pane' });
   const nav = el('nav');
-  function show(id) {
+  const search = el('input', { type: 'search', class: 'set-search', placeholder: 'Einstellungen durchsuchen …' });
+  let cur = tab;
+  function show(id, sec) {
+    cur = id;
     if (S.settings.settingsTab !== id) { S.settings.settingsTab = id; saveSettings(); }   // letzte Seite merken
     nav.innerHTML = '';
+    nav.append(search);
     let lastG = '';
     tabs.forEach((t) => {
       if (t.g !== lastG) { lastG = t.g; nav.append(el('div', { class: 'nav-group', text: t.g })); }
-      nav.append(el('button', { class: t.id === id ? 'active' : '', html: icon(t.ic, 16) + '<span>' + t.label + '</span>', onclick: () => show(t.id) }));
+      nav.append(el('button', { class: t.id === id ? 'active' : '', html: icon(t.ic, 16) + '<span>' + t.label + '</span>', onclick: () => { search.value = ''; show(t.id); } }));
     });
     pane.innerHTML = '';
     pane.append(tabs.find((t) => t.id === id).fn());
+    if (sec) {
+      const d = pane.querySelector(`details[data-sec="${sec}"]`);
+      if (d) { d.open = true; if (d.__build) d.__build(); setTimeout(() => d.scrollIntoView({ block: 'start' }), 30); }
+    }
   }
-  show(tab);
+  const doSearch = debounce(() => {
+    const q = search.value.trim();
+    if (q.length < 2) { show(cur); return; }
+    nav.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+    if (typeof settingsSearch === 'function') settingsSearch(tabs, q, pane);
+  }, 250);
+  search.addEventListener('input', doSearch);
+  show(tab, section);
   openModal({ title: 'Einstellungen', wide: true, bare: true, body: el('div', { class: 'settings' }, nav, pane), onClose: () => { refreshModels(); } });
 }
 

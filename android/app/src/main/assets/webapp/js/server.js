@@ -1045,16 +1045,22 @@ function svLaunchArgs(mode) {
   add('--parallel', f.parallel);
   add('--mtp', f.mtp);
   add('--drafting', f.drafting);
+  add('--speed', f.speed);
+  add('--pool-cores', f.poolCores);
+  add('--gpu-roles', f.gpuRoles);
+  if (f.retune) a.push('--retune');
+  if (f.tuneAllowSmall) a.push('--tune-allow-small');
+  if (f.moveData) a.push('--move-data');
   add('--tune', f.tune);
   add('--gpu', f.gpu);
   add('--access', f.access);
   add('--port', f.port);
-  if (f.noApiKey) a.push('--no-api-key'); else add('--api-key', f.apiKey);
+  if (f.noApiKey) a.push('--no-api-key'); else if (String(f.apiKey || '').trim()) add('--api-key', f.apiKey); else if (f.newKey) a.push('--new-key');
   if (f.spec !== null && f.spec !== undefined && String(f.spec).trim() !== '') a.push('--set', 'spec=' + String(f.spec).trim());   // Entwurfs-Fenster (V83)
   String(f.extra || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean).forEach((l) => a.push('--set', l));
   add('--save-preset', f.savePreset);
   if (mode === 'plan') a.push('--plan', '--output', 'json');
-  else { a.push('--yes', '--no-tui'); if (f.restart) a.push('--restart'); }
+  else { a.push('--yes', '--no-tui'); if (f.restart) a.push('--restart'); if (f.open) a.push('--open'); }
   return a;
 }
 const svCmdPreview = (mode) => 'strata ' + svLaunchArgs(mode).map((x) => (/\s/.test(x) ? `"${x}"` : x)).join(' ');
@@ -1067,6 +1073,89 @@ function svCombo(path, list, placeholder) {
   const i = bindText(path, { placeholder });
   i.setAttribute('list', id);
   return [i, el('datalist', { id }, list.map((v) => el('option', { value: v })))];
+}
+
+/* ───── Startprofile, JSON-Import und Start-Skript (V84) ───── */
+const svShq = (x) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(x) ? x : "'" + String(x).replace(/'/g, "'\\''") + "'");
+const svBatq = (x) => (/^[A-Za-z0-9_@%+=:,./\\-]+$/.test(x) ? x : '"' + String(x).replace(/"/g, '""') + '"');
+function svScript(kind) {
+  const bin = (S.settings.server.target && S.settings.server.target.bin) || 'strata';
+  const args = svLaunchArgs('start');
+  if (kind === 'bat') return '@echo off\r\nREM Startet Strata mit den Werten der LLM Box\r\n' + [bin, ...args].map(svBatq).join(' ') + '\r\npause\r\n';
+  return '#!/usr/bin/env bash\n# Startet Strata mit den Werten der LLM Box (chmod +x start-strata.sh && ./start-strata.sh)\nset -euo pipefail\n' + [bin, ...args].map(svShq).join(' ') + '\n';
+}
+async function svSaveScript(kind) {
+  const f = svs().launch;
+  const p = await api.files.saveAs({ defaultName: kind === 'bat' ? 'start-strata.bat' : 'start-strata.sh', content: svScript(kind) });
+  if (p) toast(T('Start-Skript gespeichert:') + ' ' + p + (String(f.apiKey || '').trim() ? ' ' + T('(enthält den API-Schlüssel)') : ''), 7000);
+}
+
+/* Strata-Startdatei (JSON, Schema strata.launch/1) in die Felder des Formulars übernehmen */
+const SV_JSON_MAP = { family: 'family', model: 'model', access: 'access', port: 'port', vision: 'vision', drafting: 'drafting', kv: 'kv', parallel: 'parallel', mtp: 'mtp', tune: 'tune', data_dir: 'dataDir', model_path: 'modelPath' };
+function svImportJson(text) {
+  let j;
+  try { j = JSON.parse(text); } catch (e) { throw new Error('Kein gültiges JSON: ' + e.message); }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('Erwartet wird ein JSON-Objekt (Strata-Startdatei).');
+  const f = svs().launch;
+  const done = [], skipped = [];
+  const set = (k, v) => { f[k] = v; done.push(k); };
+  for (const [jk, fk] of Object.entries(SV_JSON_MAP)) {
+    if (j[jk] === null || j[jk] === undefined || j[jk] === '') continue;
+    set(fk, typeof j[jk] === 'boolean' ? (j[jk] ? 'on' : 'off') : String(j[jk]).toLowerCase() === 'none' ? '' : (fk === 'model' ? String(j[jk]).toLowerCase() : String(j[jk])));
+  }
+  if (j.context !== null && j.context !== undefined && j.context !== '') {
+    const n = +j.context;
+    set('context', Number.isFinite(n) && n >= 1024 && n % 1024 === 0 ? (n / 1024) + 'k' : String(j.context));
+  }
+  if (Array.isArray(j.gpus) && j.gpus.length) set('gpu', j.gpus.join(','));
+  if (j.gpu_roles) set('gpuRoles', typeof j.gpu_roles === 'string' ? j.gpu_roles : Object.entries(j.gpu_roles).map(([k, v]) => k + '=' + v).join(','));
+  if (j.api_key) set('apiKey', String(j.api_key));
+  if (j.no_key === true) set('noApiKey', true);
+  if (j.tune_allow_small === true) set('tuneAllowSmall', true);
+  const lines = [];
+  for (const blk of [j.extra, j.env]) if (blk && typeof blk === 'object') for (const [k, v] of Object.entries(blk)) lines.push(k + '=' + v);
+  if (j.drafting && typeof j.drafting === 'object') skipped.push('drafting (Objekt)');
+  if (j.sampling) skipped.push('sampling (stellst du im Chat ein)');
+  if (lines.length) { set('extra', lines.join('\n')); }
+  return { done, skipped, name: j.name || '' };
+}
+function svProfileBar() {
+  const prof = () => (svs().profiles || (svs().profiles = []));
+  const sel = el('select', {}, [el('option', { value: '', text: '– Startprofil wählen –' }), ...prof().map((p, i) => el('option', { value: String(i), text: p.name }))]);
+  const bar = el('div', { class: 'row-gap', style: { flexWrap: 'wrap', padding: '6px 0 4px' } },
+    sel,
+    el('button', { class: 'btn sm', text: 'Laden', onclick: () => {
+      const p = prof()[+sel.value];
+      if (!p) return toast('Wähle zuerst ein Profil.');
+      Object.assign(svs().launch, JSON.parse(JSON.stringify(p.launch)));
+      saveSettings(); toast(T('Startprofil geladen: ') + p.name, 3000); svSwitch('launch');
+    } }),
+    el('button', { class: 'btn sm primary', text: 'Als Profil speichern …', onclick: async () => {
+      const n = await promptModal('Startprofil speichern', 'Name des Profils (z. B. „Qwen IQ3_S 256K“):', (prof()[+sel.value] && prof()[+sel.value].name) || '');
+      if (!n) return;
+      const copy = JSON.parse(JSON.stringify(svs().launch));
+      const i = prof().findIndex((p) => p.name === n);
+      if (i >= 0) prof()[i].launch = copy; else prof().push({ name: n, launch: copy });
+      saveSettings(); toast(T('Startprofil gespeichert: ') + n, 3000); svSwitch('launch');
+    } }),
+    el('button', { class: 'btn sm danger', text: 'Profil löschen', onclick: async () => {
+      const p = prof()[+sel.value];
+      if (!p) return toast('Wähle zuerst ein Profil.');
+      if (!(await confirmModal('Startprofil löschen', `„${p.name}“ wird aus der LLM Box entfernt (Strata-Presets bleiben unberührt).`, { okLabel: 'Löschen', danger: true }))) return;
+      prof().splice(+sel.value, 1); saveSettings(); svSwitch('launch');
+    } }),
+    el('button', { class: 'btn sm', text: 'Aus Strata-JSON übernehmen …', onclick: () => {
+      const ta = el('textarea', { rows: 14, placeholder: '{ "family": "qwen", "model": "IQ3_S", "context": 262144, "access": "lan", "extra": { "STRATA_KVA": "0" } }' });
+      openModal({ title: 'Strata-Startdatei übernehmen', wide: true,
+        body: el('div', {}, el('div', { class: 'fhint', style: { paddingBottom: '8px' }, text: 'Füge den Inhalt einer Strata-Startdatei ein (Schema strata.launch/1). Die Werte landen in den Feldern unten; danach kannst du sie ändern und als Profil speichern.' }), ta),
+        buttons: [{ label: 'Abbrechen', value: null }, { label: 'Übernehmen', primary: true, onClick: (close) => {
+          try { const r = svImportJson(ta.value); saveSettings(); close(true); toast(T('Übernommen: ') + r.done.length + ' ' + T('Felder') + (r.skipped.length ? ' · ' + T('nicht übernommen: ') + r.skipped.join(', ') : ''), 8000); svSwitch('launch'); } catch (e) { toast(e.message, 7000); }
+        } }] });
+    } }),
+    el('button', { class: 'btn sm', text: 'Start-Skript (.sh) speichern', onclick: () => svSaveScript('sh') }),
+    el('button', { class: 'btn sm', text: 'Start-Skript (.bat) speichern', onclick: () => svSaveScript('bat') })
+  );
+  return bar;
 }
 
 function svBuildLaunch() {
@@ -1085,12 +1174,15 @@ function svBuildLaunch() {
 
   wrap.append(
     el('div', { class: 'fhint', style: { color: 'var(--text-faint)', fontSize: '12.5px', padding: '10px 0 0' }, text: 'Diese Eingaben werden zu einem „strata launch“-Befehl (Vorschau unten). Leere Felder bleiben Strata-Standard. Der Befehl läuft auf dem unter „Zielrechner“ gewählten Rechner.' }),
+    el('h3', { text: 'Startprofile der LLM Box' }),
+    svProfileBar(),
     el('h3', { text: 'Modell' }),
     frow('Preset', 'Gespeicherte Start-Einstellungen (strata launch --list-presets). Weitere Felder ändern es nur für diesen Start.', bindText('server.launch.preset', { placeholder: 'z. B. Office' })),
     frow('Modellfamilie', null, svSel('server.launch.family', SV_FAMILIES)),
     frow('Modell / Größe', 'z. B. q2_0, iq3_xxs, UD-Q4_K_XL. Eigene Eingabe möglich.', svCombo('server.launch.model', SV_MODELS, 'q2_0')),
     frow('Eigene Modelldateien', 'Ordner oder .gguf-Datei auf dem Server (statt Download).', bindText('server.launch.modelPath', { placeholder: '/data/models/IQ3_XXS' })),
     frow('Download-Ordner', 'Wohin neue Modelldateien geladen werden.', bindText('server.launch.dataDir', { placeholder: 'Standard von Strata' })),
+    frow('Vorhandene Modelle verschieben', 'Fügt --move-data hinzu: verschiebt auch schon geladene Modelle in den Download-Ordner.', bindSwitch('server.launch.moveData')),
     el('h3', { text: 'Leistung' }),
     frow('Kontextlänge', '8k bis 512k, je größer desto mehr Speicher.', svCombo('server.launch.context', ['8k', '32k', '64k', '128k', '256k', '512k'], '32k')),
     frow('Gesprächsspeicher (KV)', 'int8 (Standard), q4_0 (halber Speicher), k8v4, fp16.', svSel('server.launch.kv', [['', 'Standard'], ['int8', 'int8'], ['q4_0', 'q4_0'], ['k8v4', 'k8v4'], ['fp16', 'fp16']])),
@@ -1100,12 +1192,18 @@ function svBuildLaunch() {
     frow('Entwurfs-Verfahren', 'Welcher Entwurfsgeber beim spekulativen Decodieren vorausrät: Automatisch (Strata wählt), DFlash2 (nur Qwen3.8-Flash-Next), MTP oder Aus.', svSel('server.launch.drafting', [['', 'Standard'], ['auto', 'Automatisch'], ['dflash2', 'DFlash2 (nur Qwen3.8-Flash-Next)'], ['mtp', 'MTP'], ['off', 'Aus']])),
     frow('Entwurfs-Fenster (spec)', 'Wie viele Tokens der Entwurfsgeber pro Prüfschritt vorschlägt (→ --set spec=N). Das Tuning wählt meist 6; zum Testen empfohlen: 4. Leer = Wert aus dem Tuning. Vorher und nachher die Tokens pro Sekunde vergleichen.', bindNumber('server.launch.spec', { min: 1, max: 16, placeholder: 'Tuning' })),
     frow('Tuning', 'Findet die schnellsten Einstellungen (schnell ca. 20 Min., gründlich bis 2 Std.).', svSel('server.launch.tune', [['', 'Überspringen'], ['quick', 'Schnell'], ['thorough', 'Gründlich'], ['skip', 'Aus']])),
+    frow('Tuning wiederholen', 'Misst erneut, auch wenn für diese Auswahl schon ein Ergebnis gespeichert ist (--retune).', bindSwitch('server.launch.retune')),
+    frow('Tuning auch bei kleinen Karten', 'Erlaubt das Tuning auf Karten unter der empfohlenen Größe (--tune-allow-small).', bindSwitch('server.launch.tuneAllowSmall')),
     frow('Grafikkarten', 'Nummern, z. B. 0 oder 0,1.', bindText('server.launch.gpu', { placeholder: 'Standard' })),
+    frow('Rollen der Grafikkarten', 'Bei mehreren Karten, z. B. 1=main,0=helper (--gpu-roles).', bindText('server.launch.gpuRoles', { placeholder: 'Standard' })),
+    frow('CPU-Kerne festlegen', 'Experimentell: Prozessorkerne für die Rechenarbeiter, z. B. 2-14:2 (--pool-cores).', bindText('server.launch.poolCores', { placeholder: 'Standard' })),
+    frow('Tempo-Stufe (DeepSeek)', 'Nur für DeepSeek: schneller nutzt weniger Experten pro Wort (--speed).', svSel('server.launch.speed', [['', 'Standard'], ['faster', 'Schneller'], ['full', 'Volle Qualität']])),
     el('h3', { text: 'Zugriff' }),
     frow('Erreichbar für', 'Nur dieser Rechner, dein Netzwerk, Cloudflare-Tunnel oder Tailscale.', svSel('server.launch.access', [['', 'Standard (nur dieser Rechner)'], ['local', 'Nur dieser Rechner'], ['lan', 'Dein Netzwerk'], ['cloudflare', 'Cloudflare-Tunnel'], ['tailscale', 'Tailscale']])),
     frow('Port', 'Standard 8080.', bindText('server.launch.port', { placeholder: '8080' })),
     frow('Ohne API-Schlüssel', 'Nicht empfohlen außerhalb dieses Rechners.', bindSwitch('server.launch.noApiKey')),
     frow('API-Schlüssel', 'Leer lassen: Strata erzeugt einen. Er erscheint danach per „Schlüssel anzeigen“.', bindText('server.launch.apiKey', { type: 'password', placeholder: 'automatisch' })),
+    frow('Neuen Schlüssel erzeugen', 'Fügt --new-key hinzu (nur wenn oben kein Schlüssel steht): ersetzt den bisherigen Schlüssel.', bindSwitch('server.launch.newKey')),
     el('h3', { text: 'Erweitert' }),
     frow('Zusätzliche Engine-Einstellungen', 'Eine pro Zeile als SCHLÜSSEL=WERT (→ --set).', (u.extraTa = bindTextarea('server.launch.extra', 3)), true),
     frow('Empfohlene Engine-Werte', 'Trägt STRATA_ROUTE_PRIOR=0, STRATA_ROUTE_TAIL_SKIP=0, STRATA_KVA=0, STRATA_PREFILL_CPU_SHARE=0 und STRATA_HC_Q8=0 in das Feld oben ein; vorhandene Zeilen bleiben. Hinweis: ROUTE_TAIL_SKIP=0 und PREFILL_CPU_SHARE=0 schalten Tempo-Abkürzungen der Engine ab (genauer, kann aber langsamer sein). Das Tempo im Monitor vor und nach dem Test vergleichen.', el('button', { class: 'btn sm', text: 'Empfohlene Werte einfügen', onclick: () => {
@@ -1117,6 +1215,7 @@ function svBuildLaunch() {
       toast('Empfohlene Engine-Werte eingetragen.');
     } })),
     frow('Als Preset speichern', 'Name, unter dem diese Auswahl gespeichert wird.', bindText('server.launch.savePreset', { placeholder: 'optional' })),
+    frow('Weboberfläche öffnen', 'Fügt --open hinzu: öffnet nach dem Start die Weboberfläche des Servers.', bindSwitch('server.launch.open')),
     frow('Laufendes Modell ersetzen', 'Fügt --restart hinzu: stoppt das laufende Modell (Antworten brechen ab) und startet neu.', bindSwitch('server.launch.restart')),
     el('h3', { text: 'Befehl' }),
     preview,

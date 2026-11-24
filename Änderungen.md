@@ -2795,3 +2795,38 @@ ausgefuehrt.**
   1.0.83 mit drei Assets angelegt (APK, Setup, portable). EXEs nur am Release, nicht im Repo.
 - **Naechster Schritt:** Modellprofil-Umstellung (V83) an einer echten Installation pruefen,
   Geraetetest der APK (Entdecker-Hinweis, PDF-Export fehlt auf Android bewusst).
+
+## 118. LLM Box auf 1.0.86 gebracht und veroeffentlicht (MCP, Projekte, Einstellungen, Android-Regression behoben) (24.11.2026)
+
+- **Ausloeser:** Der Nutzer meldete eine neue Version 1.0.86 und bat, sie wie ueblich zu bauen und
+  auf github.com/ReuschlerIT/LLM-Box zu veroeffentlichen. Quelle im Workspace war bereits 1.0.86
+  (package.json, UPDATE-Abschnitte 1.0.84, 1.0.85, 1.0.86, neue Dateien mcp.js, projects.js,
+  skills.js, quality.js, settingsgroups.js, i18n-lex-v84/v86.js); das Repo stand auf 1.0.82/1.0.83.
+- **Drei Versionen auf einmal:** 1.0.84 (Einstellungen 14->8 Reiter, Projekte je Chat, Genauigkeit/
+  Tempo, Skills, Strata-Start), 1.0.85 (lange eingefuegte Texte als Auftrag), 1.0.86 (MCP-Server).
+- **Android-Port:** webapp per build-android.ps1 auf 1.0.86; build.gradle versionCode 86 /
+  versionName 1.0.86-android. 16 Build-Patches greifen weiterhin (patch-check: 0 Abbrueche).
+- **Neue Desktop-only-Kanäle gekapselt:** check-api.js meldete 9 fehlende Kanäle (mcp.*, ws.mkdir).
+  mcp.js kapselt alles ueber mcpAvailable() (api.mcp.sync); ws.mkdir wurde in projects.js
+  (projCreate) per Guard gekapselt (Hinweis „Projekte sind auf diesem Geraet nicht verfuegbar").
+  desktopOnly-Liste in check-api.js um ws.mkdir und mcp.* erweitert. Danach: keine fehlenden Kanäle.
+- **Echte Android-Regression behoben:** Der UI-Boot-Prueflauf meldete, dass die Workspace-Zeile der
+  Einstellungen nach einer SMB-Verbindung den Pfad nicht mehr anzeigt. Ursache: Die 1.0.84-
+  Projekttexte nennen „Workspace-Ordner" im Hinweistext (Projektmodus), und wsRow() im
+  android-adapter.js traf per textContent.includes() die falsche Zeile. Fix: wsRow() jetzt
+  Label-basiert (flabel > div beginnt mit „Workspace-Ordner"), konsistent zu injectSmbRow().
+  Master-Quelle tools-android\android-adapter.js und webapp-Kopie angepasst. Test auf dieselbe
+  Label-Regel umgestellt (war vorher ebenso locker).
+- **Pruefung:** alle 11 Prueflaeufe bestanden, 0 Fehler (tmp-test86c.txt); UI-Boot 77 geprueft.
+- **Bereinigte Build-Kopie** frisch auf 1.0.86 (tmp-clean-setup-86.txt); eigene Quelle sauber.
+- **Artefakte gebaut und gescannt (alle sauber):** APK 11.552.419 B (versionCode 86, 4 Fundstellen
+  nur UAC), Setup 84.113.002 B (4 Zufallsbytefolgen), portable 83.870.745 B (4), app.asar 450
+  Dateien 5 Fundstellen (Urheberangabe fast-xml-parser + 4 UAC-Wortmeldungen), 0 kritisch.
+- **Doku auf 1.0.86:** README.md (Download-Tabelle, Abschnitt „Neu in 1.0.84 bis 1.0.86"),
+  RELEASE.md (Titel, Kopf, Programmtabelle, gemeinsamer Abschnitt 1.0.71-1.0.86, Gepraeft-Teil),
+  beide UPDATE.md (llm-box/UPDATE.md enthaelt 1.0.84/1.0.85/1.0.86).
+- **Veroeffentlichung:** tmp-repo-apply.ps1 (Abgleich beider Ebenen), Commit + git push origin main,
+  Tag 1.0.83-Tag bleibt, neuer Tag 1.0.86 gesetzt und gepusht. Historien-Scan: 0 personenbezogene
+  Fundstellen. GitHub-Release 1.0.86 mit 3 Assets (APK, Setup, Portable), online verifiziert.
+- **Naechster Schritt:** Windows-Programm installieren/starten (nur gebaut und gescannt), MCP mit
+  echtem REA-Server testen, Geraetetest der APK (MCP/Projekte/Entdecker als Desktop-only-Hinweise).

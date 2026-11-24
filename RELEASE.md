@@ -1,22 +1,22 @@
-# LLM Box 1.0.83 (Windows, Linux und Android)
+# LLM Box 1.0.86 (Windows, Linux und Android)
 
-**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.83** gebaut und als Dateien am
-GitHub-Release [1.0.83](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.83) eingestellt
+**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.86** gebaut und als Dateien am
+GitHub-Release [1.0.86](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.86) eingestellt
 (Setup, portable EXE, APK). Im Repository liegen sie nicht mehr – die Windows-Programme sind rund
-84 MB. Die Android-Fassung trägt **1.0.83-android**
-(versionCode 83). Beide Fassungen entstehen aus **derselben
+84 MB. Die Android-Fassung trägt **1.0.86-android**
+(versionCode 86). Beide Fassungen entstehen aus **derselben
 Quelle** (`llm-box/`), die Android-Oberfläche wird beim Bauen aus den Dateien von `llm-box/renderer/`
-erzeugt. Vorgängerversion auf GitHub: [1.0.82](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.82),
+erzeugt. Vorgängerversion auf GitHub: [1.0.83](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.83),
+[1.0.82](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.82),
 [1.0.70](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70),
 [1.0.65](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.65),
 [v1.0.50](https://github.com/ReuschlerIT/LLM-Box/releases/tag/v1.0.50)
 
-Die aktuelle Fassung bringt das nachgereichte **Modellprofil für kleine, stark quantisierte Modelle
-(IQ3/Q3)** nach der Qwen-Empfehlung für den Denkmodus (gegen Denkschleifen und abgeschnittene
-Antworten), einen gestrafften **System-Prompt**, die **Strata-Entwurfsverfahren** und neue
-Übersetzungen. Vorgängerversion 1.0.82 brachte **autonomen Modus**, **Live-Ansicht und Hub**,
-**Module im Stil von Open WebUI**, den **Gesamtverbrauch**, rund 290 neue Sprachen-Texte und eine
-**Linux-Fassung**.
+Die aktuelle Fassung bringt **MCP-Server** (externe Werkzeuge, mehrere gleichzeitig), die
+**neu geordneten Einstellungen** (8 Reiter mit Abschnitten und Suche), **Projekte je Chat**,
+**Genauigkeits- und Geschwindigkeitsverbesserungen**, **Skills** mit schrittweiser Offenlegung und
+die Behandlung **langer eingefügter Texte**. Vorgängerversion 1.0.83 brachte das **Modellprofil
+IQ3/Q3** nach der Qwen-Empfehlung.
 
 ## Programme
 
@@ -25,9 +25,9 @@ Android-Programm der aktuellen Fassung und die zuletzt gebauten Windows-Programm
 
 | Datei | Für | Größe |
 |---|---|---|
-| `LLM.Box.Setup.1.0.83.exe` | Windows 10/11, Installer | 84,1 MB |
-| `LLM.Box.1.0.83.portable.exe` | Windows 10/11, ohne Installation | 83,8 MB |
-| `LLM-Box-1.0.83-android.apk` | Android 8.0 oder neuer, Fassung 1.0.83-android | 10,9 MB |
+| `LLM.Box.Setup.1.0.86.exe` | Windows 10/11, Installer | 84,1 MB |
+| `LLM.Box.1.0.86.portable.exe` | Windows 10/11, ohne Installation | 83,9 MB |
+| `LLM-Box-1.0.86-android.apk` | Android 8.0 oder neuer, Fassung 1.0.86-android | 11,0 MB |
 
 Beide Fassungen haben dieselbe Oberfläche und dasselbe Chat-Format. Bestehende Einstellungen,
 Verbindungen und Chats bleiben beim Update erhalten.
@@ -266,7 +266,7 @@ Windows-Änderungen dieses Zeitraums stecken in 1.0.63.
   Patch-Suchtexte gegen die Quelle, ohne zu bauen) und `tools-android\bruecken-check.js`
   (verweist die Android-Brücke noch auf existierende Interna der Desktop-Seite).
 
-### Version 1.0.71 bis 1.0.83 (gemeinsamer Abschnitt)
+### Version 1.0.71 bis 1.0.86 (gemeinsamer Abschnitt)
 - **1.0.71:** Modellauswahl zeigt jetzt alle installierten Strata-Modelle (Abfrage `/api/native`,
   entladen und nachladen auf Wunsch); Klick auf eine Datei im Workspace-Panel ist einstellbar
   (öffnen, anhängen, nachfragen, im Ordner zeigen).
@@ -318,6 +318,30 @@ Windows-Änderungen dieses Zeitraums stecken in 1.0.63.
 - **Android-Bau 1.0.83:** zwei weiteren Desktop-only-Kanälen gekapselt: `discover.scan` (Entdecker
   zeigt auf Android einen Hinweis statt einer kryptischen Fehlermeldung) und `files.savePdf`
   (PDF-Export,chatmenu.js prüft den Kanal selbst). `tools-android\check-api.js` kennt beide.
+- **1.0.84:** **Einstellungen neu geordnet** – aus 14 Reitern werden 8 nach Zweck (Verbindung, KI,
+  Arbeit, App), jeder mit aufklappbaren Abschnitten (Merkzustand) und einer Suche über alle
+  Einstellungen (`SETTINGS_ALIAS` lenkt alte Kennungen um). **Projekte je Chat** – der
+  Workspace-Ordner ist die Wurzel, jeder Chat arbeitet in einem eigenen Projekt (Unterordner), die
+  KI sieht nur ihr Projekt (`wsRoot(chat)`); `PROJEKT.md` als Projektanweisung, neuer IPC `ws:mkdir`.
+  **Genauigkeit und Tempo:** Temperatur bei Dateiarbeit begrenzt, Datei-nicht-gefunden hängt die
+  vorhandenen Dateien an, drei Sampling-Schnellwahlen. **Skills** mit schrittweiser Offenlegung
+  (Werkzeug `use_skill`). **Strata aus der Box starten:** Startformular, Startprofile, Übernahme
+  einer Strata-Startdatei (JSON), Start-Skript als `.sh`/`.bat`. Neue Dateien `settingsgroups.js`,
+  `projects.js`, `quality.js`, `skills.js`, `i18n-lex-v84.js`.
+- **1.0.85:** Besteht eine Nachricht nur aus eingefügtem Text, wird sie als **Auftrag** gesendet und
+  nicht mehr als Datei – die KI stellt keine Gegenfrage mehr. Kurz-Prompt ergänzt um „klare Aufträge
+  sofort und vollständig beantworten".
+- **1.0.86:** **MCP-Server** – die Box ist ein MCP-Client, beliebig viele Server gleichzeitig (stdio
+  und Streamable HTTP). Werkzeuge heißen `mcp__<server>__<werkzeug>`, einzeln an-/abschaltbar,
+  standardmäßig pro Aufruf freigegeben (auch `readOnlyHint`), Import im Claude-Desktop-Format,
+  Vorlagen für REA. Kontextschutz: Obergrenze pro Anfrage, gekürzte Ergebnisse, Zeitlimit. Neue
+  Dateien `mcp.js` (Hauptprozess), `renderer/js/mcp.js`, `i18n-lex-v86.js`.
+- **Android-Bau 1.0.86:** die neuen Desktop-only-Kanäle gekapselt: `ws.mkdir` (projects.js prüft
+  jetzt selbst, Projekte sind auf Android nicht verfügbar) und `mcp.*` (mcp.js kapselt alles über
+  `mcpAvailable()`). Behoben: Die Workspace-Zeile der Android-Einstellungen zeigte nach einer
+  SMB-Verbindung den Pfad nicht mehr an – die 1.0.84-Projekttexte enthielten „Workspace-Ordner" im
+  Hinweistext, der Adapter (`wsRow()`) traf die falsche Zeile; jetzt Label-basiert wie in
+  `injectSmbRow()`. `tools-android\check-api.js` kennt alle neuen Kanäle.
 
 ---
 
@@ -331,18 +355,21 @@ einer WebView-Attrappe, kompletter Chat inklusive KI-Werkzeugen, PDF-Auslese, Ch
 (`live.*`, `power.keepAwake`, `searx.*`, `showItem`) als **bewusst Desktop-only** – auf Android sind
 sie defensiv gekapselt, die Live-**Empfänger**-Funktion läuft dort über `api.stream`.
 
-**Android-Fassung 1.0.83-android (versionCode 83):** gebaut aus einer bereinigten Kopie, APK 11.421.459 B.
+**Android-Fassung 1.0.86-android (versionCode 86):** gebaut aus einer bereinigten Kopie, APK 11.552.419 B.
 Alle 16 Android-Anpassungen griffen weiterhin (`tools-android\patch-check.js`: 0 Suchtexte würden
 abbrechen). Alle 11 Prüfläufe mit 0 Fehlern; `tools-android\check-api.js` meldet keine fehlenden
-Kanäle mehr – die drei neuen Desktop-only-Kanäle von 1.0.83 (`discover`, `discover.scan`,
-`files.savePdf`) sind gekapselt. **Am Gerät wurde diese Fassung nicht geprüft.** Der Server-Entdecker
-und der PDF-Export sind auf Android ausdrücklich als Desktop-only gekapselt.
+Kanäle mehr – die neuen Desktop-only-Kanäle von 1.0.84/1.0.86 (`ws.mkdir`, `mcp.*`) sind gekapselt.
+Behoben wurde eine echte Android-Regression der 1.0.84-Umstrukturierung: die Workspace-Zeile der
+Einstellungen zeigte nach einer SMB-Verbindung den Pfad nicht mehr an (der Adapter `wsRow()` traf
+wegen der neuen Projekttexte die falsche Zeile; jetzt Label-basiert). **Am Gerät wurde diese Fassung
+nicht geprüft.** Der Server-Entdecker, der PDF-Export, Projekte und MCP-Server sind auf Android
+ausdrücklich als Desktop-only gekapselt.
 
-**Windows-Fassung 1.0.83:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
-aus derselben bereinigten Quelle wie die APK – Setup 84.079.864 B, portable 83.837.618 B. Beide
+**Windows-Fassung 1.0.86:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
+aus derselben bereinigten Quelle wie die APK – Setup 84.113.002 B, portable 83.870.745 B. Beide
 Programmdateien und die APK wurden vor dem Einstellen am GitHub-Release mit
 `tools-android\scan-persoenlich.js` geprüft: im Setup und im portablen Programm je 4 Fundstellen,
-ausschließlich Zufallsbytefolgen im komprimierten Code. Das entpackte `app.asar` (442 Dateien)
+ausschließlich Zufallsbytefolgen im komprimierten Code. Das entpackte `app.asar` (450 Dateien)
 liefert 5 Fundstellen: eine Urheberangabe der mitgelieferten Bibliothek `fast-xml-parser` und vier
 Wortmeldungen („Administrator-Abfrage", „ohne Administratorrechte"). Keine internen IP-Adressen,
 Laufwerksbuchstaben, Freigabenamen, Rechner- oder Gerätenamen. Die Quelldateien im Repository nutzen

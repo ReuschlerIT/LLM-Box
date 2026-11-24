@@ -64,7 +64,7 @@ const currentModel = () => (S.chat && S.chat.model) || S.settings.model || '';
 const useTools = (chat) => {
   const c = chat || S.chat;
   const on = c && typeof c.tools === 'boolean' ? c.tools : S.settings.workspace.toolsEnabled;
-  return !!(on && S.settings.workspace.path);
+  return !!(on && (typeof wsRoot === 'function' ? wsRoot(c) : S.settings.workspace.path));   // V84: Projektordner des Chats
 };
 const EXEC_TOOLS = ['run_command', 'install_tool', 'check_tool'];
 const askOn = () => S.settings.workspace.askUser !== false;
@@ -73,7 +73,9 @@ const askAlone = (chat) => !useTools(chat) && askOn() && S.settings.workspace.as
 function toolsFor(chat) {
   let t = toolsForBase(chat);
   if (chat && typeof autoOn === 'function' && autoOn(chat)) t = autoTools(t); // autonom: keine Rückfragen, dafür finish_task (auto.js)
-  return typeof owuiTools === 'function' ? owuiTools(t) : t; // Websuche-Werkzeuge ergänzen (owui.js)
+  t = typeof owuiTools === 'function' ? owuiTools(t) : t; // Websuche-Werkzeuge ergänzen (owui.js)
+  t = typeof skillTools === 'function' ? skillTools(t, chat) : t; // use_skill (skills.js)
+  return typeof mcpTools === 'function' ? mcpTools(t) : t; // MCP-Server (mcp.js)
 }
 function toolsForBase(chat) {
   if (useTools(chat)) return LLM.WORKSPACE_TOOLS.filter((t) => (subOn() || t.function.name !== 'delegate_task') && (hoOn() || t.function.name !== 'propose_new_session') && (execOn() || !EXEC_TOOLS.includes(t.function.name)) && (askOn() || t.function.name !== 'ask_user'));
@@ -137,6 +139,8 @@ async function init() {
   if (!S.settings.connections.some((c) => c.id === S.settings.activeConnection)) S.settings.activeConnection = S.settings.connections[0] ? S.settings.connections[0].id : '';
 
   applyProfileOnce(firstRun);
+  if (typeof migrateV84 === 'function') migrateV84(firstRun);
+  if (typeof mcpSync === 'function') mcpSync();   // V86: MCP-Server verbinden (wartet nicht)   // V84: Standard-Skills, Dateizugriff fuer neue Chats aus
   buildChrome();
   api.appInfo().then((i) => {
     const t = `Reuschler-IT - LLM Box v${i.version}`;
@@ -1408,11 +1412,13 @@ function buildSystem(chat, kctx) {
   if (S.settings.appearance.thinkInGerman) s += (s ? '\n\n' : '') + T('Denke und überlege auf Deutsch (auch im Gedankengang).');
   if (useTools(chat)) {
     const list = `list_files, search_text, read_file, edit_file, write_file${subOn() ? ', delegate_task' : ''}`;
-    s += part('toolsHint', lang, S.settings.workspace.path, list) + part('actHint', lang) + (askOn() && !(typeof autoOn === 'function' && autoOn(chat)) ? part('askHint', lang) : '') + (hoOn() ? part('handoffHint', lang) : '') + (subOn() ? part('subHint', lang) : '');
+    s += part('toolsHint', lang, wsRoot(chat), list) + (typeof projSystem === 'function' ? projSystem(chat) : '') + part('actHint', lang) + (askOn() && !(typeof autoOn === 'function' && autoOn(chat)) ? part('askHint', lang) : '') + (hoOn() ? part('handoffHint', lang) : '') + (subOn() ? part('subHint', lang) : '');
     if (execOn()) s += part('execHint', lang, /Win/i.test(navigator.platform || navigator.userAgent));
   } else if (askAlone() && !(typeof autoOn === 'function' && autoOn(chat))) s += `\n\n${part('askHint', lang).trim()}`;
   if (typeof autoSystem === 'function') s += autoSystem(chat); // autonomer Modus
   if (typeof owuiSystem === 'function') s += owuiSystem(chat, kctx); // Gedächtnis, Wissens-Auszüge, Websuche-Hinweis
+  if (typeof mcpSystem === 'function') s += mcpSystem(); // Hinweis zu MCP-Werkzeugen (mcp.js)
+  if (typeof skillSystem === 'function') s += skillSystem(chat); // Skill-Liste (skills.js), bewusst ganz am Ende: der vordere Teil bleibt stabil für den Prompt-Cache des Servers
   return s.trim();
 }
 
@@ -1422,7 +1428,7 @@ const ASK_HINT = ' Wenn dir Angaben fehlen, die Aufgabe mehrdeutig ist oder es m
 /* ═════════════ Kontext-Verwaltung ═════════════ */
 /* Schätzt die Prompt-Größe (Zeichen / 3,3, bewusst vorsichtig für Code). */
 function estimateWire(messages, system) {
-  let n = (system || '').length + 1500; // Werkzeug-Definitionen
+  let n = (system || '').length + 1500 + (typeof mcpToolChars === 'function' ? mcpToolChars() : 0); // Werkzeug-Definitionen (plus MCP)
   for (const m of messages) {
     n += (m.content || '').length + 20;
     if (m.role === 'user') for (const f of m.files || []) n += f.kind === 'text' ? f.text.length + 40 : f.kind === 'image' ? 2400 : 0;
@@ -1850,6 +1856,10 @@ async function generate(chatArg) {
   const chat = chatArg || S.chat;
   if (chat && chat._live) return; // Live-Ansicht ist schreibgeschützt
   if (runOf(chat)) return; // in diesem Chat arbeitet die KI schon
+  // V84: Dateizugriff gewuenscht, aber noch kein Projekt: erst waehlen lassen (ohne Projekt gibt es keine Dateiwerkzeuge)
+  if (typeof projNeeded === 'function' && projNeeded(chat)) {
+    if (!(await projPick(chat))) toast(T('Ohne Projekt gibt es keine Dateiwerkzeuge in diesem Chat.'), 4500);
+  }
   trAbortAll(); // laufende Übersetzungen nicht mit dem Agenten konkurrieren lassen
   const conn = activeConn();
   const model = currentModel();
@@ -1941,6 +1951,8 @@ async function generate(chatArg) {
       nudgeText = '';
       let kctx = '';
       try { kctx = typeof owuiKnowledge === 'function' ? await owuiKnowledge(chat) : ''; } catch { kctx = ''; } // passende Abschnitte aus den Wissenssammlungen
+      try { if (typeof projLoad === 'function') await projLoad(chat); } catch { /* PROJEKT.md optional */ }
+      try { if (typeof mcpRefresh === 'function') await mcpRefresh(); } catch { /* MCP optional */ }
       const sysText = buildSystem(chat, kctx);
       const cs = ctxStart(chat);
       const rawMsgs = nudgeNow ? [...chat.messages.slice(cs, -1), { role: 'user', content: nudgeMsg }] : chat.messages.slice(cs, -1);
@@ -1962,7 +1974,7 @@ async function generate(chatArg) {
         model,
         system: sysText,
         messages: cmp.messages,
-        params: typeof owuiParams === 'function' ? owuiParams(chat) : S.settings.params,
+        params: (typeof qualityParams === 'function' ? qualityParams : (c, p) => p)(chat, typeof owuiParams === 'function' ? owuiParams(chat) : S.settings.params),
         tools: toolsFor(chat),
         thinkLevel: thinkId(chat),
         handlers: {
@@ -2180,6 +2192,8 @@ async function runTool(tc, chat) {
   const base = { id: uid(), role: 'tool', name: tc.name, toolCallId: tc.id, args: tc.args, ts: Date.now() };
   tlState(tc.id, 'running');
   if (tc.name === 'ask_user') return runAskUser(tc, base, R);
+  if (tc.name === 'use_skill' && typeof skillRun === 'function') return skillRun(tc, base); // Skill laden (skills.js)
+  if (String(tc.name).startsWith('mcp__') && typeof mcpRun === 'function') return mcpRun(tc, base, rc, R); // MCP-Werkzeug (mcp.js)
   if (tc.name === 'delegate_task') return runSubagent(tc, base, rc); // nur lesend: keine Freigabe nötig
   if (typeof autoRunTool === 'function') { const ar = autoRunTool(tc, base, rc); if (ar) return ar; } // autonomer Modus: Zähler, Schleifen, finish_task (auto.js)
   if (typeof OWUI_TOOLS !== 'undefined' && OWUI_TOOLS.has(tc.name)) return owuiRunTool(tc, base, rc, R); // Websuche (owui.js)
@@ -2196,9 +2210,13 @@ async function runTool(tc, chat) {
       if (d === 'always') permAdd(key, rc);
       if (d === 'deny') return { ...base, ok: false, content: T('Der Benutzer hat die Ausführung abgelehnt. Frage nach, wie du stattdessen vorgehen sollst.') };
     }
-    const r = await api.ws.tool({ root: ws.path, name: tc.name, args: tc.args, maxKB: +ws.readKB || 40, ignore: ignoreList(), owner: rc.id });
+    const root = wsRoot(rc);
+    if (!root) return { ...base, ok: false, content: T('Kein Projekt gewählt. Bitte den Nutzer, im Chat über den Knopf „Projekt“ ein Projekt zu wählen.') };
+    const r = await api.ws.tool({ root, name: tc.name, args: tc.args, maxKB: +ws.readKB || 40, ignore: ignoreList(), owner: rc.id });
     if ((tc.name === 'write_file' || tc.name === 'edit_file') && r.ok) renderFilePanel();
-    return { ...base, ok: r.ok, content: r.result };
+    let content = r.result;
+    if (!r.ok && typeof qualityPathHelp === 'function') content = await qualityPathHelp(tc, r, root, ws, rc.id);   // vorhandene Dateien an „nicht gefunden“ anhaengen
+    return { ...base, ok: r.ok, content };
   } catch (e) {
     return { ...base, ok: false, content: 'Fehler: ' + e.message };
   }
@@ -2236,7 +2254,7 @@ async function runExecTool(tc, base, rc) {
         const d = await ask({
           kind: 'run',
           target: command,
-          note: `Läuft auf deinem Rechner (${shellKind === 'powershell' ? 'PowerShell' : (/Win/i.test(navigator.platform || '') ? 'cmd' : 'sh')}) mit deinen Benutzerrechten, Arbeitsordner: ${a.cwd ? ws.path + ' / ' + a.cwd : ws.path}. Prüfe den Befehl, bevor du genehmigst.`,
+          note: `Läuft auf deinem Rechner (${shellKind === 'powershell' ? 'PowerShell' : (/Win/i.test(navigator.platform || '') ? 'cmd' : 'sh')}) mit deinen Benutzerrechten, Arbeitsordner: ${a.cwd ? wsRoot(rc) + ' / ' + a.cwd : wsRoot(rc)}. Prüfe den Befehl, bevor du genehmigst.`,
           noAlways: !canProg,
           alwaysLabel: `„${prog}“ immer erlauben (beliebige Argumente)`,
           alwaysTitle: 'Dieses Programm darf in diesem Chat mit beliebigen Argumenten laufen. Verkettete Befehle, Umleitungen (>) und Unterbefehle fragen weiterhin nach, außer alle beteiligten Programme sind freigegeben.',
@@ -2250,7 +2268,7 @@ async function runExecTool(tc, base, rc) {
       R.execId = uid();
       const tmo = +a.timeout > 0 ? Math.min(+a.timeout, 3600) : timeout;
       tlExec(tc.id, R.execId, tmo);
-      const r = await api.sys.exec({ id: R.execId, root: ws.path, command, shell: shellKind, cwd: a.cwd || '', timeout: tmo }, (m) => tlAppend(tc.id, m.text));
+      const r = await api.sys.exec({ id: R.execId, root: wsRoot(rc), command, shell: shellKind, cwd: a.cwd || '', timeout: tmo }, (m) => tlAppend(tc.id, m.text));
       R.execId = null;
       renderFilePanel();
       return { ...base, ok: r.ok, content: r.result };
@@ -2276,7 +2294,7 @@ async function runExecTool(tc, base, rc) {
       tlState(tc.id, 'running');
       R.execId = uid();
       tlExec(tc.id, R.execId, 900);
-      const r = await api.sys.install({ id: R.execId, root: ws.path, manager, pkg, timeout: 900 }, (m) => tlAppend(tc.id, m.text));
+      const r = await api.sys.install({ id: R.execId, root: wsRoot(rc), manager, pkg, timeout: 900 }, (m) => tlAppend(tc.id, m.text));
       R.execId = null;
       return { ...base, ok: r.ok, content: r.result + (r.ok ? '\n' + T('Hinweis: Prüfe mit check_tool, ob das Programm jetzt gefunden wird. Manche Programme liegen nach der Installation nicht im PATH.') : '') };
     }
@@ -2545,6 +2563,7 @@ function updateToolsBtn() {
   b.innerHTML = icon('wrench', 15) + `<span>Dateizugriff: ${on ? 'an' : 'aus'}</span>`;
   $('#btn-panel').classList.toggle('on', S.panelOpen);
   updatePermBtn();
+  if (typeof projUpdateChip === 'function') projUpdateChip();   // V84: Knopf „Projekt“
 }
 
 function toggleTools() {
@@ -2555,7 +2574,11 @@ function toggleTools() {
     return;
   }
   let on;
-  if (S.chat) { on = !useTools(S.chat); S.chat.tools = on; saveChatSoon(S.chat); }   // nur dieser Chat
+  if (S.chat) {
+    const wish = typeof S.chat.tools === 'boolean' ? S.chat.tools : ws.toolsEnabled;   // V84: der Wunsch zaehlt, nicht der wirksame Zustand (ohne Projekt ist useTools falsch)
+    on = !wish; S.chat.tools = on; saveChatSoon(S.chat);   // nur dieser Chat
+    if (on && typeof projNeeded === 'function' && projNeeded(S.chat)) projPick(S.chat);   // Projekt waehlen
+  }
   else { ws.toolsEnabled = !ws.toolsEnabled; on = ws.toolsEnabled; saveSettings(); }
   updateToolsBtn();
   renderFilePanel();
@@ -2568,6 +2591,7 @@ async function chooseWorkspace() {
   S.settings.workspace.path = p;
   saveSettings();
   renderFilePanel();
+  if (typeof projUpdateChip === 'function') projUpdateChip();
 }
 
 function renderFilePanel() {
@@ -2577,10 +2601,13 @@ function renderFilePanel() {
   if (!S.panelOpen) { if (typeof svDockSync === 'function') svDockSync(); return; }
   p.innerHTML = '';
   const ws = S.settings.workspace;
-  const name = ws.path ? ws.path.split(/[\\/]/).filter(Boolean).pop() : '';
+  const root = typeof wsRoot === 'function' ? wsRoot() : ws.path;         // V84: Projektordner des Chats
+  const needProj = !!(ws.path && typeof projMode === 'function' && projMode() && !root);
+  const name = root ? root.split(/[\\/]/).filter(Boolean).pop() : (ws.path ? ws.path.split(/[\\/]/).filter(Boolean).pop() : '');
   p.append(
     el('div', { class: 'fp-head' },
-      el('div', { class: 'ttl' }, name || 'Workspace', ws.path ? el('span', { class: 'sub', text: ws.path, title: ws.path }) : null),
+      el('div', { class: 'ttl' }, (needProj ? 'Projekte' : name) || 'Workspace', root || ws.path ? el('span', { class: 'sub', text: root || ws.path, title: root || ws.path }) : null),
+      ws.path && typeof projMode === 'function' && projMode() ? el('button', { class: 'icon-btn', title: 'Projekt wählen oder anlegen', html: icon('plus', 15), onclick: () => projPick(S.chat) }) : null,
       el('button', { class: 'icon-btn', title: 'Ordner wählen', html: icon('folder', 16), onclick: chooseWorkspace }),
       ws.path ? el('button', { class: 'icon-btn', title: 'Aktualisieren', html: icon('refresh', 15), onclick: renderFilePanel }) : null
     )
@@ -2589,6 +2616,8 @@ function renderFilePanel() {
   p.append(tree);
   if (!ws.path) {
     tree.append(el('div', { class: 'fp-empty' }, 'Wähle einen Projektordner. Dateien öffnest oder hängst du per Klick an (einstellbar unter Einstellungen → Workspace & Dateien), oder du erlaubst der KI den Zugriff.', el('br'), el('button', { class: 'btn primary', text: 'Ordner wählen', onclick: chooseWorkspace })));
+  } else if (needProj) {
+    projPanelFill(tree);
   } else {
     loadTree(tree, '', 0);
   }
@@ -2615,10 +2644,10 @@ const RISKY_EXT = /\.(exe|bat|cmd|com|scr|msi|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|ht
 
 async function wsAttachFile(rel) {
   const ws = S.settings.workspace;
-  addAttachments(await api.files.read([joinPath(ws.path, rel)], fileLimits()));
+  addAttachments(await api.files.read([joinPath(wsRoot() || ws.path, rel)], fileLimits()));
 }
 async function wsOpenFile(rel) {
-  const full = joinPath(S.settings.workspace.path, rel);
+  const full = joinPath(wsRoot() || S.settings.workspace.path, rel);
   if (typeof api.openPath !== 'function') { toast('Öffnen ist auf diesem Gerät nicht verfügbar. Die Datei wird stattdessen angehängt.'); return wsAttachFile(rel); }
   // Programme und Skripte nicht einfach per Klick starten
   if (RISKY_EXT.test(rel) && !(await confirmModal('Datei ausführen?', `„${rel}“ ist ein ausführbarer Dateityp. Das Öffnen startet sie auf diesem Rechner.`, { okLabel: 'Öffnen', danger: true }))) return;
@@ -2626,7 +2655,7 @@ async function wsOpenFile(rel) {
   if (err) toast('Datei konnte nicht geöffnet werden: ' + err, 6000);
 }
 async function wsRevealFile(rel) {
-  const full = joinPath(S.settings.workspace.path, rel);
+  const full = joinPath(wsRoot() || S.settings.workspace.path, rel);
   if (typeof api.showItem !== 'function') return wsOpenFile(rel);
   const err = await api.showItem(full.replace(/\//g, '\\'));
   if (err) toast('Konnte nicht im Ordner angezeigt werden: ' + err, 6000);
@@ -2652,7 +2681,7 @@ async function loadTree(container, rel, depth) {
   const ws = S.settings.workspace;
   let items;
   try {
-    items = await api.ws.list({ root: ws.path, rel, ignore: ignoreList() });
+    items = await api.ws.list({ root: wsRoot() || ws.path, rel, ignore: ignoreList() });
   } catch (e) {
     container.append(el('div', { class: 'fp-empty', text: 'Ordner nicht lesbar: ' + e.message }));
     return;
@@ -2662,7 +2691,7 @@ async function loadTree(container, rel, depth) {
     const r = rel ? rel + '/' + it.name : it.name;
     const row = el('div', { class: 'tr', style: { paddingLeft: 6 + depth * 14 + 'px' }, title: it.isDir ? r : `${r} (${fmt.size(it.size)}) – ${fileClickHint()}` });
     row.append(el('span', { class: 'chev', html: it.isDir ? icon('chevron', 12) : '' }), el('span', { html: icon(it.isDir ? 'folder' : 'file', 14) }), el('span', { class: 'nm', text: it.name }));
-    row.append(el('button', { class: 'mini-btn add', title: it.isDir ? 'Ganzen Ordner anhängen' : 'Anhängen', html: icon('plus', 13), onclick: async (e) => { e.stopPropagation(); addAttachments(await api.files.read([joinPath(ws.path, r)], fileLimits())); } }));
+    row.append(el('button', { class: 'mini-btn add', title: it.isDir ? 'Ganzen Ordner anhängen' : 'Anhängen', html: icon('plus', 13), onclick: async (e) => { e.stopPropagation(); addAttachments(await api.files.read([joinPath(wsRoot() || ws.path, r)], fileLimits())); } }));
     container.append(row);
     if (it.isDir) {
       let child = null;

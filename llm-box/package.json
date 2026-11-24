@@ -1,7 +1,7 @@
 {
   "name": "llm-box",
   "productName": "LLM Box",
-  "version": "1.0.83",
+  "version": "1.0.86",
   "description": "Lokale Chat-Oberfläche für Ollama, LM Studio, llama.cpp und OpenAI-kompatible APIs",
   "main": "main.js",
   "author": {
@@ -32,6 +32,7 @@
       "main.js",
       "preload.js",
       "docs.js",
+      "mcp.js",
       "renderer/**/*",
       "build/icon.png",
       "package.json",

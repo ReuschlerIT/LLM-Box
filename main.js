@@ -7,6 +7,7 @@ const { spawn, execFile } = require('child_process');
 const http = require('http');
 const https = require('https');
 const DOCS = require('./docs');
+const { McpManager } = require('./mcp');   // MCP-Client (V86)
 
 let win = null;
 const aborts = new Map();
@@ -932,6 +933,23 @@ async function searchText(root, query, rel, ignore, ctl) {
 
 ipcMain.handle('ws:list', async (_e, { root, rel, ignore }) => listDir(root, rel, ignore));
 
+// Neues Projekt (Unterordner) im Workspace anlegen (V84). Der Name wird bereinigt, der Pfad bleibt innerhalb der Wurzel (safe).
+ipcMain.handle('ws:mkdir', async (_e, { root, name, readme }) => {
+  try {
+    const clean = String(name || '').trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').replace(/^\.+/, '').replace(/\s+/g, ' ').slice(0, 60).trim();
+    if (!clean) return { ok: false, error: 'Ungültiger Name' };
+    const abs = safe(root, clean);
+    await fsp.mkdir(abs, { recursive: true });
+    if (readme) {
+      const f = path.join(abs, 'PROJEKT.md');
+      try { await fsp.access(f); } catch { await fsp.writeFile(f, String(readme), 'utf8'); }
+    }
+    return { ok: true, name: clean, path: abs };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('ws:abort', (_e, owner) => {
   for (const c of wsRuns) if (!owner || c.owner === owner) c.cancelled = true; // mit Chat-ID: nur dessen Werkzeuge (andere Chats arbeiten weiter)
   return true;
@@ -1642,6 +1660,19 @@ ipcMain.on('live:push', (_e, evt) => {
   liveApply(evt);
   if (live.clients.size || live.waiters.size || live.pollers.size) liveBroadcast(evt.type, evt);
 });
+/* ───────────────────────── MCP-Server (V86) ───────────────────────── */
+const mcp = new McpManager();
+const mcpSafe = (f) => async (_e, ...a) => { try { return await f(...a); } catch (e) { return { ok: false, error: e.message || String(e) }; } };
+ipcMain.handle('mcp:sync', mcpSafe((cfgs) => mcp.sync(cfgs)));
+ipcMain.handle('mcp:list', mcpSafe(() => mcp.list()));
+ipcMain.handle('mcp:connect', mcpSafe((id) => mcp.connect(id)));
+ipcMain.handle('mcp:restart', mcpSafe((id) => mcp.restart(id)));
+ipcMain.handle('mcp:stop', mcpSafe((id) => mcp.stopOne(id)));
+ipcMain.handle('mcp:refresh', mcpSafe((id) => mcp.refreshTools(id)));
+ipcMain.handle('mcp:probe', mcpSafe((cfg) => mcp.probe(cfg)));
+ipcMain.handle('mcp:call', mcpSafe((o) => mcp.call(o.id, o.name, o.args, o.timeoutMs)));
+app.on('before-quit', () => mcp.stopAll());
+
 app.on('before-quit', liveStop);
 
 /* ───────────────────────── Fenster / System ───────────────────────── */
