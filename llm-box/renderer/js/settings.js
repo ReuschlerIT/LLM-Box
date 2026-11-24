@@ -19,6 +19,11 @@ const DEFAULTS = {
   // liessen diese Patches ins Leere laufen.
   uiLang: 'de',
   spell: { enabled: true, lang: 'de-en' },
+  // Lange Texte per Strg+V als Karte „Eingefügt“ statt im Eingabefeld (app.js: isLongPaste)
+  paste: { enabled: true, minChars: 1500 },
+  settingsTab: 'conn',   // zuletzt geöffnete Seite der Einstellungen
+  // Gedankengänge im Chat (inline) oder gesammelt in einem eigenen Dropdown (thinkdock.js)
+  thinkDock: { mode: 'inline', pos: 'composer', open: false, w: 360, float: null },
   model: '',
   thinking: 'auto',
   systemPrompt: `Du bist ein autonomer Analyse- und Entwicklungs-Agent.
@@ -76,22 +81,33 @@ kein Mittel für Zugriff auf fremde, nicht dir gehörende Konten/Server.`,
   workspace: { path: '', fileClick: 'open', toolsEnabled: false, askUser: true, askUserAlways: false, subagents: true, subagentSteps: 12, handoff: true, handoffMode: 'clear', handoffPct: 70, handoffAutoSend: true, approval: 'write', execEnabled: true, execTimeout: 120, maxSteps: 25, readKB: 40, autoCompact: true, ctxBudgetPct: 80, keepToolResults: 3, maxFileKB: 512, maxFiles: 60, maxTotalKB: 1024, ignore: 'node_modules,.git,.venv,__pycache__,dist,build,.next,.idea,.vscode' },
 };
 
-/* ───── Modellprofile (V65) ─────
+/* ───── Modellprofile (V65, V83) ─────
    „iq3“: Voreinstellung fuer kleine bzw. stark quantisierte Modelle (IQ3/Q3, z. B. qwen3.x-flash-iq3_s) im Werkzeugbetrieb.
    Solche Modelle werden schon weit unter ihrem Kontextfenster unzuverlaessig (vergessene Werkzeugaufrufe, erfundene Namen, vorzeitiges Ende).
-   Deshalb: ruhigeres Sampling, keine Wiederholungsstrafe (stoert Code/JSON), begrenzte Antwortlaenge, fruehere Kontext-Verschlankung. */
+   Deshalb: keine Wiederholungsstrafe (stoert Code/JSON), begrenzte Antwortlaenge, fruehere Kontext-Verschlankung.
+   V83: Sampling nach der Qwen-Empfehlung fuer den Denkmodus (Temperatur 1.0, Top-P 0.95, Top-K 20, Min-P 0, keine Strafen).
+   Die bisherigen Werte (Temperatur 0.3, Min-P 0.05, Antwortlimit 12288) fuehrten bei Qwen3.8 zu Denkschleifen (zu niedrige Temperatur),
+   abgeschnittenen Antworten (Limit kleiner als Denken + Antwort) und Erfindungen. Denkaufwand „niedrig“ (reasoning_effort low) haelt den Gedankengang kurz.
+   Das Limit 32768 faengt nur Endlosschleifen ab; wer es nicht will, leert das Feld „Max. Antwortlaenge“. */
 const PROFILES = {
   iq3: {
-    params: { temperature: 0.3, topP: 0.9, topK: 20, minP: 0.05, repeatPenalty: 1.0, presencePenalty: null, maxTokens: 12288 },
+    params: { temperature: 1.0, topP: 0.95, topK: 20, minP: 0, repeatPenalty: 1.0, presencePenalty: 0, maxTokens: 32768 },
+    thinking: 'low',
     workspace: { ctxSoftCap: 64000, ctxBudgetPct: 80, keepToolResults: 4, handoffPct: 60, maxSteps: 40, subagentSteps: 8 },
   },
   std: {
     params: { temperature: 0.7, topP: 0.9, topK: 40, minP: null, repeatPenalty: 1.1, presencePenalty: null, maxTokens: null },
+    thinking: 'auto',
     workspace: { ctxSoftCap: 0, ctxBudgetPct: 80, keepToolResults: 3, handoffPct: 70, maxSteps: 25, subagentSteps: 12 },
   },
 };
+/* Die Werte des Profils „iq3“ bis Version 1.0.82: Nur wer sie unveraendert hat, bekommt per Einmal-Umstellung (V83) die neuen. */
+const PROFILE_IQ3_V82 = { temperature: 0.3, topP: 0.9, topK: 20, minP: 0.05, repeatPenalty: 1.0, presencePenalty: null, maxTokens: 12288 };
 Object.assign(DEFAULTS.params, PROFILES.iq3.params);
 Object.assign(DEFAULTS.workspace, PROFILES.iq3.workspace);
+DEFAULTS.thinking = PROFILES.iq3.thinking;
+/* V83: neue Felder im Start-Formular fuer Strata (Entwurfs-Verfahren, Entwurfs-Fenster). Hier ergaenzt statt im Literal oben. */
+Object.assign(DEFAULTS.server.launch, { drafting: '', spec: null });
 DEFAULTS.modelProfile = 'iq3';
 
 /* Steht im Feld „System-Prompt“ noch ein unveraenderter Standard (egal in welcher Sprache/Laenge), wird er durch die Fassung der gewaehlten Sprache
@@ -110,9 +126,26 @@ function applyProfile(key) {
   if (!p) return false;
   Object.assign(S.settings.params, p.params);
   Object.assign(S.settings.workspace, p.workspace);
+  if (p.thinking) S.settings.thinking = p.thinking;     // Denkaufwand (V83)
   S.settings.modelProfile = key;
   syncDefaultPrompt();                                   // kurz (iq3) bzw. ausfuehrlich (std)
   if (typeof applyToolLanguage === 'function') applyToolLanguage();   // Werkzeugbeschreibungen passend zum Profil
+  return true;
+}
+/* Einmalig (V83): Das IQ3-Profil bekommt die Qwen-Empfehlung. Nur Werte, die noch genau den alten Profilwerten (V82) entsprechen, werden ersetzt;
+   eigene Eingaben bleiben. Der Denkaufwand „Auto“ wird „Niedrig“. Ein unveraenderter Kurz-Prompt wird durch die neue Fassung ersetzt (syncDefaultPrompt). */
+function migrateQwenV83() {
+  if (S.settings.profileQwenV83) return false;
+  S.settings.profileQwenV83 = true;
+  if (S.settings.modelProfile === 'std') return true;       // Profil „Standard“: nichts aendern
+  const pr = S.settings.params || (S.settings.params = {});
+  const nw = PROFILES.iq3.params;
+  for (const k of Object.keys(PROFILE_IQ3_V82)) {
+    const o = PROFILE_IQ3_V82[k];
+    if (o !== null && pr[k] === o) pr[k] = nw[k];
+  }
+  if (S.settings.thinking === 'auto') S.settings.thinking = PROFILES.iq3.thinking;
+  syncDefaultPrompt();
   return true;
 }
 // Einmalig (V65): bestehende Installationen bekommen das IQ3-Profil genau einmal; danach gilt, was der Nutzer einstellt.
@@ -120,6 +153,7 @@ function applyProfileOnce(silent) {
   if (!S.settings.profileIq3V65) {
     S.settings.profileIq3V65 = true;
     S.settings.promptSyncV66 = true;
+    S.settings.profileQwenV83 = true;     // neue Installation: die V83-Werte kommen schon aus dem Profil
     applyProfile('iq3');
     api.store.set('settings', S.settings);
     if (!silent) setTimeout(() => toast(T('Modellprofil „Kleines / stark quantisiertes Modell“ angewendet. Änderbar unter Einstellungen → Modell & Parameter.'), 7000), 1500);
@@ -130,6 +164,11 @@ function applyProfileOnce(silent) {
     S.settings.promptSyncV66 = true;
     syncDefaultPrompt();
     api.store.set('settings', S.settings);
+  }
+  // Einmalig (V83): Qwen-Empfehlung fuer das IQ3-Profil (siehe migrateQwenV83)
+  if (migrateQwenV83()) {
+    api.store.set('settings', S.settings);
+    if (!silent && S.settings.modelProfile !== 'std') setTimeout(() => toast(T('Modellprofil aktualisiert: Qwen-Empfehlung (Temperatur 1,0, Top-P 0,95, Top-K 20, Min-P 0), Denkaufwand niedrig und neuer Kurz-Prompt. Änderbar unter Einstellungen → Modell & Parameter.'), 9000), 1500);
   }
 }
 
@@ -324,6 +363,7 @@ function tabConnections() {
 
     const list = el('div', { class: 'conn-list' },
       conns.map((c) => el('button', { class: c.id === sel ? 'active' : '', text: c.name, onclick: () => { sel = c.id; render(); } })),
+      el('div', { style: { marginTop: '10px' } }, el('button', { class: 'btn sm', style: { width: '100%', marginBottom: '8px' }, text: 'Server per IP-Adresse erkennen …', title: 'Findet Strata auf einem anderen Rechner und trägt Verbindung und Einstellungen ein', onclick: () => openDiscover(render) })),
       el('div', { style: { marginTop: '10px' } }, (() => {
         const s = el('select', { style: { width: '100%' } }, el('option', { value: '', text: '+ Verbindung hinzufügen …' }), PRESETS.map((p, i) => el('option', { value: i, text: p.name })));
         s.addEventListener('change', () => {
@@ -507,7 +547,7 @@ function tabModel() {
   const [tr, tn] = bindSlider(p + 'temperature', 0, 2, 0.05);
   const [pr, pn] = bindSlider(p + 'topP', 0, 1, 0.05);
   const [rr, rn] = bindSlider(p + 'repeatPenalty', 0.5, 2, 0.05);
-  const profileRow = frow('Modellprofil', 'Setzt Temperatur, Top-K, Wiederholungsstrafe, Antwortlänge, Kontext-Obergrenze und Schrittlimit auf erprobte Werte. „Kleines / stark quantisiertes Modell“ ist für IQ3/Q3-Modelle mit Werkzeugen gedacht und verhindert vor allem Abbrüche. Es nutzt außerdem einen kurzen System-Prompt mit kurzen Werkzeugbeschreibungen (spart rund 1.400 Tokens je Anfrage). Bei Verbindungen mit „Sampling dem Server überlassen“ wirken nur die Kontext- und Schritt-Werte.', (() => {
+  const profileRow = frow('Modellprofil', 'Setzt Temperatur, Top-K, Wiederholungsstrafe, Antwortlänge, Denkaufwand, Kontext-Obergrenze und Schrittlimit auf erprobte Werte. „Kleines / stark quantisiertes Modell“ nutzt die Qwen-Empfehlung für den Denkmodus (Temperatur 1,0, Top-P 0,95, Top-K 20, Min-P 0, keine Wiederholungsstrafe, Denkaufwand niedrig) und verhindert vor allem Denkschleifen und abgebrochene Antworten. Es nutzt außerdem einen kurzen System-Prompt mit kurzen Werkzeugbeschreibungen (spart rund 1.400 Tokens je Anfrage). Bei Verbindungen mit „Sampling dem Server überlassen“ wirken nur die Kontext-, Schritt- und Denk-Werte.', (() => {
     const sel = el('select', {}, [
       el('option', { value: 'iq3', text: 'Kleines / stark quantisiertes Modell (IQ3/Q3)' }),
       el('option', { value: 'std', text: 'Standard (große oder Cloud-Modelle)' }),
@@ -691,6 +731,8 @@ function tabAppearance() {
 
     wrap.append(frow('Rechtschreibprüfung', 'Falsch geschriebene Wörter im Eingabefeld werden rot wellig unterstrichen. Rechtsklick auf das Wort zeigt Vorschläge und „Zum Wörterbuch hinzufügen“. Beim ersten Mal lädt die App die Wörterbücher selbst herunter (Internet nötig).', bindSwitch('spell.enabled')));
     wrap.append(frow('Sprachen der Rechtschreibprüfung', '„Deutsch und Englisch“ markiert ein Wort nur, wenn es in keiner der beiden Sprachen vorkommt. Das vermeidet falsche Markierungen bei englischen Fachwörtern.', bindSelect('spell.lang', [{ value: 'de-en', label: 'Deutsch und Englisch' }, { value: 'de', label: 'Deutsch' }, { value: 'en', label: 'Englisch' }, { value: 'fr', label: 'Französisch' }, { value: 'fr-en', label: 'Französisch und Englisch' }, { value: 'de-fr', label: 'Deutsch und Französisch' }, { value: 'de-en-fr', label: 'Deutsch, Englisch und Französisch' }])));
+    wrap.append(frow('Lange Texte als Karte einfügen', 'Sehr lange Texte, die du mit Strg+V einfügst, erscheinen als kleine Karte „Eingefügt“ über dem Eingabefeld statt den ganzen Text im Feld auszubreiten. Die KI bekommt den vollständigen Text. Der Stift an der Karte öffnet ihn zum Bearbeiten.', bindSwitch('paste.enabled')));
+    wrap.append(frow('Ab wie vielen Zeichen', 'Gilt für „Lange Texte als Karte einfügen“. Standard 1500 (etwa 25 Zeilen).', bindNumber('paste.minChars', { min: 200, step: 100, placeholder: '1500' })));
     wrap.append(frow('Sparmodus beim Antworten', 'Während die KI antwortet, schaltet die Oberfläche Animationen und Unschärfe-Effekte ab. Das schont die Grafikkarte, die gerade das Modell rechnet (besonders wenn Modell und LLM Box auf demselben Rechner laufen).', bindSwitch('appearance.calmDuringGen')));
     {
       const gi = el('input', { type: 'checkbox' });
@@ -738,6 +780,8 @@ function tabAppearance() {
       frow('Breite der Seitenleiste (px)', null, [sr, sn]),
       frow('Statistik unter Antworten', 'Tokens pro Sekunde, Prompt-, Antwort- und Gesamt-Tokens, Startzeit und Dauer.', bindSwitch('appearance.showStats')),
       frow('Gedankengang beim Denken aufklappen', 'Aus: eingeklappt, dabei pulsieren drei Punkte, solange die KI denkt.', bindSwitch('appearance.thinkOpen')),
+      frow('Gedankengänge anzeigen', 'Im Chat: wie bisher, ein einklappbarer Gedankengang bei jeder Antwort. Eigenes Dropdown: Alle Gedankengänge des Chats stehen gesammelt in einem einklappbaren Feld, und der Chat bleibt frei davon.', (() => { const s = bindSelect('thinkDock.mode', [{ value: 'inline', label: 'Im Chat (wie bisher)' }, { value: 'dock', label: 'Als eigenes Dropdown' }]); s.addEventListener('change', () => tdModeChanged()); return s; })()),
+      frow('Position des Gedankengänge-Dropdowns', 'Gilt für „Als eigenes Dropdown“. „Frei schwebend“ lässt sich an der Kopfzeile verschieben und an der Ecke in der Größe ändern. Links und Rechts brauchen ein Fenster von mindestens etwa 760 Pixel Breite, sonst liegt das Dropdown über dem Eingabefeld. Die Position lässt sich auch direkt im Dropdown ändern.', (() => { const s = bindSelect('thinkDock.pos', [{ value: 'composer', label: 'Über dem Eingabefeld' }, { value: 'top', label: 'Oben im Chatfenster' }, { value: 'left', label: 'Links' }, { value: 'right', label: 'Rechts' }, { value: 'float', label: 'Frei schwebend' }]); s.addEventListener('change', () => tdModeChanged()); return s; })()),
       frow('Gedankengang auf Deutsch anzeigen', 'Denkt das Modell auf Englisch, übersetzt die App den Gedankengang mit demselben Modell. „Automatisch“: im Hintergrund nach Abschluss der Antwort. „Beim Aufklappen“: erst wenn du ihn öffnest. „Aus“: nur per Knopf.', bindSelect('appearance.thinkLang', [{ value: 'auto', label: 'Automatisch' }, { value: 'click', label: 'Beim Aufklappen' }, { value: 'orig', label: 'Aus (Original)' }])),
       frow('Modell bitten, auf Deutsch zu denken', 'Fügt dem Systemprompt eine Anweisung hinzu. Qwen hält sich nicht immer daran, und das Denken auf Englisch ist oft genauer. Übersetzen (oben) ist meist die bessere Wahl.', bindSwitch('appearance.thinkInGerman')),
       frow('Mit Enter senden', 'Aus: Strg+Enter sendet, Enter macht einen Zeilenumbruch.', bindSwitch('appearance.enterToSend'))
@@ -1131,7 +1175,8 @@ function tabAbout() {
   return wrap;
 }
 
-function openSettings(tab = 'conn') {
+// Ohne Angabe öffnet sich die zuletzt besuchte Seite (S.settings.settingsTab), mit Angabe genau diese (z. B. aus Hinweisen wie „Workspace wählen“).
+function openSettings(tab) {
   // Reihenfolge = Reihenfolge der Einrichtung: erst verbinden, dann arbeiten, dann Module, Geräte und Daten, zuletzt Verwaltung.
   const all = [
     { g: 'Einrichten', id: 'conn', label: 'Verbindungen', ic: 'plug', fn: tabConnections },
@@ -1150,10 +1195,12 @@ function openSettings(tab = 'conn') {
     { g: 'Verwaltung', id: 'about', label: 'Über', ic: 'box', fn: tabAbout },
   ];
   const tabs = all.filter((t) => t.fn);
+  if (!tab) tab = S.settings.settingsTab || 'conn';
   if (!tabs.some((t) => t.id === tab)) tab = tabs[0].id;
   const pane = el('div', { class: 'pane' });
   const nav = el('nav');
   function show(id) {
+    if (S.settings.settingsTab !== id) { S.settings.settingsTab = id; saveSettings(); }   // letzte Seite merken
     nav.innerHTML = '';
     let lastG = '';
     tabs.forEach((t) => {

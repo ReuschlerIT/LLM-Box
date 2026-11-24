@@ -74,7 +74,10 @@ function lookup(obj, dotted) {
 const desktopOnly = [
   'live', 'live.config', 'live.onCmd', 'live.onResync', 'live.push', 'live.start',
   'live.status', 'live.stop', 'power', 'power.keepAwake',
-  'searx.start', 'searx.status', 'searx.stop', 'showItem'
+  'searx.start', 'searx.status', 'searx.stop', 'showItem',
+  // 1.0.83: discover.js zeigt ohne api.discover.scan einen Hinweis; chatmenu.js prueft
+  // api.files.savePdf selbst (PDF-Export ist Desktop nur).
+  'discover', 'discover.scan', 'files.savePdf'
 ];
 
 let missing = [];

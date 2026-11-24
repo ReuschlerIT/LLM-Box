@@ -40,7 +40,7 @@
         <div class="topbar-right">
           <div id="ctx-meter" class="ctx-meter" title="Kontextfenster"><div class="bar"><i></i></div><span></span></div>
           <button id="btn-handoff" class="icon-btn" title="Kontext leeren (Übergabe bleibt erhalten)"></button>
-          <button id="btn-export" class="icon-btn" title="Chat exportieren"></button>
+          <button id="btn-export" class="icon-btn" title="Chat-Menü: Teilen, Herunterladen, Umbenennen …"></button>
           <button id="btn-panel" class="icon-btn" title="Workspace-Panel"></button>
         </div>
       </header>
@@ -106,6 +106,7 @@
   <script src="js/i18n-lex-v82.js"></script>
   <script src="js/i18n-lex-v82b.js"></script>
   <script src="js/i18n-lex-v82c.js"></script>
+  <script src="js/i18n-lex-v83.js"></script>
   <!-- Sprachregeln und Systemprompt-Varianten fuer die KI (nutzen app.js und settings.js) -->
   <script src="js/i18n-prompts.js"></script>
   <script src="vendor/webdeps.js"></script>
@@ -116,6 +117,7 @@
   <script src="js/llm.js"></script>
   <script src="js/util.js"></script>
   <script src="js/settings.js"></script>
+  <script src="js/discover.js"></script>
   <script src="js/livetools.js"></script>
   <script src="js/subagents.js"></script>
   <script src="js/server.js"></script>
@@ -133,6 +135,9 @@
   <!-- Gesamtverbrauch aller Chats (Seitenleiste) -->
   <script src="js/usage.js"></script>
   <script src="js/auto.js"></script>
+  <!-- Chat-Menü (Teilen, Herunterladen) und Gedankengänge-Dropdown: vor app.js, das beide aufruft -->
+  <script src="js/chatmenu.js"></script>
+  <script src="js/thinkdock.js"></script>
   <script src="js/app.js"></script>
   <script src="js/android-adapter.js"></script>
 </body>

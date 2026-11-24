@@ -108,10 +108,8 @@ Object.assign(I18N_LEX, {
   'Fortsetzen: die KI macht an derselben Stelle weiter': ['Resume: the AI continues at the same point', 'Reprendre : l’IA continue au même endroit'],
   'Pausieren: die KI hält an und wartet': ['Pause: the AI stops and waits', 'Mettre en pause : l’IA s’arrête et attend'],
   'Fortsetzen': ['Resume', 'Reprendre'],
-  /* Die beiden alten Schluessel zum Vormerken ("wird gesendet, sobald die KI fertig ist"
-     und "Vormerken – …") standen nur noch hier, im Quelltext gab es sie nicht mehr - der
-     Hinweis-Mechanismus (inbox, "wird nach dem aktuellen Schritt zugestellt", "Jetzt")
-     uebersetzt heute in i18n-lex-settings.js. "Zurück ins Eingabefeld holen" bleibt. */
+  'wird gesendet, sobald die KI fertig ist': ['will be sent as soon as the AI is done', 'sera envoyé dès que l’IA aura terminé'],
+  'Vormerken – wird gesendet, sobald die KI fertig ist': ['Queue – sent as soon as the AI is done', 'Mettre en file – envoyé dès que l’IA aura terminé'],
   'Zurück ins Eingabefeld holen': ['Back to the input field', 'Ramener dans le champ de saisie'],
 
   /* ── app.js: Freigaben und Rückfragen ── */

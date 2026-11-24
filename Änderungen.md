@@ -2765,3 +2765,33 @@ ausgefuehrt.**
 - **Naechster Schritt:** Windows-Programm installieren und starten (bislang nur gebaut und gescannt),
   SearXNG-Hintergrunddienst mit echtem Docker ausprobieren, Geraetetest der APK (Live-Empfaenger,
   autonomer Modus, Gesamtverbrauch).
+
+## 117. LLM Box auf 1.0.83 gebracht und veroeffentlicht (Modellprofil IQ3, Entdecker gekapselt) (24.11.2026)
+
+- **Quelle 1.0.83:** Der Workspace trug bereits 1.0.83 (package.json, UPDATE-Abschnitt 1.0.83, neue
+  Dateien discover.js, chatmenu.js, thinkdock.js, i18n-lex-v83.js). Das Repo stand noch auf 1.0.82.
+- **Android-webapp auf 1.0.83:** `build-android.ps1` kopiert die Oberflaeche; alle 16 Build-Patches
+  greifen weiterhin (`patch-check.js`: 0 Abbrueche). `android\app\build.gradle`: versionCode 83,
+  versionName "1.0.83-android".
+- **Zwei neue API-Kanale gekapselt (Fund):** `check-api.js` meldete `discover.scan` und `files.savePdf`
+  als fehlend. `chatmenu.js` prueft `api.files.savePdf` bereits selbst (PDF-Export ist Desktop-only).
+  In `discover.js` ein Guard eingefuegt: ohne `api.discover.scan` erscheint ein Hinweistext statt einer
+  kryptischen Fehlermeldung (auf dem Desktop wirkungslos). desktopOnly-Liste in `check-api.js` um
+  `discover`, `discover.scan`, `files.savePdf` erweitert. Platzhalter `192.168.1.50` in discover.js auf
+  `192.0.2.50` gesetzt (RFC 5737, wie ueblich).
+- **Alle 11 Prueflaeufe bestanden, 0 Fehler**; `check-api.js`: keine fehlenden Kanale mehr.
+- **Bereinigte Build-Kopie frisch auf 1.0.83** (rmdir vorher). Eigene Quelle sauber (main.js, discover.js,
+  chatmenu.js, thinkdock.js: keine internen Werte). Die Rest-Treffer stecken in node_modules
+  (.d.ts, ipv4.js, app-builder.exe) und dem Scanner-Selbstverweis.
+- **Alle drei Artefakte gebaut und gescannt:** APK 11.421.459 B (versionCode 83, 4 Funde, nur UAC),
+  Setup 84.079.864 B (4 Zufallsbytefolgen), portable 83.837.618 B (4). app.asar (442 Dateien): 5 Funde
+  (fast-xml-parser-Urheberangabe + 4 UAC), 0 kritische Kategorien.
+- **Repo-Abgleich** gefahren (tmp-repo-apply.ps1, wie bei 1.0.82: hub/, LICENSE, Linux-Dateien;
+  .gitignore nur um hub-data/ ergaenzt; Doku separat aus dem Workspace).
+- **Doku auf 1.0.83:** README.md (Download-Tabelle, neuer Abschnitt "Neu in 1.0.83"), RELEASE.md
+  (Titel, Kopf, Programmtabelle, gemeinsamer Abschnitt bis 1.0.83, Gepraeft-Teil Android/Windows),
+  llm-box/UPDATE.md (Abschnitt 1.0.83).
+- **Veroeffentlicht:** Commit auf main, Tag 1.0.82 -> Tag 1.0.83 gesetzt und gepusht, GitHub-Release
+  1.0.83 mit drei Assets angelegt (APK, Setup, portable). EXEs nur am Release, nicht im Repo.
+- **Naechster Schritt:** Modellprofil-Umstellung (V83) an einer echten Installation pruefen,
+  Geraetetest der APK (Entdecker-Hinweis, PDF-Export fehlt auf Android bewusst).

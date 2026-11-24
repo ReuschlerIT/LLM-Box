@@ -1415,6 +1415,20 @@ Vorgängerversion: 1.0.81
 - Nicht erfasst: Hintergrund-Aufrufe ohne Chat-Antwort (Unteragenten, Übergabe-Text, Verbindungstest).
 - Englische und französische Texte: `i18n-lex-v82c.js`.
 
+## Dokumentation
+- **Screenshots erneuert**, alle im hellen Design und in der aktuellen Oberfläche (`docs/screenshots/`): `01-chat`, `06-hell`, `02-live-powershell`, `03-freigabe`, `04-unteragenten`, `05-monitor`, `07-rueckfrage`. Sie zeigen Beispieldaten (Beispielprojekt, Test-Modellserver), keine echten Chats. Aufgenommen unter Linux. Dadurch zeigt `02-live-powershell` eine Shell-Ausgabe statt PowerShell (Dateiname bleibt, damit Verweise gültig bleiben).
+- `09-desktop-app-hell.png` ist unverändert (Stand 1.0.36), weil dafür eine Strata-Desktop-App nötig ist. Die dunklen Bilder `06-dunkel.png` und `09-desktop-app-dunkel.png` wurden entfernt.
+- `README.md`: neuer Abschnitt „Screenshots“ mit allen Bildern.
+- Kleine Korrektur: Die Freigabe-Karte für Befehle nennt unter Linux „sh“ statt „cmd“.
+
+## Strata-Server per IP-Adresse erkennen
+- Neu unter **Einstellungen → Verbindungen**: Knopf **„Server per IP-Adresse erkennen …“** (`js/discover.js`, `main.js` → `discover:scan`). Eingabe: IP-Adresse oder Rechnername, optional weitere Ports und ein API-Schlüssel.
+- Die App prüft auf dem Rechner eine Liste üblicher Ports (8080, 8000, 8001, 8081, 8888, 1234, 11434, 5000, 3000, 9000, 7860, 47831 und 18500–18510) plus die Ports, die du angibst und die die Strata-App selbst als Instanz-Port meldet. Es werden nur lesende Anfragen (GET) gesendet. Erkannt werden: **Strata-App** (`/api/native`), **Strata-Modellserver** (`/metrics`), **OpenAI-kompatible Schnittstelle** (`/v1/models`) und **Ollama** (`/api/tags`).
+- Pro Treffer zeigt der Dialog Instanzen, installierte Modelle, Modell, Kontext, parallele Plätze und GPU. Der empfohlene Treffer (Strata-App mit Chat-Schnittstelle) ist vorgewählt.
+- **Übernehmen** legt die Verbindung „Strata (<IP>)“ an oder aktualisiert eine vorhandene mit derselben Adresse, setzt sie als Server-Verbindung (und optional als aktive Verbindung), trägt die IP als Zielrechner ein und füllt in „Modell starten“ **nur leere Felder** (Modell, Kontext, parallele Plätze, Port). Damit läuft „Modell laden“ über die Strata-App auf dem Server.
+- Verlangt der Server einen Schlüssel, meldet der Dialog das; Schlüssel eintragen und erneut suchen.
+- Englische und französische Texte: `i18n-lex-v82c.js`.
+
 ## Sprachen (Englisch und Französisch)
 - Rund 290 bisher fehlende Texte und 40 Muster übersetzt (`i18n-lex-v82.js`, `i18n-lex-v82b.js`, in `index.html` eingebunden): Autonomer Modus, Live-Ansicht, Websuche, Server-Fenster, Verbindungsprüfung, Modul-Beschreibungen, Stromkosten-Tooltips, Menüs.
 - Anweisungen an die KI (Autonom-Modus, Übergabe, Abschluss-Prüfung, Werkzeug-Antworten) gehen in der gewählten Sprache an das Modell. Neue Funktion `TLines()` in `i18n.js` übersetzt mehrzeilige Texte zeilenweise (`autoFinishTool()` und `autoSystemDe()` in `auto.js`).
@@ -1426,6 +1440,7 @@ Vorgängerversion: 1.0.81
 
 ## Grenzen
 - Der Gesamtverbrauch wurde nur beim Start geprüft (Block erscheint, usage.json wird angelegt). Das Zählen echter Antworten und der Import vorhandener Chats sind nicht an echten Daten getestet.
+- Die Server-Erkennung wurde nur gegen einen von mir gebauten Test-Server geprüft (Strata-App auf Port 47831, Instanz auf 18500), nicht gegen ein echtes Strata. Die Port-Liste für die Strata-App ist eine Annahme. Findet die Suche deinen Server nicht, den Port unter „Weitere Ports“ eintragen. Ob „Modell laden“ danach auf deinem Server klappt, bitte ausprobieren.
 - Der SearXNG-Dienst wurde nicht mit echtem Docker oder SearXNG getestet (in der Prüfumgebung nicht vorhanden). Geprüft sind nur Syntax und der Start der App mit der neuen Oberfläche. Ob der erste Start, der Port-Wechsel und das Beenden mit der App auf deinem Rechner sauber laufen, bitte ausprobieren.
 - Meldungen aus `main.js`, die als Werkzeug-Ergebnis an die KI gehen, bleiben deutsch.
 - Die Linux-Fassung wurde nur kurz unter einem virtuellen Display gestartet (Oberfläche lädt, keine Renderer-Fehler). Der Bau der Pakete und der Betrieb auf echten Desktops sind nicht geprüft.
@@ -1434,4 +1449,39 @@ Vorgängerversion: 1.0.81
 - Ändert ein Android-Build `auto.js` mit exakten Suchtexten, bitte prüfen (`autoSystem()` ist in zwei Funktionen geteilt).
 
 ## Geänderte Dateien
-`main.js` (Sortierung, Linux-Fenster), `renderer/js/app.js`, `owui.js`, `usage.js`, `preload.js`, `i18n-lex-v82c.js`, `auto.js`, `handoff.js`, `subagents.js`, `i18n.js`, `i18n-lex-v82.js`, `i18n-lex-v82b.js`, `platform.js`, `renderer/index.html`, `renderer/styles.css`, `package.json`, `package-lock.json`, `start.sh`, `build-linux.sh`, `llm-box.desktop`, `docs/LINUX.md`, `UPDATE.md`.
+`main.js` (Sortierung, Linux-Fenster), `renderer/js/app.js`, `owui.js`, `usage.js`, `discover.js`, `settings.js`, `preload.js`, `i18n-lex-v82c.js`, `auto.js`, `handoff.js`, `subagents.js`, `i18n.js`, `i18n-lex-v82.js`, `i18n-lex-v82b.js`, `platform.js`, `renderer/index.html`, `renderer/styles.css`, `package.json`, `package-lock.json`, `start.sh`, `build-linux.sh`, `llm-box.desktop`, `docs/LINUX.md`, `UPDATE.md`.
+
+# Update: Version 1.0.83
+
+Vorgängerversion: 1.0.82
+
+Anlass: Das Modell (Qwen3.8-Flash-Next, IQ3_S, über Strata) lief in Denkschleifen, lehnte Aufgaben ab und erfand Inhalte. Ursachen laut Auswertung der App-Vorgaben und des Engine-Logs: zu niedrige Temperatur, ein zu enges Antwortlimit, ein Prompt mit widersprüchlichen Sprachvorgaben und eine fehlerhafte Engine-Einstellung (`draft_num_predict`, siehe unten).
+
+## Modellprofil „Kleines / stark quantisiertes Modell“ (IQ3/Q3)
+- **Sampling nach der Qwen-Empfehlung für den Denkmodus:** Temperatur 1,0 (vorher 0,3), Top-P 0,95 (vorher 0,9), Top-K 20, **Min-P 0** (vorher 0,05), Wiederholungsstrafe 1,0, **Presence-Penalty 0**. Zu niedrige Temperatur lässt Qwen im Denkmodus in Schleifen kippen.
+- **Max. Antwortlänge 32768** (vorher 12288). Das alte Limit war kleiner als Denken plus Antwort und schnitt Antworten ab, die dann wie Erfindungen wirkten. Das neue Limit fängt nur Endlosschleifen ab; Feld leeren = unbegrenzt.
+- **Denkaufwand „Niedrig“** (`reasoning_effort: low`) als Standard des Profils; Profil „Standard“ bleibt bei „Auto“. Der Knopf „Profil anwenden“ setzt den Denkaufwand jetzt mit.
+- **Einmal-Umstellung für bestehende Installationen (V83):** Es werden nur Werte ersetzt, die noch genau den alten Profilwerten entsprechen. Eigene Eingaben bleiben. „Auto“ beim Denken wird „Niedrig“. Profil „Standard“ wird nicht angefasst. Ein Hinweis erscheint einmalig.
+
+## System-Prompt (Kurzfassung, Deutsch, Englisch, Französisch)
+- Die Pflicht „denke auf Deutsch“ ist entfernt. Die Denksprache steuert allein der Schalter „Modell bitten, auf Deutsch zu denken“ (Standard aus); Qwen denkt auf Englisch genauer.
+- Neu: „kurz planen, dann handeln“, „nicht im Kreis denken, bei zweimaligem Fehlschlag Ansatz ändern oder nachfragen“, „nichts erfinden, erst lesen, Unwissen offen nennen“.
+- Gegen unnötige Ablehnungen: Analyse, Dokumentation und Entwicklung im Workspace sind die vorgesehene Aufgabe; abgelehnt wird nur bei klarem Schaden für andere, mit Begründung. Gefundene Schlüssel und Tokens werden nur dokumentiert.
+- Ein unveränderter Kurz-Prompt aus 1.0.82 wird automatisch durch die neue Fassung ersetzt (die alten Texte bleiben als bekannte Standards erkannt). Eigene Prompts bleiben unberührt. Der ausführliche Standard-Prompt (Profil „Standard“) ist unverändert.
+
+## Server & Monitor → Modell starten (Strata)
+- **Entwurfs-Verfahren** (`--drafting auto|dflash2|mtp|off`).
+- **Entwurfs-Fenster (spec)** (`--set spec=N`): wie viele Tokens der Entwurfsgeber pro Prüfschritt vorschlägt. Das Tuning wählte auf der Testkarte 6; zum Vergleichen ist 4 empfohlen. Der Name `draft_num_predict` (`--draft-num-predict`) existiert in Engine 0.1.67 nicht: Die Engine beendet sich mit „unknown argument“ (Exit-Code 2) und startet nicht.
+- **Empfohlene Engine-Werte:** Knopf trägt `STRATA_ROUTE_PRIOR=0`, `STRATA_ROUTE_TAIL_SKIP=0`, `STRATA_KVA=0`, `STRATA_PREFILL_CPU_SHARE=0` und `STRATA_HC_Q8=0` in „Zusätzliche Engine-Einstellungen“ ein (vorhandene Zeilen bleiben). Hinweis: `ROUTE_TAIL_SKIP=0` und `PREFILL_CPU_SHARE=0` schalten laut Engine-Log Tempo-Abkürzungen ab; Tempo vorher und nachher vergleichen.
+
+## Übersetzungen
+- Neue Datei `renderer/js/i18n-lex-v83.js` mit allen neuen Texten auf Englisch und Französisch (12 Einträge, eingebunden in `index.html`).
+
+## Nicht geändert / bekannte Grenzen
+- Nicht in der laufenden App getestet: Syntaxprüfung aller geänderten Dateien und ein Funktionstest von Einmal-Umstellung, Prompt-Erkennung und Startbefehl mit Testdaten.
+- `reasoning_effort` und die Sampling-Werte wirken nur, wenn die Verbindung „Von der App senden“ nutzt (Standard) und – für Top-K, Min-P und Strafen – „Erweiterte Parameter senden“ an ist (bei der Strata-Vorlage der Fall). Bei „Dem Server überlassen“ gelten die Strata-Voreinstellungen.
+- Englische und französische Texte sind nicht von Muttersprachlern gegengelesen.
+- Der Android-Build (`build-android.ps1`) lag nicht vor. Der Text `DEFAULTS.systemPrompt` und die Literale in `DEFAULTS` wurden bewusst nicht verändert; neue Felder werden nach den Literalen ergänzt.
+
+## Geänderte Dateien
+`renderer/js/settings.js`, `renderer/js/i18n-prompts.js`, `renderer/js/server.js`, `renderer/js/i18n-lex-v83.js` (neu), `renderer/index.html`, `package.json`, `package-lock.json`, `UPDATE.md`.

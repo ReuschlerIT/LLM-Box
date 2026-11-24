@@ -268,7 +268,7 @@ function buildChrome() {
   if (typeof autoInit === 'function') autoInit();
   if (typeof liveInit === 'function') liveInit();
   if (typeof applyModules === 'function') applyModules();
-  $('#btn-export').innerHTML = icon('download', 17);
+  $('#btn-export').innerHTML = icon('dots', 17);
   $('#btn-panel').innerHTML = icon('panel', 17);
   $('#btn-attach').innerHTML = icon('paperclip');
   $('#btn-attach-folder').innerHTML = icon('folder');
@@ -529,6 +529,7 @@ function renderChatList() {
       acts
     );
     item.addEventListener('dblclick', () => renameChat(c.id));
+    item.addEventListener('contextmenu', (e) => { e.preventDefault(); openChatMenu({ x: e.clientX, y: e.clientY }, c.id); });
     box.append(item);
   };
   let last = '';
@@ -754,6 +755,7 @@ function renderAll() {
   if (typeof owuiRefresh === 'function') owuiRefresh();
   if (typeof autoRefresh === 'function') autoRefresh();
   renderModelSelect();
+  tdApplyLayout();
   renderMessages();
   renderAttachStrip();
   renderQueuedStrip();
@@ -854,9 +856,11 @@ function renderMessages() {
   subRefresh();
   const box = $('#messages-inner');
   box.innerHTML = '';
+  tdReset();
   const msgs = S.chat ? S.chat.messages : [];
   if (!msgs.length) {
     box.append(emptyState());
+    tdRefresh();
     return;
   }
   let lastAssistant = -1;
@@ -884,12 +888,14 @@ function renderMessages() {
       el('span', { class: 'msg-steps-info', text: `${von} ältere Nachrichten sind ausgeblendet.` })));
   }
 
+  tdSetOlder(msgs, von);   // Gedankengänge vor dem Anzeigebereich: im Dropdown erst auf Wunsch
   for (let i = von; i < msgs.length; i++) {
     const m = msgs[i];
     if (cs && i === cs) box.append(el('div', { class: 'ctx-divider' }, el('span', { html: icon('eraser', 14) + '<span>Kontext geleert – ab hier sieht die KI nur die Übergabe und was danach kommt</span>' })));
-    if (atRun && vr.runNode && vr.runAm === m) box.append(vr.runNode); // gerade streamende Antwort: derselbe Knoten läuft weiter
+    if (atRun && vr.runNode && vr.runAm === m) { box.append(vr.runNode); tdSync(vr.runNode, m); } // gerade streamende Antwort: derselbe Knoten läuft weiter
     else if (i < vollAb && !aufgefaltet.has(i)) {
       const n = compactEl(m, i);                       // weiter zurueck: nur eine kompakte Zeile
+      if (m.role === 'assistant') tdStub(m, i);
       if (cs && i < cs) n.classList.add('ctx-old');
       box.append(n);
     } else {
@@ -909,6 +915,7 @@ function renderMessages() {
     const hn = hoNotice();
     if (hn) box.append(hn);
   }
+  tdRefresh();
   if (S.stick) scrollBottom();
 }
 
@@ -943,7 +950,8 @@ function actionBtn(ic, title, fn, label) {
   return el('button', { class: 'mini-btn', title, html: icon(ic, 14) + (label ? `<span>${label}</span>` : ''), onclick: fn });
 }
 
-function fileChip(f, onRemove) {
+function fileChip(f, onRemove, onEdit) {
+  if (f.pasted) return pasteCard(f, onRemove, onEdit);
   const tokens = f.kind === 'text' ? estimateTokens(f.text) : 0;
   return el('div', { class: 'chip', title: (f.path || f.name) + (f.converted ? `\n${f.converted}: als Text ausgelesen` : ''), onclick: () => previewFile(f) },
     el('span', { html: icon(f.kind === 'image' ? 'image' : 'file', 14) }),
@@ -960,7 +968,7 @@ function previewFile(f) {
     const t = f.text || '';
     body = el('pre', { class: 'preview', text: t.length > 200000 ? t.slice(0, 200000) + '\n\n[… gekürzt]' : t });
   }
-  openModal({ title: f.name, body, wide: true });
+  openModal({ title: f.pasted ? 'Eingefügter Text' : f.name, body, wide: true });
 }
 
 /* ───── Fensterweise Darstellung alter Nachrichten ─────
@@ -1028,7 +1036,7 @@ function userEl(m, i) {
   if (m.auto && !m.handoff) node.append(el('div', { class: 'steer-tag', text: 'Automatisch (autonomer Modus)' }));
   if (m.content && m.handoff) node.append(el('details', { class: 'bubble handoff-msg' }, el('summary', { text: `${m.cleared ? 'Übergabe nach „Kontext leeren“' : 'Übergabe aus der vorherigen Sitzung'} (${fmt.num(m.content.length)} Zeichen)` }), el('pre', { text: m.content })));
   else if (m.content) node.append(el('div', { class: 'bubble', text: m.content }));
-  node.append(el('div', { class: 'msg-actions' }, actionBtn('copy', 'Kopieren', () => copyText(m.content || '')), actionBtn('edit', 'Bearbeiten und neu senden', () => editMessage(i))));
+  node.append(el('div', { class: 'msg-actions' }, actionBtn('copy', 'Kopieren', () => copyText(m.content || '')), actionBtn('share', 'Teilen', (e) => openMessageShare(e.currentTarget, m)), actionBtn('edit', 'Bearbeiten und neu senden', () => editMessage(i))));
   return node;
 }
 
@@ -1049,6 +1057,7 @@ function assistantEl(m, i, isLast) {
   node.append(r.who, r.think, r.body, r.imgs, r.err, r.note, r.stats);
   const acts = el('div', { class: 'msg-actions' }, actionBtn('copy', 'Antwort kopieren', () => copyText(LLM.splitThink(m.content || '').answer)));
   if (typeof owuiActions === 'function') owuiActions(acts, m); // Vorlesen
+  acts.append(actionBtn('share', 'Teilen', (e) => openMessageShare(e.currentTarget, m)));
   if (isLast) acts.append(actionBtn('refresh', 'Neu generieren', regenerate, 'Neu generieren'));
   if (m.request) acts.append(actionBtn('sliders', 'Zeigt, was an den Server gesendet wurde (Parameter, Anzahl Nachrichten und Werkzeuge)', () => showRequest(m), 'Anfrage'));
   node._acts = acts;
@@ -1070,7 +1079,7 @@ function renderAssistantParts(node, m, mode) {
       r.thinkEl = el('details', { class: 'think' }, el('summary', {}, el('span', { class: 'chev', html: icon('chevron', 14) }), el('span', {}, 'Gedankengang', el('span', { class: 'think-dots', 'aria-hidden': 'true' }))), r.thinkInner);
       if (live && S.settings.appearance.thinkOpen) r.thinkEl.open = true;
       r.thinkEl.addEventListener('toggle', () => followApply(r.thinkInner));
-      r.think.append(r.thinkEl);
+      tdMountNew(node, r, m, live);   // im Chat oder im Gedankengänge-Dropdown (thinkdock.js)
     }
     node._m = m;
     const ti = r.thinkInner;
@@ -1081,6 +1090,7 @@ function renderAssistantParts(node, m, mode) {
     followSet(ti, tt);
     // aktiv = es wird noch gedacht (Antworttext hat noch nicht begonnen)
     r.thinkEl.classList.toggle('active', live && !answer);
+    tdRefresh();
   }
 
   if (answer) renderMd(r.body, answer, !live);
@@ -2218,7 +2228,7 @@ async function runExecTool(tc, base, rc) {
         const d = await ask({
           kind: 'run',
           target: command,
-          note: `Läuft auf deinem Rechner (${shellKind === 'powershell' ? 'PowerShell' : 'cmd'}) mit deinen Benutzerrechten, Arbeitsordner: ${a.cwd ? ws.path + ' / ' + a.cwd : ws.path}. Prüfe den Befehl, bevor du genehmigst.`,
+          note: `Läuft auf deinem Rechner (${shellKind === 'powershell' ? 'PowerShell' : (/Win/i.test(navigator.platform || '') ? 'cmd' : 'sh')}) mit deinen Benutzerrechten, Arbeitsordner: ${a.cwd ? ws.path + ' / ' + a.cwd : ws.path}. Prüfe den Befehl, bevor du genehmigst.`,
           noAlways: !canProg,
           alwaysLabel: `„${prog}“ immer erlauben (beliebige Argumente)`,
           alwaysTitle: 'Dieses Programm darf in diesem Chat mit beliebigen Argumenten laufen. Verkettete Befehle, Umleitungen (>) und Unterbefehle fragen weiterhin nach, außer alle beteiligten Programme sind freigegeben.',
@@ -2376,7 +2386,7 @@ function renderQueuedStrip() {
 function renderAttachStrip() {
   const s = $('#attach-strip');
   s.innerHTML = '';
-  S.attachments.forEach((f, i) => s.append(fileChip(f, () => { S.attachments.splice(i, 1); renderAttachStrip(); updateEstimate(); if (viewRun()) updateSendBtn(); })));
+  S.attachments.forEach((f, i) => s.append(fileChip(f, () => { S.attachments.splice(i, 1); renderAttachStrip(); updateEstimate(); if (viewRun()) updateSendBtn(); }, f.pasted ? () => editPasted(f) : null)));
 }
 
 function addAttachments(res) {
@@ -2395,6 +2405,78 @@ function addAttachments(res) {
   const tokens = attachTokens();
   const max = +S.settings.params.numCtx || 0;
   if (max && tokens > max * 0.8) toast(`Achtung: Anhänge ≈ ${fmt.num(tokens)} Tokens, Kontextlänge ist ${fmt.num(max)}. Erhöhe num_ctx oder hänge weniger an.`, 7000);
+}
+
+/* ───── Langer Text per Strg+V → Karte „Eingefügt“ ─────
+   Ab einer einstellbaren Länge (Einstellungen → Darstellung → „Lange Texte als Karte einfügen“) landet der Text nicht im
+   Eingabefeld, sondern als Anhang vom Typ „text“ mit dem Merkmal pasted. Für die KI ist das ein ganz normaler Textanhang
+   (<file name="pasted-text-1.txt">), nur die Darstellung ist anders. Der Stift öffnet den Text zum Bearbeiten. */
+function pasteCfg() {
+  const p = (S.settings && S.settings.paste) || {};
+  return { on: p.enabled !== false, min: Math.max(200, +p.minChars || 1500) };
+}
+function isLongPaste(txt) {
+  const c = pasteCfg();
+  return !!txt && c.on && txt.length >= c.min;
+}
+function addPastedText(txt) {
+  let n = 1;
+  while (S.attachments.some((a) => a.name === `pasted-text-${n}.txt`)) n++;
+  const text = txt.replace(/\r\n/g, '\n');
+  S.attachments.push({ name: `pasted-text-${n}.txt`, kind: 'text', text, size: new Blob([text]).size, pasted: true });
+  renderAttachStrip();
+  updateEstimate();
+  if (viewRun()) updateSendBtn();
+  const tokens = attachTokens();
+  const max = +S.settings.params.numCtx || 0;
+  if (max && tokens > max * 0.8) toast(`Achtung: Anhänge ≈ ${fmt.num(tokens)} Tokens, Kontextlänge ist ${fmt.num(max)}. Erhöhe num_ctx oder hänge weniger an.`, 7000);
+}
+
+function pasteCard(f, onRemove, onEdit) {
+  const tokens = estimateTokens(f.text || '');
+  const preview = (f.text || '').trim().slice(0, 240);
+  return el('div', { class: 'pastecard', title: 'Eingefügter Text – Klick zeigt den ganzen Text', onclick: () => previewFile(f) },
+    el('div', { class: 'pv', text: preview }),
+    el('div', { class: 'pt', text: '~' + fmt.tok(tokens) + ' T' }),
+    el('div', { class: 'pf' },
+      el('span', { class: 'badge', text: 'Eingefügt' }),
+      onEdit ? el('button', { class: 'pe', title: 'Bearbeiten', html: icon('edit', 14), onclick: (e) => { e.stopPropagation(); onEdit(); } }) : null
+    ),
+    onRemove ? el('button', { class: 'x', title: 'Entfernen', html: icon('x', 13), onclick: (e) => { e.stopPropagation(); onRemove(); } }) : null
+  );
+}
+
+function editPasted(f) {
+  const ta = el('textarea', { class: 'paste-edit', spellcheck: 'false' });
+  ta.value = f.text || '';
+  const m = openModal({
+    title: 'Eingefügten Text bearbeiten',
+    body: ta,
+    wide: true,
+    buttons: [
+      { label: 'Abbrechen', value: null },
+      { label: 'Ins Eingabefeld', onClick: (close) => {
+        const i = S.attachments.indexOf(f);
+        if (i >= 0) S.attachments.splice(i, 1);
+        const inp = $('#input');
+        inp.value = inp.value + (inp.value && !inp.value.endsWith('\n') ? '\n' : '') + ta.value;
+        close();
+        autosize(); renderAttachStrip(); updateEstimate(); if (viewRun()) updateSendBtn();
+        inp.focus();
+        toast('Der Text steht jetzt im Eingabefeld.');
+      } },
+      { label: 'Speichern', primary: true, onClick: (close) => {
+        const v = ta.value;
+        const i = S.attachments.indexOf(f);
+        if (!v.trim()) { if (i >= 0) S.attachments.splice(i, 1); }
+        else { f.text = v; f.size = new Blob([v]).size; }
+        close();
+        renderAttachStrip(); updateEstimate(); if (viewRun()) updateSendBtn();
+      } },
+    ],
+  });
+  setTimeout(() => ta.focus(), 0);
+  return m;
 }
 
 const attachTokens = () => S.attachments.reduce((n, f) => n + (f.kind === 'text' ? estimateTokens(f.text) : f.kind === 'image' ? 600 : 0), 0);
@@ -2599,7 +2681,7 @@ function chatToMarkdown(c) {
   const lines = [`# ${c.title}`, '', `_${new Date(c.created).toLocaleString('de-DE')} · ${c.model || ''}_`, ''];
   for (const m of c.messages) {
     if (m.role === 'user') {
-      lines.push('## Du', '', ...(m.files || []).map((f) => `- 📎 ${f.name}`), m.content || '', '');
+      lines.push('## Du', '', ...(m.files || []).filter((f) => !f.pasted).map((f) => `- 📎 ${f.name}`), ...(m.files || []).filter((f) => f.pasted && f.text).flatMap((f) => ['```', f.text, '```', '']), m.content || '', '');
     } else if (m.role === 'assistant') {
       lines.push(`## Assistent (${m.model || ''})`, '', m.content || (m.error ? `**Fehler:** ${m.error}` : ''), '');
       if (m.stats) {
@@ -2647,7 +2729,15 @@ function wireEvents() {
   });
   ta.addEventListener('paste', async (e) => {
     const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
+    if (!files.length) {
+      // Sehr langer Text: nicht ins Eingabefeld kippen, sondern als Karte (wie die Zwischenablage bei Claude) anhängen
+      const txt = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+      if (isLongPaste(txt)) {
+        e.preventDefault();
+        addPastedText(txt);
+      }
+      return;
+    }
     e.preventDefault();
     const imgs = await Promise.all(files.map(readImageFile));
     addAttachments({ files: imgs, skipped: [] });
@@ -2657,13 +2747,17 @@ function wireEvents() {
   $('#btn-pause').addEventListener('click', togglePause);
   updatePauseUI();
   $('#btn-new').addEventListener('click', newChat);
-  $('#btn-settings').addEventListener('click', () => openSettings('conn'));
+  $('#btn-settings').addEventListener('click', () => openSettings());   // ohne Ziel: zuletzt geöffnete Seite
   $('#btn-server').innerHTML = icon('cpu', 16) + '<span>Server</span>';
   $('#btn-server').addEventListener('click', () => openServer('monitor'));
   $('#btn-monitor').innerHTML = icon('activity', 16) + '<span>Monitor</span>';
   $('#btn-monitor').addEventListener('click', svToggleDock);
   $('#btn-refresh').addEventListener('click', refreshModels);
-  $('#btn-export').addEventListener('click', exportChat);
+  $('#btn-export').addEventListener('click', (e) => {   // Chat-Menü: Teilen, Herunterladen, Umbenennen … (chatmenu.js)
+    const b = e.currentTarget;
+    if (treeMenuOpenFor(b)) return closeTreeMenu();
+    if (S.chat) openChatMenu(b, S.chat.id);
+  });
   $('#btn-panel').addEventListener('click', () => { S.panelOpen = !S.panelOpen; renderFilePanel(); });
   $('#btn-attach').addEventListener('click', () => attachFromDialog('files'));
   $('#btn-attach-folder').addEventListener('click', () => attachFromDialog('folder'));
@@ -2778,7 +2872,7 @@ function wireEvents() {
   document.addEventListener('keydown', (e) => {
     if (!e.ctrlKey || e.altKey) return;
     if (e.key.toLowerCase() === 'n') { e.preventDefault(); newChat(); }
-    else if (e.key === ',') { e.preventDefault(); openSettings('conn'); }
+    else if (e.key === ',') { e.preventDefault(); openSettings(); }
   });
   if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (S.settings.appearance.theme === 'system') applyAppearance(); });
 }

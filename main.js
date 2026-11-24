@@ -702,6 +702,27 @@ ipcMain.handle('file:saveAs', async (_e, { defaultName, content, base64, default
   return r.filePath;
 });
 
+/* Chat als PDF speichern: Das Dokument (HTML, ohne Skripte) wird in einem unsichtbaren Fenster gedruckt. */
+ipcMain.handle('file:savePdf', async (_e, { defaultName, html }) => {
+  let pw = null;
+  const tmp = path.join(os.tmpdir(), 'llmbox-pdf-' + crypto.randomBytes(6).toString('hex') + '.html');
+  try {
+    const r = await dialog.showSaveDialog(win, { defaultPath: defaultName || 'chat.pdf', filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+    if (r.canceled || !r.filePath) return { path: null };
+    await fsp.writeFile(tmp, String(html || ''), 'utf8');
+    pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false, contextIsolation: true, nodeIntegration: false } });
+    await pw.loadFile(tmp);
+    const pdf = await pw.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true });
+    await fsp.writeFile(r.filePath, pdf);
+    return { path: r.filePath };
+  } catch (e) {
+    return { error: e.message };
+  } finally {
+    try { if (pw && !pw.isDestroyed()) pw.destroy(); } catch {}
+    fsp.unlink(tmp).catch(() => {});
+  }
+});
+
 /* ───────────────────────── Übertragung (QR-Code / JSON-Export) ─────────────────────────
    Format siehe docs/TRANSFER-FORMAT.md. Der Hauptprozess komprimiert (zlib), bildet die Prüfsumme und liest auf Wunsch Textdateien des Workspace. */
 ipcMain.handle('transfer:info', () => ({ version: app.getVersion(), platform: process.platform, device: deviceName() }));
@@ -1626,7 +1647,7 @@ app.on('before-quit', liveStop);
 /* ───────────────────────── Fenster / System ───────────────────────── */
 
 ipcMain.handle('shell:openExternal', (_e, url) => {
-  if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  if (/^(https?:\/\/|mailto:)/i.test(url)) shell.openExternal(url);   // mailto: für „Per E-Mail senden“
 });
 ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p));
 /* Rechner wach halten, solange ein autonomer Lauf aktiv ist (Ruhezustand verhindern; der Bildschirm darf ausgehen) */
@@ -1934,6 +1955,80 @@ app.on('before-quit', () => {
   if (!searx.stopOnQuit) return;
   if (searx.child && searx.child.exitCode === null) { try { if (IS_WIN) execFile('taskkill', ['/pid', String(searx.child.pid), '/T', '/F'], { windowsHide: true }, () => {}); else process.kill(-searx.child.pid, 'SIGTERM'); } catch {} }
   if (searx.mode === 'docker') { try { require('child_process').execFileSync('docker', ['stop', '-t', '3', SEARX_NAME], { timeout: 15000, windowsHide: true, stdio: 'ignore' }); } catch {} }
+});
+
+/* ───────────────────────── Strata-Server per IP-Adresse erkennen ─────────────────────────
+   Prueft auf der eingegebenen Adresse eine kurze Liste ueblicher Ports (plus Ports, die der Nutzer nennt und Instanz-Ports,
+   die die Strata-App selbst meldet). Erkannt werden: Strata-Desktop-App (/api/native), Strata-Modellserver (/metrics),
+   OpenAI-kompatible Schnittstelle (/v1/models) und Ollama (/api/tags). Es werden nur lesende Anfragen (GET) gesendet. */
+const DISCOVER_PORTS = [8080, 8000, 8001, 8081, 8888, 1234, 11434, 5000, 3000, 9000, 7860, 47831, 18500, 18501, 18502, 18503, 18504, 18505, 18506, 18507, 18508, 18509, 18510];
+function discoverTcp(host, port, timeout = 900) {
+  return new Promise((resolve) => {
+    const s = require('net').connect({ host, port });
+    const done = (ok) => { try { s.destroy(); } catch {} resolve(ok); };
+    s.setTimeout(timeout, () => done(false));
+    s.once('connect', () => done(true));
+    s.once('error', () => done(false));
+  });
+}
+function discoverGet(host, port, p, key, timeout = 3500) {
+  return new Promise((resolve) => {
+    const headers = { Accept: 'application/json' };
+    if (key) headers.Authorization = 'Bearer ' + key;
+    const req = require('http').get({ host, port, path: p, headers, timeout }, (res) => {
+      let t = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { if (t.length < 400000) t += d; });
+      res.on('end', () => { let json = null; try { json = JSON.parse(t); } catch {} resolve({ status: res.statusCode, json, text: t }); });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0 }); });
+    req.on('error', () => resolve({ status: 0 }));
+  });
+}
+const discoverIds = (arr) => (Array.isArray(arr) ? arr : []).map((m) => (typeof m === 'string' ? m : m && (m.id || m.name || m.model))).filter(Boolean);
+async function discoverProbe(host, port, key) {
+  if (!(await discoverTcp(host, port))) return null;
+  const [nat, met, mod, tags] = await Promise.all([
+    discoverGet(host, port, '/api/native', key), discoverGet(host, port, '/metrics', key),
+    discoverGet(host, port, '/v1/models', key), discoverGet(host, port, '/api/tags', key)]);
+  const r = { port, needsKey: false, strataHost: false, strataServer: false, openai: false, ollama: false, models: [], installed: [], instances: [], engine: null };
+  if ([nat, met, mod, tags].some((x) => x.status === 401 || x.status === 403)) r.needsKey = true;
+  const nj = nat.status === 200 && nat.json;
+  const list = nj && (Array.isArray(nj.instances) ? nj.instances : Array.isArray(nj) ? nj : null);
+  if (list) {
+    r.strataHost = true;
+    r.instances = list.filter((i) => i && typeof i === 'object').map((i) => ({ id: i.id, status: i.status, phase: i.phase, port: i.port, model: i.modelId || i.model || i.name || '' }));
+    const inst = nj.installed;
+    r.installed = discoverIds(inst && (Array.isArray(inst.models) ? inst.models : inst));
+  }
+  const mj = met.status === 200 && met.json;
+  const mm = mj && (['engine', 'live', 'hardware', 'totals'].some((k) => k in mj) ? mj : null);
+  if (mm) {
+    r.strataServer = true;
+    const live = mm.live || {};
+    r.engine = { model: (mm.engine && mm.engine.model) || '', maxContext: +(mm.engine && mm.engine.max_context) || 0, parallel: +live.parallel || (Array.isArray(live.slots) ? live.slots.length : 0) || 0, gpu: (mm.status && mm.status.gpu_name) || '' };
+  }
+  if (mod.status === 200 && mod.json && Array.isArray(mod.json.data)) { r.openai = true; r.models = discoverIds(mod.json.data); }
+  if (tags.status === 200 && tags.json && Array.isArray(tags.json.models)) { r.ollama = true; r.models = r.models.length ? r.models : discoverIds(tags.json.models); }
+  if (!(r.strataHost || r.strataServer || r.openai || r.ollama || r.needsKey)) return null;
+  return r;
+}
+ipcMain.handle('discover:scan', async (_e, o) => {
+  const host = String((o && o.host) || '').trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+  if (!host || host.length > 253 || !/^[A-Za-z0-9.\-]+(:\d{1,5})?$/.test(host)) return { ok: false, error: 'Bitte eine IP-Adresse oder einen Rechnernamen eingeben (z. B. 192.0.2.1.50).' };
+  let h = host, extra = [];
+  const m = /^(.*):(\d{1,5})$/.exec(host);
+  if (m) { h = m[1]; extra.push(+m[2]); }
+  for (const p of String((o && o.ports) || '').split(/[\s,;]+/)) { const n = Math.floor(+p); if (n >= 1 && n <= 65535) extra.push(n); }
+  const key = String((o && o.apiKey) || '');
+  const ports = [...new Set([...extra, ...DISCOVER_PORTS])];
+  const found = (await Promise.all(ports.map((p) => discoverProbe(h, p, key)))).filter(Boolean);
+  // Instanz-Ports, die die Strata-App meldet und die noch nicht geprueft wurden
+  const more = new Set();
+  for (const f of found) for (const i of f.instances) { const n = Math.floor(+i.port); if (n > 0 && !ports.includes(n)) more.add(n); }
+  for (const p of more) { const r = await discoverProbe(h, p, key); if (r) found.push(r); }
+  found.sort((a, b) => (b.strataHost - a.strataHost) || (b.strataServer - a.strataServer) || (b.openai - a.openai) || a.port - b.port);
+  return { ok: true, host: h, scanned: ports.length + more.size, found };
 });
 
 if (gotLock) app.whenReady().then(createWindow);

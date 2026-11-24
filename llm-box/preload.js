@@ -30,6 +30,7 @@ const withLive = (ch) => (o, cb) => {
 };
 
 contextBridge.exposeInMainWorld('api', {
+  discover: { scan: (o) => inv('discover:scan', o) },
   searx: { status: (o) => inv('searx:status', o), start: (o) => inv('searx:start', o), stop: () => inv('searx:stop') },
   store: { get: (n) => inv('store:get', n), set: (n, d) => inv('store:set', n, d) },
   chats: {
@@ -45,6 +46,7 @@ contextBridge.exposeInMainWorld('api', {
     read: (paths, lim) => inv('files:read', paths, lim),
     pickFolder: (title) => inv('folder:pick', title),
     saveAs: (o) => inv('file:saveAs', o),
+    savePdf: (o) => inv('file:savePdf', o),
     pathOf: (file) => {
       try {
         return webUtils.getPathForFile(file);

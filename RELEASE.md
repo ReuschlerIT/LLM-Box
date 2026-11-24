@@ -1,21 +1,22 @@
-# LLM Box 1.0.82 (Windows, Linux und Android)
+# LLM Box 1.0.83 (Windows, Linux und Android)
 
-**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.82** gebaut und als Dateien am
-GitHub-Release [1.0.82](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.82) eingestellt
+**Stand dieser Datei:** Windows- und Android-Fassung sind auf **1.0.83** gebaut und als Dateien am
+GitHub-Release [1.0.83](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.83) eingestellt
 (Setup, portable EXE, APK). Im Repository liegen sie nicht mehr – die Windows-Programme sind rund
-84 MB. Die Android-Fassung trägt **1.0.82-android**
-(versionCode 82). Beide Fassungen entstehen aus **derselben
+84 MB. Die Android-Fassung trägt **1.0.83-android**
+(versionCode 83). Beide Fassungen entstehen aus **derselben
 Quelle** (`llm-box/`), die Android-Oberfläche wird beim Bauen aus den Dateien von `llm-box/renderer/`
-erzeugt. Vorgängerversion auf GitHub: [1.0.70](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70),
+erzeugt. Vorgängerversion auf GitHub: [1.0.82](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.82),
+[1.0.70](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.70),
 [1.0.65](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.65),
 [v1.0.50](https://github.com/ReuschlerIT/LLM-Box/releases/tag/v1.0.50)
 
-Die aktuelle Fassung bringt den **autonomen Modus** (die KI arbeitet selbstständig über Nacht),
-**Live-Ansicht und Hub** (Chats geräteübergreifend in Echtzeit, Server ohne Oberfläche), die
-**Module im Stil von Open WebUI** (Prompt-Bibliothek, Assistenten, Gedächtnis, Wissenssuche,
-Websuche ohne eigenen Server), den **Gesamtverbrauch** in der Seitenleiste, rund **290 neue englische
-und französische Texte** sowie eine **Linux-Fassung**. Vorgängerversion 1.0.70 brachte
-**Stromverbrauch**, **Hinweise an die laufende KI** und **mehrere Aufträge pro Chat**.
+Die aktuelle Fassung bringt das nachgereichte **Modellprofil für kleine, stark quantisierte Modelle
+(IQ3/Q3)** nach der Qwen-Empfehlung für den Denkmodus (gegen Denkschleifen und abgeschnittene
+Antworten), einen gestrafften **System-Prompt**, die **Strata-Entwurfsverfahren** und neue
+Übersetzungen. Vorgängerversion 1.0.82 brachte **autonomen Modus**, **Live-Ansicht und Hub**,
+**Module im Stil von Open WebUI**, den **Gesamtverbrauch**, rund 290 neue Sprachen-Texte und eine
+**Linux-Fassung**.
 
 ## Programme
 
@@ -24,9 +25,9 @@ Android-Programm der aktuellen Fassung und die zuletzt gebauten Windows-Programm
 
 | Datei | Für | Größe |
 |---|---|---|
-| `LLM.Box.Setup.1.0.82.exe` | Windows 10/11, Installer | 84,1 MB |
-| `LLM.Box.1.0.82.portable.exe` | Windows 10/11, ohne Installation | 83,8 MB |
-| `LLM-Box-1.0.82-android.apk` | Android 8.0 oder neuer, Fassung 1.0.82-android | 10,8 MB |
+| `LLM.Box.Setup.1.0.83.exe` | Windows 10/11, Installer | 84,1 MB |
+| `LLM.Box.1.0.83.portable.exe` | Windows 10/11, ohne Installation | 83,8 MB |
+| `LLM-Box-1.0.83-android.apk` | Android 8.0 oder neuer, Fassung 1.0.83-android | 10,9 MB |
 
 Beide Fassungen haben dieselbe Oberfläche und dasselbe Chat-Format. Bestehende Einstellungen,
 Verbindungen und Chats bleiben beim Update erhalten.
@@ -265,7 +266,7 @@ Windows-Änderungen dieses Zeitraums stecken in 1.0.63.
   Patch-Suchtexte gegen die Quelle, ohne zu bauen) und `tools-android\bruecken-check.js`
   (verweist die Android-Brücke noch auf existierende Interna der Desktop-Seite).
 
-### Version 1.0.71 bis 1.0.82 (gemeinsamer Abschnitt)
+### Version 1.0.71 bis 1.0.83 (gemeinsamer Abschnitt)
 - **1.0.71:** Modellauswahl zeigt jetzt alle installierten Strata-Modelle (Abfrage `/api/native`,
   entladen und nachladen auf Wunsch); Klick auf eine Datei im Workspace-Panel ist einstellbar
   (öffnen, anhängen, nachfragen, im Ordner zeigen).
@@ -308,6 +309,15 @@ Windows-Änderungen dieses Zeitraums stecken in 1.0.63.
   `tools-android\check-api.js` kennt eine desktopOnly-Liste. Die Live-**Empfänger**-Funktion
   (Adresse einfügen, QR-Code scannen) funktioniert auf Android über `api.stream`; die
   Live-**Quelle** (eigene Chats anbieten) bleibt dem Windows-Programm vorbehalten.
+- **1.0.83:** **Modellprofil IQ3/Q3 nach der Qwen-Empfehlung** (Temperatur 1,0, Top-P 0,95, Top-K 20,
+  Min-P 0, Max. Antwortlänge 32768, Denkaufwand „Niedrig"), gegen Denkschleifen und abgeschnittene
+  Antworten; einmalige Umstellung bestehender Installationen. **System-Prompt** gestrafft (keine
+  erzwungene Denksprache, „kurz planen, dann handeln", „nichts erfinden, erst lesen").
+  **Strata-Entwurfsverfahren** (`--drafting auto|dflash2|mtp|off`) und Entwurfs-Fenster (spec) mit
+  einem Knopf für empfohlene Engine-Werte. Neue Datei `renderer/js/i18n-lex-v83.js`.
+- **Android-Bau 1.0.83:** zwei weiteren Desktop-only-Kanälen gekapselt: `discover.scan` (Entdecker
+  zeigt auf Android einen Hinweis statt einer kryptischen Fehlermeldung) und `files.savePdf`
+  (PDF-Export,chatmenu.js prüft den Kanal selbst). `tools-android\check-api.js` kennt beide.
 
 ---
 
@@ -321,18 +331,18 @@ einer WebView-Attrappe, kompletter Chat inklusive KI-Werkzeugen, PDF-Auslese, Ch
 (`live.*`, `power.keepAwake`, `searx.*`, `showItem`) als **bewusst Desktop-only** – auf Android sind
 sie defensiv gekapselt, die Live-**Empfänger**-Funktion läuft dort über `api.stream`.
 
-**Android-Fassung 1.0.82-android (versionCode 82):** gebaut aus einer bereinigten Kopie mit
-`build-now.ps1`, APK 11.337.686 B. Alle 16 Android-Anpassungen griffen weiterhin
-(`tools-android\patch-check.js`: 0 Suchtexte würden abbrechen). Alle 11 Prüfläufe mit 0 Fehlern.
-**Am Gerät wurde diese Fassung nicht geprüft.** Die neuen Funktionen (Live-Ansicht als Empfänger,
-autonomer Modus, Gesamtverbrauch, SearXNG) sind nur in der simulierten WebView-Oberfläche geprüft;
-die Live-Quelle und SearXNG sind auf Android ausdrücklich abgeschaltet.
+**Android-Fassung 1.0.83-android (versionCode 83):** gebaut aus einer bereinigten Kopie, APK 11.421.459 B.
+Alle 16 Android-Anpassungen griffen weiterhin (`tools-android\patch-check.js`: 0 Suchtexte würden
+abbrechen). Alle 11 Prüfläufe mit 0 Fehlern; `tools-android\check-api.js` meldet keine fehlenden
+Kanäle mehr – die drei neuen Desktop-only-Kanäle von 1.0.83 (`discover`, `discover.scan`,
+`files.savePdf`) sind gekapselt. **Am Gerät wurde diese Fassung nicht geprüft.** Der Server-Entdecker
+und der PDF-Export sind auf Android ausdrücklich als Desktop-only gekapselt.
 
-**Windows-Fassung 1.0.82:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
-aus derselben bereinigten Quelle wie die APK – Setup 84.060.209 B, portable 83.817.984 B. Beide
+**Windows-Fassung 1.0.83:** gebaut mit `npm run dist` (electron-builder, NSIS-Setup und portable EXE)
+aus derselben bereinigten Quelle wie die APK – Setup 84.079.864 B, portable 83.837.618 B. Beide
 Programmdateien und die APK wurden vor dem Einstellen am GitHub-Release mit
 `tools-android\scan-persoenlich.js` geprüft: im Setup und im portablen Programm je 4 Fundstellen,
-ausschließlich Zufallsbytefolgen im komprimierten Code. Das entpackte `app.asar` (438 Dateien)
+ausschließlich Zufallsbytefolgen im komprimierten Code. Das entpackte `app.asar` (442 Dateien)
 liefert 5 Fundstellen: eine Urheberangabe der mitgelieferten Bibliothek `fast-xml-parser` und vier
 Wortmeldungen („Administrator-Abfrage", „ohne Administratorrechte"). Keine internen IP-Adressen,
 Laufwerksbuchstaben, Freigabenamen, Rechner- oder Gerätenamen. Die Quelldateien im Repository nutzen

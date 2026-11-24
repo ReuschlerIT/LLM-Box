@@ -16,16 +16,16 @@ Von [Reuschler-IT](https://github.com/ReuschlerIT) · Windows, Linux und Android
 Die fertigen Programme hängen als Dateien am jeweiligen GitHub-Release, nicht mehr im Repository
 (die Windows-Programme sind rund 84 MB und gehören nicht in eine Quellcode-Geschichte):
 
-**Aktuelle Version 1.0.82:** [Releases](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.82)
+**Aktuelle Version 1.0.83:** [Releases](https://github.com/ReuschlerIT/LLM-Box/releases/tag/1.0.83)
 
 | Datei | Für |
 |---|---|
-| `LLM.Box.Setup.1.0.82.exe` | Windows 10/11 (Installer) |
-| `LLM.Box.1.0.82.portable.exe` | Windows 10/11 (portable, ohne Installation) |
-| `LLM-Box-1.0.82-android.apk` | Android 8.0 oder neuer |
+| `LLM.Box.Setup.1.0.83.exe` | Windows 10/11 (Installer) |
+| `LLM.Box.1.0.83.portable.exe` | Windows 10/11 (portable, ohne Installation) |
+| `LLM-Box-1.0.83-android.apk` | Android 8.0 oder neuer |
 
 Alle drei Programme entstehen aus derselben Quelle. Ältere Versionen stehen unter
-[Releases](https://github.com/ReuschlerIT/LLM-Box/releases) (1.0.70, 1.0.67, 1.0.65, 1.0.50).
+[Releases](https://github.com/ReuschlerIT/LLM-Box/releases) (1.0.82, 1.0.70, 1.0.67, 1.0.65, 1.0.50).
 
 Beide Versionen haben dieselbe Oberfläche und dasselbe Chat-Format, der Austausch zwischen PC und
 Handy funktioniert in beide Richtungen (QR-Code, WLAN oder JSON-Datei – siehe unten).
@@ -224,6 +224,17 @@ Der vollständige Verlauf **einzelner Versionen ab 1.0.36** steht in [`llm-box/U
   Kontext leert sich selbst, Weitermachen bis zum Ergebnis (`finish_task`), Höchstdauer und
   Werkzeug-Grenzen einstellbar, gefährliche Befehle werden blockiert
 - Ab 1.0.81 prüft sie vor dem Abschluss einmal selbst ihr Ergebnis („Abschluss einmal prüfen lassen")
+
+### Neu in 1.0.83
+- **Modellprofil „Kleines / stark quantisiertes Modell" (IQ3/Q3) nachgereicht:** Sampling nach der
+  Qwen-Empfehlung für den Denkmodus (Temperatur 1,0, Top-P 0,95, Top-K 20, Min-P 0), Max. Antwortlänge
+  32768, Denkaufwand „Niedrig" als Standard. Gegen Denkschleifen und abgeschnittene Antworten.
+  Bestehende Installationen werden einmalig umgestellt (eigene Eingaben bleiben).
+- **System-Prompt gestrafft:** keine erzwungene Denksprache mehr (nur noch der eigene Schalter),
+  dazu „kurz planen, dann handeln", „nicht im Kreis denken", „nichts erfinden, erst lesen".
+- **Strata: Entwurfs-Verfahren** (`--drafting`) und Entwurfs-Fenster (spec) unter *Modell starten*,
+  plus ein Knopf für empfohlene Engine-Werte.
+- Neue englische und französische Texte (`i18n-lex-v83.js`).
 
 ### Neu in 1.0.82
 - **Feste Reihenfolge der Chatliste** (nach Erstellung, neuester oben) – laufende Chats springen nicht mehr

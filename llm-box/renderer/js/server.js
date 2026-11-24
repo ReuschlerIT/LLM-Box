@@ -15,6 +15,8 @@ const SV_FAMILIES = [
   ['unsloth', 'Qwen3.8-Flash-Next (Unsloth)'], ['gyro', 'Gyro (weniger Speicher, langsamer)'], ['swift', 'Swift 1.5'],
   ['qwen36', 'Qwen3.6-35B-A3B'], ['deepseek41', 'DeepSeek V4.1 Flash'], ['nvfp4', 'NVFP4'],
 ];
+/* V83: empfohlene Engine-Werte (Knopf „Empfohlene Werte einfügen“ im Start-Formular). Mehr dazu in der Strata-Doku (docs/DETAILS.md). */
+const SV_RECOMMENDED_EXTRA = ['STRATA_ROUTE_PRIOR=0', 'STRATA_ROUTE_TAIL_SKIP=0', 'STRATA_KVA=0', 'STRATA_PREFILL_CPU_SHARE=0', 'STRATA_HC_Q8=0'];
 const SV_MODELS = ['q2_0', 'iq2_xs', 'iq3_xxs', 'iq3_s', 'IQ1_M', 'UD-IQ4_XS', 'UD-Q4_K_XL', 'UD-Q5_K_XL', 'UD-Q6_K_XL', 'Q8_0', 'Gyro-S', 'Gyro-M', 'ist-das-1.75bpw', 'ist-das-2.00bpw', 'ist-das-2.25bpw'];
 
 /* ───── Verbindung zum Server (HTTP) ───── */
@@ -1042,11 +1044,13 @@ function svLaunchArgs(mode) {
   add('--vision', f.vision);
   add('--parallel', f.parallel);
   add('--mtp', f.mtp);
+  add('--drafting', f.drafting);
   add('--tune', f.tune);
   add('--gpu', f.gpu);
   add('--access', f.access);
   add('--port', f.port);
   if (f.noApiKey) a.push('--no-api-key'); else add('--api-key', f.apiKey);
+  if (f.spec !== null && f.spec !== undefined && String(f.spec).trim() !== '') a.push('--set', 'spec=' + String(f.spec).trim());   // Entwurfs-Fenster (V83)
   String(f.extra || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean).forEach((l) => a.push('--set', l));
   add('--save-preset', f.savePreset);
   if (mode === 'plan') a.push('--plan', '--output', 'json');
@@ -1093,6 +1097,8 @@ function svBuildLaunch() {
     frow('Bilder lesen', 'Nur für Modelle mit Bild-Unterstützung.', svSel('server.launch.vision', [['', 'Standard (an, wenn möglich)'], ['on', 'An'], ['off', 'Aus'], ['gpu', 'Auf der Grafikkarte'], ['cpu', 'Auf der CPU']])),
     frow('Parallele Anfragen', '1 bis 8 (Standard: passend zur Grafikkarte).', bindText('server.launch.parallel', { placeholder: 'Standard' })),
     frow('Entwurfsschicht (MTP)', 'Aus spart etwa 1 GB Grafikspeicher, ist aber langsamer.', svSel('server.launch.mtp', [['', 'Standard'], ['on', 'An'], ['off', 'Aus']])),
+    frow('Entwurfs-Verfahren', 'Welcher Entwurfsgeber beim spekulativen Decodieren vorausrät: Automatisch (Strata wählt), DFlash2 (nur Qwen3.8-Flash-Next), MTP oder Aus.', svSel('server.launch.drafting', [['', 'Standard'], ['auto', 'Automatisch'], ['dflash2', 'DFlash2 (nur Qwen3.8-Flash-Next)'], ['mtp', 'MTP'], ['off', 'Aus']])),
+    frow('Entwurfs-Fenster (spec)', 'Wie viele Tokens der Entwurfsgeber pro Prüfschritt vorschlägt (→ --set spec=N). Das Tuning wählt meist 6; zum Testen empfohlen: 4. Leer = Wert aus dem Tuning. Vorher und nachher die Tokens pro Sekunde vergleichen.', bindNumber('server.launch.spec', { min: 1, max: 16, placeholder: 'Tuning' })),
     frow('Tuning', 'Findet die schnellsten Einstellungen (schnell ca. 20 Min., gründlich bis 2 Std.).', svSel('server.launch.tune', [['', 'Überspringen'], ['quick', 'Schnell'], ['thorough', 'Gründlich'], ['skip', 'Aus']])),
     frow('Grafikkarten', 'Nummern, z. B. 0 oder 0,1.', bindText('server.launch.gpu', { placeholder: 'Standard' })),
     el('h3', { text: 'Zugriff' }),
@@ -1101,7 +1107,15 @@ function svBuildLaunch() {
     frow('Ohne API-Schlüssel', 'Nicht empfohlen außerhalb dieses Rechners.', bindSwitch('server.launch.noApiKey')),
     frow('API-Schlüssel', 'Leer lassen: Strata erzeugt einen. Er erscheint danach per „Schlüssel anzeigen“.', bindText('server.launch.apiKey', { type: 'password', placeholder: 'automatisch' })),
     el('h3', { text: 'Erweitert' }),
-    frow('Zusätzliche Engine-Einstellungen', 'Eine pro Zeile als SCHLÜSSEL=WERT (→ --set).', bindTextarea('server.launch.extra', 3), true),
+    frow('Zusätzliche Engine-Einstellungen', 'Eine pro Zeile als SCHLÜSSEL=WERT (→ --set).', (u.extraTa = bindTextarea('server.launch.extra', 3)), true),
+    frow('Empfohlene Engine-Werte', 'Trägt STRATA_ROUTE_PRIOR=0, STRATA_ROUTE_TAIL_SKIP=0, STRATA_KVA=0, STRATA_PREFILL_CPU_SHARE=0 und STRATA_HC_Q8=0 in das Feld oben ein; vorhandene Zeilen bleiben. Hinweis: ROUTE_TAIL_SKIP=0 und PREFILL_CPU_SHARE=0 schalten Tempo-Abkürzungen der Engine ab (genauer, kann aber langsamer sein). Das Tempo im Monitor vor und nach dem Test vergleichen.', el('button', { class: 'btn sm', text: 'Empfohlene Werte einfügen', onclick: () => {
+      const have = new Set(String(u.extraTa.value || '').split(/\r?\n/).map((l) => l.trim().split('=')[0]).filter(Boolean));
+      const add = SV_RECOMMENDED_EXTRA.filter((l) => !have.has(l.split('=')[0]));
+      if (!add.length) { toast('Alle empfohlenen Werte stehen schon im Feld.'); return; }
+      u.extraTa.value = (String(u.extraTa.value || '').replace(/\s+$/, '') + '\n' + add.join('\n')).trim();
+      u.extraTa.dispatchEvent(new Event('input', { bubbles: true }));   // speichert und aktualisiert die Befehlsvorschau
+      toast('Empfohlene Engine-Werte eingetragen.');
+    } })),
     frow('Als Preset speichern', 'Name, unter dem diese Auswahl gespeichert wird.', bindText('server.launch.savePreset', { placeholder: 'optional' })),
     frow('Laufendes Modell ersetzen', 'Fügt --restart hinzu: stoppt das laufende Modell (Antworten brechen ab) und startet neu.', bindSwitch('server.launch.restart')),
     el('h3', { text: 'Befehl' }),
